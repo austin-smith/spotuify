@@ -18,22 +18,23 @@ export const KEYMAP: KeyGroup[] = [
   {
     label: "PLAYBACK",
     bindings: [
-      { key: "SPACE", action: "play / pause" },
-      { key: "N", action: "next" },
-      { key: "P", action: "previous" },
+      { key: "space", action: "play / pause" },
+      { key: "n", action: "next" },
+      { key: "p", action: "previous" },
       { key: "←/→", action: "seek ±5s" },
       { key: "↑/↓", action: "volume ±5%" },
-      { key: "S", action: "shuffle" },
-      { key: "Z", action: "repeat" },
+      { key: "s", action: "shuffle" },
+      { key: "z", action: "repeat" },
     ],
   },
   {
     label: "BROWSE",
     bindings: [
       { key: "/", action: "search" },
-      { key: "U", action: "queue" },
-      { key: "D", action: "device" },
-      { key: "R", action: "resync" },
+      { key: "a", action: "go to" },
+      { key: "u", action: "queue" },
+      { key: "d", action: "device" },
+      { key: "r", action: "resync" },
     ],
   },
   {
@@ -41,15 +42,15 @@ export const KEYMAP: KeyGroup[] = [
     bindings: [
       { key: "↑/↓", action: "move" },
       { key: "↵", action: "play / open" },
-      { key: "CTRL+↵", action: "queue it" },
-      { key: "ESC", action: "back / close" },
+      { key: "ctrl+↵", action: "queue it" },
+      { key: "esc", action: "back / close" },
     ],
   },
   {
     label: "APP",
     bindings: [
       { key: "?", action: "these keys" },
-      { key: "Q", action: "quit" },
+      { key: "q", action: "quit" },
     ],
   },
 ];
@@ -64,17 +65,18 @@ export function barFor(state: { playing: boolean; hasTrack: boolean }): Binding[
   if (!state.hasTrack) {
     return [
       { key: "/", action: "search" },
-      { key: "D", action: "device" },
+      { key: "d", action: "device" },
       { key: "?", action: "keys" },
-      { key: "Q", action: "quit" },
+      { key: "q", action: "quit" },
     ];
   }
 
   return [
-    { key: "SPACE", action: state.playing ? "pause" : "play" },
+    { key: "space", action: state.playing ? "pause" : "play" },
     { key: "/", action: "search" },
-    { key: "U", action: "queue" },
-    { key: "D", action: "device" },
+    { key: "a", action: "go to" },
+    { key: "u", action: "queue" },
+    { key: "d", action: "device" },
     { key: "?", action: "keys" },
   ];
 }

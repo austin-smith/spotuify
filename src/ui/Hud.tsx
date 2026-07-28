@@ -1,7 +1,7 @@
 import { artistLine, isTrack, type PlayableItem, type RepeatState } from "../api/types.ts";
 import { DEVICE_NAME } from "../config.ts";
 import { formatDuration, progressBar } from "../store/progress.ts";
-import type { EngineStatus } from "../engine/librespot.ts";
+import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
 /**
@@ -11,11 +11,6 @@ import { theme } from "./theme.ts";
  * room. Must match the content exactly, or the scrim leaves a visible empty band.
  */
 export const HUD_ROWS = 7;
-
-function truncate(value: string, max: number): string {
-  if (max <= 1) return "";
-  return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
-}
 
 const REPEAT_LABEL: Record<RepeatState, string> = { off: "OFF", track: "TRACK", context: "ALL" };
 

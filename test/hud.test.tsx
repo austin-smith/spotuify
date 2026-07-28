@@ -99,7 +99,7 @@ describe("hud", () => {
 
   test.each(SIZES)("keybinds occupy the last row at %ix%i", async (w, h) => {
     const lines = await render(w, h);
-    expect(lines[h - 1] ?? "").toContain("SPACE");
+    expect(lines[h - 1] ?? "").toContain("space");
   });
 
   test.each(SIZES)("transport and times render at %ix%i", async (w, h) => {

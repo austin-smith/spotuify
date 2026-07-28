@@ -6,10 +6,12 @@ import { isTrack, type Me } from "../api/types.ts";
 import { tokenStore } from "../auth/flow.ts";
 import { DEVICE_NAME, MissingClientIdError, REDIRECT_URI } from "../config.ts";
 import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
+import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
 import { usePlayback } from "../store/playback.ts";
 import { useQueue } from "../store/queue.ts";
 import { useSearch } from "../store/search.ts";
+import { ActionsMenu } from "./ActionsMenu.tsx";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { DevicePicker } from "./DevicePicker.tsx";
 import { QueueView } from "./QueueView.tsx";
@@ -59,8 +61,9 @@ export function App() {
   const paletteOpen = useSearch((s) => s.open);
   const devicesOpen = useDevices((s) => s.open);
   const queueOpen = useQueue((s) => s.open);
+  const actionsOpen = useActions((s) => s.open);
   const [keysOpen, setKeysOpen] = useState(false);
-  const overlayOpen = paletteOpen || devicesOpen || queueOpen || keysOpen;
+  const overlayOpen = paletteOpen || devicesOpen || queueOpen || actionsOpen || keysOpen;
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +145,7 @@ export function App() {
     const palette = useSearch.getState();
     const picker = useDevices.getState();
     const queue = useQueue.getState();
+    const actions = useActions.getState();
 
     if (keysOpen) {
       if (key.name === "escape" || key.name === "?" || key.name === "q") setKeysOpen(false);
@@ -151,6 +155,20 @@ export function App() {
     if (queue.open) {
       if (key.name === "escape" || key.name === "u") queue.closeQueue();
       else if (key.name === "r") void queue.refresh();
+      return;
+    }
+
+    if (actions.open) {
+      if (key.name === "escape" || key.name === "a") actions.closeActions();
+      else if (key.name === "up" || (key.ctrl && key.name === "p")) actions.move(-1);
+      else if (key.name === "down" || (key.ctrl && key.name === "n")) actions.move(1);
+      else if (key.name === "return") {
+        const entry = actions.current();
+        actions.closeActions();
+        // Hands off to the palette, so the album or artist lands in the same list you would have
+        // reached by searching for it — and escape walks back out the same way.
+        if (entry !== null) palette.openAt(entry.drill);
+      }
       return;
     }
 
@@ -240,6 +258,12 @@ export function App() {
 
     if (key.name === "u") {
       queue.openQueue();
+      return;
+    }
+
+    if (key.name === "a") {
+      const playing = usePlayback.getState().item;
+      if (playing !== null) actions.openActions(playing);
       return;
     }
 
@@ -352,6 +376,9 @@ export function App() {
       {paletteOpen ? <Palette width={width} height={height} /> : null}
       {devicesOpen ? <DevicePicker width={width} height={height} /> : null}
       {queueOpen ? <QueueView width={width} height={height} /> : null}
+      {actionsOpen && item !== null ? (
+        <ActionsMenu width={width} height={height} item={item} />
+      ) : null}
       {keysOpen ? (
         <KeymapOverlay
           width={width}

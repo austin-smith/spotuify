@@ -1,15 +1,12 @@
 import { artistLine, type PlayableItem } from "../api/types.ts";
 import { formatDuration } from "../store/progress.ts";
 import { useQueue } from "../store/queue.ts";
+import { Overlay, OverlayTitle, overlayInnerWidth, overlayListHeight } from "./Overlay.tsx";
+import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
-/** Rows above and below the list: title, rule, now-playing block, and the footer hint. */
-const CHROME_ROWS = 10;
-
-function truncate(value: string, max: number): string {
-  if (max <= 1) return "";
-  return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
-}
+/** Rows the now-playing block adds above the list: its header, its row, and a spacer. */
+const NOW_PLAYING_ROWS = 3;
 
 function ItemRow({
   item,
@@ -49,8 +46,8 @@ export function QueueView({ width, height }: { width: number; height: number }) 
   const loading = useQueue((s) => s.loading);
   const error = useQueue((s) => s.error);
 
-  const inner = width - 8;
-  const listHeight = Math.max(3, height - CHROME_ROWS);
+  const inner = overlayInnerWidth(width);
+  const listHeight = overlayListHeight(height, nowPlaying === null ? 0 : NOW_PLAYING_ROWS);
 
   const status = (() => {
     if (error !== null) return error;
@@ -60,32 +57,16 @@ export function QueueView({ width, height }: { width: number; height: number }) 
   })();
 
   return (
-    <box
-      position="absolute"
-      left={0}
-      top={0}
+    <Overlay
       width={width}
       height={height}
-      zIndex={10}
-      flexDirection="column"
-      paddingX={4}
-      paddingY={2}
+      header={<OverlayTitle glyph="≡" title="QUEUE" />}
+      status={status}
+      hints="r refresh · esc close"
+      isError={error !== null}
     >
-      <box flexDirection="row" gap={1}>
-        <text fg={theme.accent}>
-          <strong>≡</strong>
-        </text>
-        <text fg={theme.text}>
-          <strong>QUEUE</strong>
-        </text>
-      </box>
-
-      <box marginTop={1}>
-        <text fg={theme.faint}>{"─".repeat(Math.max(0, inner))}</text>
-      </box>
-
       {nowPlaying !== null ? (
-        <box flexDirection="column" marginTop={1}>
+        <box flexDirection="column">
           <text fg={theme.label}>
             <strong>NOW PLAYING</strong>
           </text>
@@ -93,7 +74,7 @@ export function QueueView({ width, height }: { width: number; height: number }) 
         </box>
       ) : null}
 
-      <box flexDirection="column" flexGrow={1} overflow="hidden" marginTop={1}>
+      <box flexDirection="column" marginTop={nowPlaying === null ? 0 : 1}>
         {upNext.length > 0 ? (
           <text fg={theme.label}>
             <strong>UP NEXT</strong>
@@ -109,11 +90,6 @@ export function QueueView({ width, height }: { width: number; height: number }) 
           />
         ))}
       </box>
-
-      <box flexDirection="row" justifyContent="space-between">
-        <text fg={error !== null ? theme.error : theme.label}>{truncate(status, inner - 24)}</text>
-        <text fg={theme.faint}>r refresh · esc close</text>
-      </box>
-    </box>
+    </Overlay>
   );
 }

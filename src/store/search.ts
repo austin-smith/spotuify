@@ -45,6 +45,8 @@ export interface SearchSlice {
 
   configure: (client: SpotifyClient, market: string | undefined) => void;
   openPalette: () => void;
+  /** Open straight into an album or artist, skipping the search prompt. */
+  openAt: (target: Drill) => void;
   closePalette: () => void;
   /** Types into whichever frame is on top: a search query at the root, a filter when drilled. */
   setQuery: (query: string) => void;
@@ -70,6 +72,14 @@ let market: string | undefined;
 let debounce: ReturnType<typeof setTimeout> | null = null;
 let inFlight: AbortController | null = null;
 let drillLoad: AbortController | null = null;
+/**
+ * Tracked separately from `drillLoad`.
+ *
+ * Opening straight into an album drills immediately, and a shared controller meant that drill
+ * cancelled the home fetch it had just started — leaving the root frame loading forever, so escaping
+ * back out landed on a spinner that never resolved.
+ */
+let homeLoad: AbortController | null = null;
 /** Cached for the session; the pre-typing view is stable enough not to refetch on every open. */
 let home: HomeData = EMPTY_HOME;
 
@@ -139,15 +149,19 @@ export const useSearch = create<SearchSlice>((set, get) => ({
 
     set({ frames: [loadingFrame()] });
     const controller = new AbortController();
-    drillLoad = controller;
+    homeLoad = controller;
 
     void (async () => {
       try {
         const data = await fetchHome(client, { market, signal: controller.signal });
         if (controller.signal.aborted) return;
         home = data;
+        // A drilled frame owns the view now, so leave it alone — clearing its loading flag here
+        // would blank the list while the drill is still in flight. `back()` fills the root frame in
+        // from this cache on the way out.
+        if (get().frames.length !== 1) return;
         // A query typed while this was loading takes precedence.
-        if (get().query.trim().length === 0 && get().frames.length === 1) {
+        if (get().query.trim().length === 0) {
           set({ frames: [frameOf(toHomeRows(data))], showingHome: true });
         } else {
           set({ frames: withTop(get().frames, { loading: false }) });
@@ -159,9 +173,20 @@ export const useSearch = create<SearchSlice>((set, get) => ({
           error: err instanceof Error ? err.message : String(err),
         });
       } finally {
-        if (drillLoad === controller) drillLoad = null;
+        if (homeLoad === controller) homeLoad = null;
       }
     })();
+  },
+
+  /**
+   * Open the palette already inside an album or artist.
+   *
+   * The root frame is still pushed underneath, so escape lands on home-or-search rather than
+   * closing outright — the same place `back()` would take you from any other drilled frame.
+   */
+  openAt(target) {
+    get().openPalette();
+    get().drillInto(target);
   },
 
   closePalette() {
@@ -169,6 +194,8 @@ export const useSearch = create<SearchSlice>((set, get) => ({
     cancelPending();
     drillLoad?.abort();
     drillLoad = null;
+    homeLoad?.abort();
+    homeLoad = null;
     set({ open: false, query: "", frames: [frameOf([])], error: null, showingHome: true });
   },
 
@@ -270,11 +297,22 @@ export const useSearch = create<SearchSlice>((set, get) => ({
   },
 
   back() {
-    const { frames } = get();
+    const { frames, query } = get();
     if (frames.length <= 1) return false;
     drillLoad?.abort();
     drillLoad = null;
-    set({ frames: frames.slice(0, -1), error: null });
+
+    const remaining = frames.slice(0, -1);
+    // Opening straight into an album leaves the root frame unfilled, because the home fetch
+    // deliberately skips a view a deeper frame owns. Fill it in here so escaping out shows home
+    // rather than the spinner it was left on.
+    const root = remaining[0];
+    if (remaining.length === 1 && root !== undefined && root.rows.length === 0 && query === "") {
+      set({ frames: [frameOf(toHomeRows(home))], showingHome: true, error: null });
+      return true;
+    }
+
+    set({ frames: remaining, error: null });
     return true;
   },
 

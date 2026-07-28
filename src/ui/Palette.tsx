@@ -1,17 +1,16 @@
 import { useSearch } from "../store/search.ts";
 import { windowStart, type Row } from "../store/rows.ts";
+import { Overlay, OVERLAY_TOP, overlayInnerWidth, overlayListHeight } from "./Overlay.tsx";
+import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
-/** Screen row the query line sits on, given the palette's vertical padding. */
-export const PROMPT_ROW = 2;
-
-/** Rows reserved for the prompt, its rule, and the footer hint. */
-const CHROME_ROWS = 6;
-
-function truncate(value: string, max: number): string {
-  if (max <= 1) return "";
-  return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
-}
+/**
+ * Screen row the query line sits on.
+ *
+ * The cover backdrop flattens this row to solid cells: the art is drawn as two-tone half-blocks and
+ * the terminal's own block caret composites badly against them.
+ */
+export const PROMPT_ROW = OVERLAY_TOP;
 
 interface Columns {
   label: number;
@@ -86,9 +85,9 @@ export function Palette({ width, height }: { width: number; height: number }) {
   const text = store.text();
   const drilled = frames.length > 1;
 
-  const inner = width - 8;
+  const inner = overlayInnerWidth(width);
   const columns = columnsFor(inner);
-  const listHeight = Math.max(3, height - CHROME_ROWS - 2);
+  const listHeight = overlayListHeight(height);
   const start = windowStart(rows, selected, listHeight);
   const visible = rows.slice(start, start + listHeight);
 
@@ -108,77 +107,59 @@ export function Palette({ width, height }: { width: number; height: number }) {
     return `${resultCount} ${resultCount === 1 ? "result" : "results"}`;
   })();
 
-  const hints = drilled
-    ? "↑↓ move · ↵ play · esc back"
-    : "↑↓ move · ↵ open · esc close";
-
   return (
-    <box
-      position="absolute"
-      left={0}
-      top={0}
+    <Overlay
       width={width}
       height={height}
-      zIndex={10}
-      flexDirection="column"
-      paddingX={4}
-      paddingY={2}
-    >
-      <box flexDirection="row" gap={1}>
-        <text fg={theme.accent}>
-          <strong>{drilled ? "‹" : "›"}</strong>
-        </text>
-        {breadcrumb !== null ? (
-          <text fg={theme.muted}>
-            {truncate(breadcrumb, Math.max(0, inner - 24))}
-            <span fg={theme.faint}>{text.length > 0 ? `   /${text}` : ""}</span>
+      status={status}
+      isError={error !== null}
+      hints={drilled ? "↑↓ move · ↵ play · esc back" : "↑↓ move · ↵ open · esc close"}
+      header={
+        <box flexDirection="row" gap={1}>
+          <text fg={theme.accent}>
+            <strong>{drilled ? "‹" : "›"}</strong>
           </text>
-        ) : null}
-        <input
-          value={text}
-          // `onInput` fires per keystroke; `onChange` only commits later, which left the store
-          // holding an empty query while the field showed typed text.
-          onInput={setQuery}
-          // Empty when drilled: the field is collapsed to zero width there and would otherwise
-          // render the first character of its placeholder next to the breadcrumb.
-          placeholder={drilled ? "" : "search"}
-          // The field keeps focus for the whole session; the row highlight is a list cursor, not a
-          // second focus. This is the combobox convention.
-          focused
-          width={breadcrumb !== null ? 0 : inner - 2}
-          textColor={theme.text}
-          cursorColor={theme.accent}
-          placeholderColor={theme.label}
-        />
-      </box>
-
-      <box marginTop={1}>
-        <text fg={theme.faint}>{"─".repeat(Math.max(0, inner))}</text>
-      </box>
-
-      <box flexDirection="column" flexGrow={1} overflow="hidden" marginTop={1}>
-        {visible.map((row, offset) =>
-          row.kind === "header" ? (
-            <box key={`h${start + offset}`} marginTop={offset === 0 ? 0 : 1}>
-              <text fg={theme.label}>
-                <strong>{row.label}</strong>
-              </text>
-            </box>
-          ) : (
-            <ResultRow
-              key={`r${start + offset}`}
-              row={row}
-              selected={start + offset === selected}
-              columns={columns}
-            />
-          ),
-        )}
-      </box>
-
-      <box flexDirection="row" justifyContent="space-between">
-        <text fg={error !== null ? theme.error : theme.label}>{truncate(status, inner - 30)}</text>
-        <text fg={theme.faint}>{hints}</text>
-      </box>
-    </box>
+          {breadcrumb !== null ? (
+            <text fg={theme.muted}>
+              {truncate(breadcrumb, Math.max(0, inner - 24))}
+              <span fg={theme.faint}>{text.length > 0 ? `   /${text}` : ""}</span>
+            </text>
+          ) : null}
+          <input
+            value={text}
+            // `onInput` fires per keystroke; `onChange` only commits later, which left the store
+            // holding an empty query while the field showed typed text.
+            onInput={setQuery}
+            // Empty when drilled: the field is collapsed to zero width there and would otherwise
+            // render the first character of its placeholder next to the breadcrumb.
+            placeholder={drilled ? "" : "search"}
+            // The field keeps focus for the whole session; the row highlight is a list cursor, not a
+            // second focus. This is the combobox convention.
+            focused
+            width={breadcrumb !== null ? 0 : inner - 2}
+            textColor={theme.text}
+            cursorColor={theme.accent}
+            placeholderColor={theme.label}
+          />
+        </box>
+      }
+    >
+      {visible.map((row, offset) =>
+        row.kind === "header" ? (
+          <box key={`h${start + offset}`} marginTop={offset === 0 ? 0 : 1}>
+            <text fg={theme.label}>
+              <strong>{row.label}</strong>
+            </text>
+          </box>
+        ) : (
+          <ResultRow
+            key={`r${start + offset}`}
+            row={row}
+            selected={start + offset === selected}
+            columns={columns}
+          />
+        ),
+      )}
+    </Overlay>
   );
 }
