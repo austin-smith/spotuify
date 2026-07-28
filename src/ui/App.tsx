@@ -19,12 +19,18 @@ import { Hud, HUD_ROWS } from "./Hud.tsx";
 import { KeyHints } from "./KeyHints.tsx";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
+import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
 type Boot =
   | { phase: "loading" }
   | { phase: "needs-setup"; message: string }
   | { phase: "ready"; me: Me; player: PlayerApi };
+
+/** How often to look for librespot in the device list while it starts up. */
+const ENGINE_POLL_MS = 400;
+/** How long to keep looking before giving up on it registering. */
+const ENGINE_REGISTER_TIMEOUT_MS = 15_000;
 
 function Setup({ message }: { message: string }) {
   return (
@@ -45,6 +51,9 @@ export function App() {
   const { width, height } = useTerminalDimensions();
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [engine, setEngine] = useState<EngineStatus>({ state: "starting" });
+  // The process being up is not the same as Spotify being able to reach it, and only the second
+  // one means playback will work here.
+  const [registered, setRegistered] = useState(false);
 
   const item = usePlayback((s) => s.item);
   const isPlaying = usePlayback((s) => s.isPlaying);
@@ -115,24 +124,37 @@ export function App() {
     };
   }, [boot]);
 
-  // Once librespot registers, adopt it — unless another device is already active.
+  // Once librespot registers with Spotify, adopt it — unless another device is already active.
   useEffect(() => {
     if (boot.phase !== "ready" || engine.state !== "running") return;
 
     let cancelled = false;
+    setRegistered(false);
+
     void (async () => {
-      await Bun.sleep(1_500);
-      if (cancelled) return;
-      try {
-        const devices = await boot.player.devices();
-        const mine = devices.find((d) => d.name === DEVICE_NAME);
-        const active = devices.find((d) => d.is_active);
-        if (mine?.id != null && active === undefined) {
-          await boot.player.transfer(mine.id, false);
-          await usePlayback.getState().refresh();
+      // Spawning librespot and it being reachable are different events: the process is up
+      // immediately, but registering with Spotify took ~1.5s when measured. Waiting a fixed 1.5s
+      // and looking once was a coin flip, and losing it meant never adopting the device at all.
+      for (let waited = 0; waited < ENGINE_REGISTER_TIMEOUT_MS; waited += ENGINE_POLL_MS) {
+        await Bun.sleep(ENGINE_POLL_MS);
+        if (cancelled) return;
+
+        try {
+          const devices = await boot.player.devices();
+          const mine = devices.find((d) => d.name === DEVICE_NAME);
+          if (mine === undefined) continue;
+
+          setRegistered(true);
+          const active = devices.find((d) => d.is_active);
+          if (mine.id != null && active === undefined) {
+            await boot.player.transfer(mine.id, false);
+            await usePlayback.getState().refresh();
+          }
+          return;
+        } catch {
+          // Keep waiting: a transient failure here is not worth reporting, and the device picker
+          // makes the state explicit on demand.
         }
-      } catch {
-        // Not fatal: a device picker will make this explicit.
       }
     })();
 
@@ -356,14 +378,16 @@ export function App() {
       ) : overlayOpen ? null : (
         <box position="absolute" left={2} top={Math.floor(height / 2)} zIndex={2}>
           <text fg={theme.muted}>
-            {ready ? "NOTHING PLAYING — start a track on any device, then press R" : "LOADING…"}
+            {ready ? "NOTHING PLAYING — press / to find something" : "LOADING…"}
           </text>
         </box>
       )}
 
-      {error !== null ? (
-        <box position="absolute" left={2} top={height - 2} zIndex={3}>
-          <text fg={theme.error}>{error}</text>
+      {error !== null && !overlayOpen ? (
+        // Above the HUD, not on it: at `height - 2` this landed on the state row and drew over
+        // "PLAYING · VOL 100%".
+        <box position="absolute" left={2} top={hudTop - 1} zIndex={3}>
+          <text fg={theme.error}>{truncate(error, Math.max(0, width - 4))}</text>
         </box>
       ) : null}
 
@@ -385,7 +409,7 @@ export function App() {
           height={height}
           account={boot.me.display_name ?? boot.me.id}
           product={boot.me.product}
-          engineUp={engine.state === "running"}
+          engineUp={engine.state === "running" && registered}
         />
       ) : null}
     </box>

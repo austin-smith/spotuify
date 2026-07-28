@@ -5,10 +5,26 @@ export class SpotifyApiError extends Error {
   constructor(
     readonly status: number,
     readonly path: string,
-    message: string,
+    /** Spotify's own message, without the status and path this prefixes onto it. */
+    readonly detail: string,
   ) {
-    super(`Spotify API ${status} on ${path}: ${message}`);
+    super(`Spotify API ${status} on ${path}: ${detail}`);
     this.name = "SpotifyApiError";
+  }
+}
+
+/**
+ * Spotify declined a transport command as inapplicable.
+ *
+ * `403 Player command failed: …` is an outcome, not a fault: pressing previous at the start of a
+ * context answers `Restriction violated`, which is Spotify's way of saying there is nothing to go
+ * back to, and its own clients simply do nothing. Typed separately so callers can ignore it instead
+ * of reporting a failure the user cannot act on.
+ */
+export class PlayerCommandRejectedError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "PlayerCommandRejectedError";
   }
 }
 
@@ -64,7 +80,16 @@ export class SpotifyClient {
 
       if (res.ok) {
         const text = await res.text();
-        return text.length === 0 ? null : (JSON.parse(text) as T);
+        // Only a body Spotify labels as JSON is parsed as JSON. The transport endpoints answer 200
+        // with a bare command id and no content-type at all — `next` returns something like
+        // `xnhCFLSU-oYEeK59yBVw1tAwgNI` — and parsing that threw a raw SyntaxError that surfaced as
+        // a failure on every keypress, even though the command had succeeded.
+        if (text.length === 0 || !isJson(res)) return null;
+        try {
+          return JSON.parse(text) as T;
+        } catch {
+          throw new SpotifyApiError(res.status, path, "Response was not valid JSON.");
+        }
       }
 
       // Expired or revoked token: refresh once, then retry with the new one.
@@ -82,6 +107,11 @@ export class SpotifyClient {
 
       const message = await errorMessage(res);
       if (res.status === 403 && /premium/i.test(message)) throw new PremiumRequiredError();
+      // "Player command failed: Restriction violated" and friends: the command did not apply, which
+      // is a normal outcome rather than something to report.
+      if (res.status === 403 && /^player command failed/i.test(message)) {
+        throw new PlayerCommandRejectedError(message.replace(/^player command failed:\s*/i, ""));
+      }
       throw new SpotifyApiError(res.status, path, message);
     }
 
@@ -94,6 +124,11 @@ export class SpotifyClient {
     if (result === null) throw new SpotifyApiError(204, path, "Expected a response body.");
     return result;
   }
+}
+
+/** Whether Spotify labelled the body as JSON. Transport commands send no content-type at all. */
+function isJson(res: Response): boolean {
+  return (res.headers.get("content-type") ?? "").toLowerCase().includes("json");
 }
 
 async function errorMessage(res: Response): Promise<string> {
