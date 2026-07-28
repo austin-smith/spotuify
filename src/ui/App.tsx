@@ -1,0 +1,225 @@
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
+import { useEffect, useState } from "react";
+import { SpotifyClient } from "../api/client.ts";
+import { PlayerApi } from "../api/player.ts";
+import { isTrack, type Me } from "../api/types.ts";
+import { tokenStore } from "../auth/flow.ts";
+import { DEVICE_NAME, MissingClientIdError, REDIRECT_URI } from "../config.ts";
+import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
+import { usePlayback } from "../store/playback.ts";
+import { CoverBackdrop } from "./CoverBackdrop.tsx";
+import { Hud, HUD_ROWS, TopBar } from "./Hud.tsx";
+import { KeyHints } from "./KeyHints.tsx";
+import { theme } from "./theme.ts";
+
+type Boot =
+  | { phase: "loading" }
+  | { phase: "needs-setup"; message: string }
+  | { phase: "ready"; me: Me; player: PlayerApi };
+
+function Setup({ message }: { message: string }) {
+  return (
+    <box flexDirection="column" padding={2} gap={1}>
+      <text fg={theme.accent}>
+        <strong>SPOTUIFY</strong>
+      </text>
+      <text fg={theme.error}>{message}</text>
+      <text fg={theme.label}>Redirect URI to register: {REDIRECT_URI}</text>
+      <text fg={theme.label}>Then run: bun run src/cli.ts auth</text>
+      <text fg={theme.label}>Q to quit.</text>
+    </box>
+  );
+}
+
+export function App() {
+  const renderer = useRenderer();
+  const { width, height } = useTerminalDimensions();
+  const [boot, setBoot] = useState<Boot>({ phase: "loading" });
+  const [engine, setEngine] = useState<EngineStatus>({ state: "starting" });
+
+  const item = usePlayback((s) => s.item);
+  const isPlaying = usePlayback((s) => s.isPlaying);
+  const progressMs = usePlayback((s) => s.progressMs);
+  const durationMs = usePlayback((s) => s.durationMs);
+  const shuffle = usePlayback((s) => s.shuffle);
+  const repeat = usePlayback((s) => s.repeat);
+  const volumePercent = usePlayback((s) => s.volumePercent);
+  const deviceName = usePlayback((s) => s.deviceName);
+  const ready = usePlayback((s) => s.ready);
+  const error = usePlayback((s) => s.error);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const client = new SpotifyClient(await tokenStore());
+        const me = await client.get<Me>("/me");
+        if (cancelled) return;
+        setBoot({ phase: "ready", me, player: new PlayerApi(client) });
+      } catch (err) {
+        if (cancelled) return;
+        setBoot({
+          phase: "needs-setup",
+          message:
+            err instanceof MissingClientIdError
+              ? "No client ID configured. Set SPOTUIFY_CLIENT_ID."
+              : err instanceof Error
+                ? err.message
+                : String(err),
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (boot.phase !== "ready") return;
+    return usePlayback.getState().start(boot.player);
+  }, [boot]);
+
+  useEffect(() => {
+    if (boot.phase !== "ready") return;
+
+    const supervisor = new LibrespotEngine();
+    const unsubscribe = supervisor.onStatus(setEngine);
+    void supervisor.start();
+
+    return () => {
+      unsubscribe();
+      supervisor.stop();
+    };
+  }, [boot]);
+
+  // Once librespot registers, adopt it — unless another device is already active.
+  useEffect(() => {
+    if (boot.phase !== "ready" || engine.state !== "running") return;
+
+    let cancelled = false;
+    void (async () => {
+      await Bun.sleep(1_500);
+      if (cancelled) return;
+      try {
+        const devices = await boot.player.devices();
+        const mine = devices.find((d) => d.name === DEVICE_NAME);
+        const active = devices.find((d) => d.is_active);
+        if (mine?.id != null && active === undefined) {
+          await boot.player.transfer(mine.id, false);
+          await usePlayback.getState().refresh();
+        }
+      } catch {
+        // Not fatal: a device picker will make this explicit.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [boot, engine.state]);
+
+  useKeyboard((key) => {
+    if (key.name === "q" || (key.ctrl && key.name === "c")) {
+      renderer.destroy();
+      return;
+    }
+    if (boot.phase !== "ready") return;
+
+    const store = usePlayback.getState();
+    switch (key.name) {
+      case "space":
+        void store.togglePlay();
+        break;
+      case "n":
+        void store.next();
+        break;
+      case "p":
+        void store.previous();
+        break;
+      case "r":
+        void store.refresh();
+        break;
+      case "s":
+        void store.toggleShuffle();
+        break;
+      case "z":
+        void store.cycleRepeat();
+        break;
+      case "right":
+        void store.seekBy(5_000);
+        break;
+      case "left":
+        void store.seekBy(-5_000);
+        break;
+      case "up":
+        void store.adjustVolume(5);
+        break;
+      case "down":
+        void store.adjustVolume(-5);
+        break;
+      default:
+        break;
+    }
+  });
+
+  if (boot.phase === "loading") {
+    return (
+      <box padding={2}>
+        <text fg={theme.label}>Connecting to Spotify…</text>
+      </box>
+    );
+  }
+  if (boot.phase === "needs-setup") return <Setup message={boot.message} />;
+
+  const images = item !== null && isTrack(item) ? item.album.images : null;
+  // The keybind strip is the last row, so the HUD's scrim starts one row above it.
+  const hudTop = height - HUD_ROWS;
+
+  return (
+    <box flexGrow={1} position="relative">
+      {images !== null && images.length > 0 ? (
+        <CoverBackdrop images={images} width={width} height={height - 1} scrimFromRow={hudTop - 1} />
+      ) : null}
+
+      <TopBar
+        engine={engine}
+        account={boot.me.display_name ?? boot.me.id}
+        product={boot.me.product}
+        width={width}
+      />
+
+      {item !== null ? (
+        <Hud
+          item={item}
+          progressMs={progressMs}
+          durationMs={durationMs}
+          isPlaying={isPlaying}
+          shuffle={shuffle}
+          repeat={repeat}
+          volumePercent={volumePercent}
+          deviceName={deviceName}
+          width={width}
+          height={height - 1}
+        />
+      ) : (
+        <box position="absolute" left={2} top={Math.floor(height / 2)} zIndex={2}>
+          <text fg={theme.muted}>
+            {ready ? "NOTHING PLAYING — start a track on any device, then press R" : "LOADING…"}
+          </text>
+        </box>
+      )}
+
+      {error !== null ? (
+        <box position="absolute" left={2} top={height - 2} zIndex={3}>
+          <text fg={theme.error}>{error}</text>
+        </box>
+      ) : null}
+
+      <box position="absolute" left={0} top={height - 1} width={width} zIndex={2}>
+        <KeyHints width={width} />
+      </box>
+    </box>
+  );
+}

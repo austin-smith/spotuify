@@ -1,0 +1,87 @@
+#!/usr/bin/env bun
+import { SpotifyClient } from "./api/client.ts";
+import { authenticate, tokenStore } from "./auth/flow.ts";
+import type { Me } from "./api/types.ts";
+import { REDIRECT_URI } from "./config.ts";
+import { LibrespotEngine, authenticateEngine } from "./engine/librespot.ts";
+
+/** `name (product, country)`, degrading gracefully when the scope didn't grant those fields. */
+function describeAccount(me: Me): string {
+  const details = [me.product, me.country].filter((d) => d !== undefined);
+  const name = me.display_name ?? me.id;
+  return details.length > 0 ? `${name} (${details.join(", ")})` : name;
+}
+
+const USAGE = `spotuify — Spotify in the terminal
+
+Usage:
+  spotuify auth [--force]   Authorize with Spotify (run this first; opens a browser)
+  spotuify whoami           Show the authenticated account
+  spotuify                  Launch the TUI
+
+Redirect URI to register in your Spotify app: ${REDIRECT_URI}
+`;
+
+async function main(argv: string[]): Promise<number | null> {
+  const [command, ...rest] = argv;
+
+  switch (command) {
+    case "auth": {
+      const token = await authenticate({ force: rest.includes("--force") });
+      const client = new SpotifyClient(await tokenStore());
+      const me = await client.get<Me>("/me");
+      console.log(`Authenticated as ${describeAccount(me)}`);
+      // Only warn on a *known* non-premium account — an absent `product` is a scope gap, not free.
+      if (me.product !== undefined && me.product !== "premium") {
+        console.warn("\nWarning: playback control requires Spotify Premium.");
+      }
+      console.log(`Token expires ${new Date(token.expiresAt).toLocaleTimeString()}.`);
+
+      // Second, independent login: librespot's own session, used only for audio playback.
+      if ((await LibrespotEngine.locate()) === null) {
+        console.warn(
+          "\nlibrespot is not installed, so spotuify cannot play audio itself.\n" +
+            "Install it with `brew install librespot`, then re-run `spotuify auth`.\n" +
+            "Without it, spotuify can only control other Spotify devices.",
+        );
+      } else if (await authenticateEngine()) {
+        console.log("Playback engine authorized. spotuify will appear as a Spotify device.");
+      } else {
+        console.warn("\nlibrespot sign-in did not complete; playback in the terminal is disabled.");
+      }
+      return 0;
+    }
+
+    case "whoami": {
+      const client = new SpotifyClient(await tokenStore());
+      const me = await client.get<Me>("/me");
+      console.log(describeAccount(me));
+      return 0;
+    }
+
+    case "help":
+    case "--help":
+    case "-h":
+      console.log(USAGE);
+      return 0;
+
+    default:
+      if (command !== undefined) {
+        console.error(`Unknown command: ${command}\n`);
+        console.error(USAGE);
+        return 2;
+      }
+      // No subcommand: launch the TUI. Imported lazily so CLI paths never construct a renderer.
+      await import("./index.tsx");
+      // The renderer owns the process from here; exiting would tear it down immediately.
+      return null;
+  }
+}
+
+try {
+  const code = await main(process.argv.slice(2));
+  if (code !== null) process.exit(code);
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
