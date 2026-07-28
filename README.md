@@ -1,6 +1,6 @@
-# spotuify
+<h1 align="center">spotuify</h1>
 
-spotify in ur terminal 
+<p align="center">spotify in ur terminal</p>
 
 <p align="center">
   <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="90%" />
