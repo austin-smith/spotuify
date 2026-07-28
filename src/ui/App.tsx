@@ -6,11 +6,16 @@ import { isTrack, type Me } from "../api/types.ts";
 import { tokenStore } from "../auth/flow.ts";
 import { DEVICE_NAME, MissingClientIdError, REDIRECT_URI } from "../config.ts";
 import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
+import { useDevices } from "../store/devices.ts";
 import { usePlayback } from "../store/playback.ts";
+import { useQueue } from "../store/queue.ts";
 import { useSearch } from "../store/search.ts";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
+import { DevicePicker } from "./DevicePicker.tsx";
+import { QueueView } from "./QueueView.tsx";
 import { Hud, HUD_ROWS, TopBar } from "./Hud.tsx";
 import { KeyHints } from "./KeyHints.tsx";
+import { KeymapOverlay } from "./KeymapOverlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
 import { theme } from "./theme.ts";
 
@@ -52,6 +57,10 @@ export function App() {
   // Must sit with the other hooks: below the `boot.phase` early returns the hook count would
   // differ between the loading and ready renders, which React rejects outright.
   const paletteOpen = useSearch((s) => s.open);
+  const devicesOpen = useDevices((s) => s.open);
+  const queueOpen = useQueue((s) => s.open);
+  const [keysOpen, setKeysOpen] = useState(false);
+  const overlayOpen = paletteOpen || devicesOpen || queueOpen || keysOpen;
 
   useEffect(() => {
     let cancelled = false;
@@ -61,8 +70,11 @@ export function App() {
         const client = new SpotifyClient(await tokenStore());
         const me = await client.get<Me>("/me");
         if (cancelled) return;
+        const player = new PlayerApi(client);
         useSearch.getState().configure(client, me.country);
-        setBoot({ phase: "ready", me, player: new PlayerApi(client) });
+        useDevices.getState().configure(player);
+        useQueue.getState().configure(player);
+        setBoot({ phase: "ready", me, player });
       } catch (err) {
         if (cancelled) return;
         setBoot({
@@ -128,6 +140,32 @@ export function App() {
 
   useKeyboard((key) => {
     const palette = useSearch.getState();
+    const picker = useDevices.getState();
+    const queue = useQueue.getState();
+
+    if (keysOpen) {
+      if (key.name === "escape" || key.name === "?" || key.name === "q") setKeysOpen(false);
+      return;
+    }
+
+    if (queue.open) {
+      if (key.name === "escape" || key.name === "u") queue.closeQueue();
+      else if (key.name === "r") void queue.refresh();
+      return;
+    }
+
+    if (picker.open) {
+      if (key.name === "escape") picker.closePicker();
+      else if (key.name === "up" || (key.ctrl && key.name === "p")) picker.move(-1);
+      else if (key.name === "down" || (key.ctrl && key.name === "n")) picker.move(1);
+      else if (key.name === "return") {
+        void (async () => {
+          await picker.activate();
+          await usePlayback.getState().refresh();
+        })();
+      }
+      return;
+    }
 
     // While the palette is open the input consumes printable characters; only navigation,
     // confirmation and dismissal are handled here, and nothing falls through to transport keys.
@@ -144,6 +182,18 @@ export function App() {
         const row = palette.current();
         if (row === null || boot.phase !== "ready") return;
 
+        // Ctrl+Enter appends instead of playing. Only single items can be queued — Spotify has no
+        // way to append a whole album or artist.
+        if (key.ctrl) {
+          const uris = "uris" in row.play ? row.play.uris : [];
+          const uri = uris[0];
+          if (uri !== undefined) {
+            void useQueue.getState().enqueue(uri, row.label);
+            palette.closePalette();
+          }
+          return;
+        }
+
         // Artists and albums open into their contents; anything else plays.
         if (row.drill !== undefined) {
           palette.drillInto(row.drill);
@@ -159,8 +209,12 @@ export function App() {
             });
             await Bun.sleep(300);
             await usePlayback.getState().refresh();
-          } catch {
-            // Playback failures surface through the store's error state.
+          } catch (err) {
+            // Actually surface it. Swallowing this meant a failed play looked like nothing
+            // happening at all, with no way to find out why.
+            usePlayback.setState({
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         })();
         palette.closePalette();
@@ -176,6 +230,21 @@ export function App() {
 
     if (key.name === "/") {
       palette.openPalette();
+      return;
+    }
+
+    if (key.name === "d") {
+      picker.openPicker();
+      return;
+    }
+
+    if (key.name === "u") {
+      queue.openQueue();
+      return;
+    }
+
+    if (key.name === "?") {
+      setKeysOpen(true);
       return;
     }
 
@@ -241,7 +310,7 @@ export function App() {
           // sits on top of the cover instead.
           height={height}
           scrimFromRow={hudTop - 1}
-          dim={paletteOpen}
+          dim={overlayOpen}
           solidRow={paletteOpen ? PROMPT_ROW : null}
         />
       ) : null}
@@ -253,7 +322,7 @@ export function App() {
         width={width}
       />
 
-      {item !== null && !paletteOpen ? (
+      {item !== null && !overlayOpen ? (
         <Hud
           item={item}
           progressMs={progressMs}
@@ -266,7 +335,7 @@ export function App() {
           width={width}
           height={height - 1}
         />
-      ) : paletteOpen ? null : (
+      ) : overlayOpen ? null : (
         <box position="absolute" left={2} top={Math.floor(height / 2)} zIndex={2}>
           <text fg={theme.muted}>
             {ready ? "NOTHING PLAYING — start a track on any device, then press R" : "LOADING…"}
@@ -280,13 +349,16 @@ export function App() {
         </box>
       ) : null}
 
-      {paletteOpen ? null : (
+      {overlayOpen ? null : (
         <box position="absolute" left={0} top={height - 1} width={width} zIndex={2}>
-          <KeyHints width={width} />
+          <KeyHints width={width} playing={isPlaying} hasTrack={item !== null} />
         </box>
       )}
 
       {paletteOpen ? <Palette width={width} height={height} /> : null}
+      {devicesOpen ? <DevicePicker width={width} height={height} /> : null}
+      {queueOpen ? <QueueView width={width} height={height} /> : null}
+      {keysOpen ? <KeymapOverlay width={width} height={height} /> : null}
     </box>
   );
 }

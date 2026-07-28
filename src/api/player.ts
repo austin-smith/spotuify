@@ -1,5 +1,5 @@
 import type { SpotifyClient } from "./client.ts";
-import type { Device, PlaybackState, RepeatState } from "./types.ts";
+import type { Device, PlayableItem, PlaybackState, RepeatState } from "./types.ts";
 
 /**
  * Spotify Connect playback control.
@@ -14,6 +14,32 @@ export class PlayerApi {
   async state(): Promise<PlaybackState | null> {
     return await this.client.request<PlaybackState>("/me/player", {
       query: { additional_types: "track,episode" },
+    });
+  }
+
+  /**
+   * What is playing and what comes next.
+   *
+   * `queue` is Spotify's own up-next list, which mixes explicitly queued items with whatever the
+   * current context will play; it is read-only and cannot be reordered through the API.
+   */
+  async queue(): Promise<{ currently_playing: PlayableItem | null; queue: PlayableItem[] }> {
+    const res = await this.client.request<{
+      currently_playing: PlayableItem | null;
+      queue: (PlayableItem | null)[] | null;
+    }>("/me/player/queue");
+
+    return {
+      currently_playing: res?.currently_playing ?? null,
+      queue: (res?.queue ?? []).filter((i): i is PlayableItem => i !== null && i !== undefined),
+    };
+  }
+
+  /** Append a track or episode to the up-next list. Requires an active device. */
+  async addToQueue(uri: string, deviceId?: string): Promise<void> {
+    await this.client.request("/me/player/queue", {
+      method: "POST",
+      query: { uri, device_id: deviceId },
     });
   }
 

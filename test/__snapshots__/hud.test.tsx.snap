@@ -32,7 +32,7 @@ exports[`hud overlay at 100x32 1`] = `
   ▶  1:35 █████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  3:26    
   PLAYING   ·   spotuify   ·   VOL 100%                                                             
                                                                                                     
- SPACE play/pause  N next  P prev  ←/→ seek  ↑/↓ volume  S shuffle  Z repeat  R sync  Q quit        
+ SPACE pause  / search  U queue  D device  ? keys                                                   
 "
 `;
 
@@ -60,6 +60,6 @@ exports[`hud overlay at 80x24 1`] = `
   ▶  1:35 ████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  3:26    
   PLAYING   ·   spotuify   ·   VOL 100%                                         
                                                                                 
- SPACE  N  P  ←/→  ↑/↓  S  Z  R  Q                                              
+ SPACE pause  / search  U queue  D device  ? keys                               
 "
 `;

@@ -48,7 +48,7 @@ function Overlays({
         height={height - 1}
       />
       <box position="absolute" left={0} top={height - 1} width={width} zIndex={2}>
-        <KeyHints width={width} />
+        <KeyHints width={width} playing hasTrack />
       </box>
     </box>
   );

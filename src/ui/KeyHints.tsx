@@ -1,40 +1,45 @@
+import { barFor, type Binding } from "./keys.ts";
 import { theme } from "./theme.ts";
 
-/**
- * Keybind strip.
- *
- * Spelled out rather than pictographic: glyphs like `⤮` and `↻` are unreadable at terminal sizes,
- * and repeat/refresh in particular are indistinguishable as circular arrows.
- */
-const HINTS: ReadonlyArray<readonly [key: string, action: string]> = [
-  ["SPACE", "play/pause"],
-  ["N", "next"],
-  ["P", "prev"],
-  ["←/→", "seek"],
-  ["↑/↓", "volume"],
-  ["S", "shuffle"],
-  ["Z", "repeat"],
-  ["R", "sync"],
-  ["Q", "quit"],
-];
-
-/** Rendered width of the full strip: `key action` per hint, plus the flex gap between them. */
 const GAP = 2;
-function stripWidth(hints: typeof HINTS): number {
-  const content = hints.reduce((sum, [key, action]) => sum + key.length + 1 + action.length, 0);
-  return content + GAP * (hints.length - 1);
+
+/**
+ * As many whole hints as fit the width.
+ *
+ * Labels are never dropped. An earlier version hid every label once the strip overflowed, which left
+ * a row of bare letters nobody could read.
+ */
+export function fitHints(hints: Binding[], width: number): Binding[] {
+  const budget = width - 2;
+  const kept: Binding[] = [];
+  let used = 0;
+
+  for (const hint of hints) {
+    const cost = hint.key.length + 1 + hint.action.length + (kept.length > 0 ? GAP : 0);
+    if (used + cost > budget) break;
+    kept.push(hint);
+    used += cost;
+  }
+
+  return kept;
 }
 
-export function KeyHints({ width }: { width: number }) {
-  // Under pressure, drop the labels and keep the keys — still useful, never wraps mid-hint.
-  const compact = stripWidth(HINTS) > width - 2;
-
+/** Short, contextual hint bar. The complete keymap lives behind `?`. */
+export function KeyHints({
+  width,
+  playing,
+  hasTrack,
+}: {
+  width: number;
+  playing: boolean;
+  hasTrack: boolean;
+}) {
   return (
-    <box flexDirection="row" paddingX={1} gap={2} flexShrink={0}>
-      {HINTS.map(([key, action]) => (
+    <box flexDirection="row" paddingX={1} gap={GAP} flexShrink={0}>
+      {fitHints(barFor({ playing, hasTrack }), width).map(({ key, action }) => (
         <text key={key}>
           <span fg={theme.text}>{key}</span>
-          {compact ? null : <span fg={theme.label}> {action}</span>}
+          <span fg={theme.label}> {action}</span>
         </text>
       ))}
     </box>

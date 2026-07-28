@@ -105,7 +105,7 @@ export function Palette({ width, height }: { width: number; height: number }) {
         : "your library — or type to search";
     }
     if (resultCount === 0) return "no results";
-    return `${resultCount} results`;
+    return `${resultCount} ${resultCount === 1 ? "result" : "results"}`;
   })();
 
   const hints = drilled
