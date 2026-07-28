@@ -1,9 +1,6 @@
 # spotuify
 
-A Spotify client for the terminal, built on [OpenTUI](https://opentui.com).
-
-Streams audio itself via a [librespot](https://github.com/librespot-org/librespot) sidecar, so it is
-a real player rather than only a Spotify Connect remote. Requires **Spotify Premium**.
+spotify in ur terminal 
 
 <p align="center">
   <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="90%" />
@@ -11,29 +8,40 @@ a real player rather than only a Spotify Connect remote. Requires **Spotify Prem
 
 ## Setup
 
-**1. Install librespot** (the audio engine):
+> **Warning**
+>
+> spotuify streams audio through [librespot](https://github.com/librespot-org/librespot) and
+> requires Spotify Premium. Install librespot before use:
+>
+> - macOS: `brew install librespot`
+> - Most everything else: `cargo install librespot`
 
-```sh
-brew install librespot        # or: cargo install librespot
-```
+### 1. Register a Spotify app
 
-**2. Register a Spotify app** at <https://developer.spotify.com/dashboard>, and add exactly this
-redirect URI — it must match byte-for-byte, including the trailing path:
+Create one at <https://developer.spotify.com/dashboard> and add exactly this redirect URI — it must
+match byte-for-byte, including the trailing path:
 
 ```
 http://127.0.0.1:8989/callback
 ```
 
-**3. Point spotuify at your app:**
+### 2. Point spotuify at your app
 
-```sh
+```bash
 export SPOTUIFY_CLIENT_ID=<your client id>
-# or: echo '{"clientId":"<your client id>"}' > ~/.config/spotuify/config.json
 ```
 
-**4. Authorize** (opens a browser; run this outside the TUI):
+Or write it to `~/.config/spotuify/config.json`:
 
-```sh
+```bash
+echo '{"clientId":"<your client id>"}' > ~/.config/spotuify/config.json
+```
+
+### 3. Authorize
+
+Opens a browser, so run it outside the TUI:
+
+```bash
 bun run src/cli.ts auth
 ```
 
