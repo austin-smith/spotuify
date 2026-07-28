@@ -5,6 +5,10 @@ A Spotify client for the terminal, built on [OpenTUI](https://opentui.com).
 Streams audio itself via a [librespot](https://github.com/librespot-org/librespot) sidecar, so it is
 a real player rather than only a Spotify Connect remote. Requires **Spotify Premium**.
 
+<p align="center">
+  <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="90%" />
+</p>
+
 ## Setup
 
 **1. Install librespot** (the audio engine):
