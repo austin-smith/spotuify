@@ -1,0 +1,61 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`lyrics overlay renders the words at 100x32 1`] = `
+"                                                                                                    
+                                                                                                    
+    ♪ PARANOID ANDROID                                                                              
+                                                                                                    
+    ────────────────────────────────────────────────────────────────────────────────────────────    
+                                                                                                    
+      [Verse 1]                                                                                     
+      Please could you stop the noise? I'm trying to get some rest                                  
+      From all the unborn chicken voices in my head                                                 
+                                                                                                    
+      [Refrain]                                                                                     
+      What's that? (I may be paranoid but not an android)                                           
+      What's that? (I may be paranoid but not an android)                                           
+                                                                                                    
+      [Verse 2]                                                                                     
+      When I am king you will be first against the wall                                             
+      With your opinion, which is of no consequence at all                                          
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+    radiohead · genius.com                                                 ↑↓ scroll · esc close    
+                                                                                                    
+                                                                                                    
+"
+`;
+
+exports[`lyrics overlay renders the words at 60x20 1`] = `
+"                                                            
+                                                            
+    ♪ PARANOID ANDROID                                      
+                                                            
+    ────────────────────────────────────────────────────    
+                                                            
+      [Verse 1]                                        ┃    
+      Please could you stop the noise? I'm trying to   ┃    
+        get some rest                                  ┃    
+      From all the unborn chicken voices in my head    ┃    
+                                                       ┃    
+      [Refrain]                                        ┃    
+      What's that? (I may be paranoid but not an       ┃    
+        android)                                       ┃    
+      What's that? (I may be paranoid but not an       │    
+        android)                                       │    
+                                                       │    
+    1–11 of 16 · radiohead         ↑↓ scroll · esc close    
+                                                            
+                                                            
+"
+`;

@@ -14,6 +14,8 @@ There are two independent logins. Do not attempt to unify them.
 
 - These endpoints return a permanent 403 for apps registered after 2024-11-27, with no replacement: `audio-features`, `audio-analysis`, `recommendations`, related-artists, featured-playlists, category playlists, and 30-second `preview_url`. Do not build features on them.
 - Poll `/me/player` on an interval and extrapolate progress locally from a monotonic clock. Do not poll once per second; it burns the rate limit for no visible gain.
+- Playlist contents come from `GET /playlists/{id}/items`, and the payload is under each entry's `item` key. `/playlists/{id}/tracks` now returns 403 for *every* playlist, including ones the user owns, so do not "fix" this back to the endpoint the documentation and every tutorial still recommend.
+- Only playlists the user owns can be listed. A public playlist belonging to someone else answers 403 even when the user follows it, and a Spotify-owned editorial playlist answers 404. Compare the owner id against `/me` before offering to open one, and say so plainly when it cannot be opened.
 
 ## Renderer
 

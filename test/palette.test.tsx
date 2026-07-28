@@ -154,7 +154,7 @@ describe("palette", () => {
   });
 
   test("labels the pre-typing view as your library", async () => {
-    seedFrames("", toHomeRows({ recent: [RESULTS.tracks[0]!], top: [] }), { showingHome: true });
+    seedFrames("", toHomeRows({ recent: [RESULTS.tracks[0]!], top: [], playlists: [] }), { showingHome: true });
     const screen = (await render(100, 32)).join("\n");
     expect(screen).toContain("RECENTLY PLAYED");
     expect(screen).toContain("your library");

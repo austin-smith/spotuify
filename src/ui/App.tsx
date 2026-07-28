@@ -8,16 +8,19 @@ import { DEVICE_NAME, MissingClientIdError, REDIRECT_URI } from "../config.ts";
 import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
 import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
+import { useLyrics } from "../store/lyrics.ts";
 import { usePlayback } from "../store/playback.ts";
 import { useQueue } from "../store/queue.ts";
 import { useSearch } from "../store/search.ts";
 import { ActionsMenu } from "./ActionsMenu.tsx";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { DevicePicker } from "./DevicePicker.tsx";
+import { LyricsView } from "./LyricsView.tsx";
 import { QueueView } from "./QueueView.tsx";
 import { Hud, HUD_ROWS } from "./Hud.tsx";
 import { KeyHints } from "./KeyHints.tsx";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
+import { overlayListHeight } from "./Overlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
 import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
@@ -71,8 +74,10 @@ export function App() {
   const devicesOpen = useDevices((s) => s.open);
   const queueOpen = useQueue((s) => s.open);
   const actionsOpen = useActions((s) => s.open);
+  const lyricsOpen = useLyrics((s) => s.open);
   const [keysOpen, setKeysOpen] = useState(false);
-  const overlayOpen = paletteOpen || devicesOpen || queueOpen || actionsOpen || keysOpen;
+  const overlayOpen =
+    paletteOpen || devicesOpen || queueOpen || actionsOpen || lyricsOpen || keysOpen;
 
   useEffect(() => {
     let cancelled = false;
@@ -83,7 +88,7 @@ export function App() {
         const me = await client.get<Me>("/me");
         if (cancelled) return;
         const player = new PlayerApi(client);
-        useSearch.getState().configure(client, me.country);
+        useSearch.getState().configure(client, me.country, me.id);
         useDevices.getState().configure(player);
         useQueue.getState().configure(player);
         setBoot({ phase: "ready", me, player });
@@ -110,6 +115,14 @@ export function App() {
     if (boot.phase !== "ready") return;
     return usePlayback.getState().start(boot.player);
   }, [boot]);
+
+  // Lyrics follow the music: leaving the overlay open through a track change loads the new song
+  // rather than leaving the previous one's words on screen. Keyed on the track, not the object —
+  // every poll produces a fresh one.
+  const trackKey = item === null ? null : (item.id ?? item.uri);
+  useEffect(() => {
+    useLyrics.getState().follow(item);
+  }, [trackKey]);
 
   useEffect(() => {
     if (boot.phase !== "ready") return;
@@ -168,9 +181,24 @@ export function App() {
     const picker = useDevices.getState();
     const queue = useQueue.getState();
     const actions = useActions.getState();
+    const lyrics = useLyrics.getState();
 
     if (keysOpen) {
       if (key.name === "escape" || key.name === "?" || key.name === "q") setKeysOpen(false);
+      return;
+    }
+
+    if (lyrics.open) {
+      // The list height the store has to clamp scrolling against; the overlay computes the same
+      // number from the same helper.
+      const viewport = overlayListHeight(height);
+      if (key.name === "escape" || key.name === "l") lyrics.closeLyrics();
+      else if (key.name === "up" || (key.ctrl && key.name === "p")) lyrics.scrollBy(-1, viewport);
+      else if (key.name === "down" || (key.ctrl && key.name === "n")) lyrics.scrollBy(1, viewport);
+      else if (key.name === "pageup") lyrics.scrollBy(-viewport, viewport);
+      else if (key.name === "pagedown") lyrics.scrollBy(viewport, viewport);
+      else if (key.name === "home") lyrics.scrollTo(0);
+      else if (key.name === "r") lyrics.openLyrics(usePlayback.getState().item);
       return;
     }
 
@@ -289,6 +317,11 @@ export function App() {
       return;
     }
 
+    if (key.name === "l") {
+      lyrics.openLyrics(usePlayback.getState().item);
+      return;
+    }
+
     if (key.name === "?") {
       setKeysOpen(true);
       return;
@@ -403,6 +436,7 @@ export function App() {
       {actionsOpen && item !== null ? (
         <ActionsMenu width={width} height={height} item={item} />
       ) : null}
+      {lyricsOpen ? <LyricsView width={width} height={height} item={item} /> : null}
       {keysOpen ? (
         <KeymapOverlay
           width={width}

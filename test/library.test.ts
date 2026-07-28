@@ -27,8 +27,10 @@ const track = (name: string, id = name) => ({
 
 /** Route each endpoint to a canned response, or an HTTP status to simulate a restriction. */
 function routes(map: Record<string, unknown | number>) {
+  const calls: string[] = [];
   globalThis.fetch = (async (url: string | URL | Request) => {
     const path = new URL(String(url)).pathname.replace("/v1", "");
+    calls.push(path);
     const entry = map[path];
     if (entry === undefined) return new Response("{}", { status: 200 });
     if (typeof entry === "number") return new Response("nope", { status: entry });
@@ -37,6 +39,7 @@ function routes(map: Record<string, unknown | number>) {
       headers: { "content-type": "application/json" },
     });
   }) as unknown as typeof fetch;
+  return calls;
 }
 
 describe("fetchHome", () => {
@@ -97,13 +100,42 @@ describe("fetchHome", () => {
       "/me/top/tracks": 500,
     });
     const home = await fetchHome(new SpotifyClient(tokens));
-    expect(home).toEqual({ recent: [], top: [] });
+    expect(home).toEqual({ recent: [], top: [], playlists: [] });
+  });
+
+  test("loads playlists without issuing one request per playlist", async () => {
+    const calls = routes({
+      "/me/player/recently-played": { items: [] },
+      "/me/top/tracks": { items: [] },
+      "/me/playlists": {
+        items: [
+          {
+            id: "one",
+            name: "One",
+            uri: "spotify:playlist:one",
+            owner: { id: "me", display_name: "Me" },
+          },
+          {
+            id: "two",
+            name: "Two",
+            uri: "spotify:playlist:two",
+            owner: { id: "me", display_name: "Me" },
+          },
+        ],
+        next: null,
+      },
+    });
+
+    const home = await fetchHome(new SpotifyClient(tokens), { meId: "me" });
+    expect(home.playlists.map((playlist) => playlist.name)).toEqual(["One", "Two"]);
+    expect(calls.filter((path) => path === "/me/playlists")).toHaveLength(1);
+    expect(calls.some((path) => path.startsWith("/playlists/"))).toBe(false);
   });
 });
 
 describe("toHomeRows", () => {
   test("labels each group and omits empty ones", () => {
-    const rows = toHomeRows({ recent: [track("R")], top: [] });
+    const rows = toHomeRows({ recent: [track("R")], top: [], playlists: [] });
     const headers = rows
       .filter((r) => r.kind === "header")
       .map((r) => (r as { label: string }).label);
@@ -111,7 +143,7 @@ describe("toHomeRows", () => {
   });
 
   test("lists both groups when both have items", () => {
-    const rows = toHomeRows({ recent: [track("R")], top: [track("T")] });
+    const rows = toHomeRows({ recent: [track("R")], top: [track("T")], playlists: [] });
     const headers = rows
       .filter((r) => r.kind === "header")
       .map((r) => (r as { label: string }).label);
@@ -119,11 +151,11 @@ describe("toHomeRows", () => {
   });
 
   test("is empty when nothing loaded", () => {
-    expect(toHomeRows({ recent: [], top: [] })).toEqual([]);
+    expect(toHomeRows({ recent: [], top: [], playlists: [] })).toEqual([]);
   });
 
   test("tracks play by uri", () => {
-    const rows = toHomeRows({ recent: [track("R")], top: [] });
+    const rows = toHomeRows({ recent: [track("R")], top: [], playlists: [] });
     const results = rows.filter((r) => r.kind === "result");
     expect(results[0]).toMatchObject({ play: { uris: ["spotify:track:R"] } });
   });

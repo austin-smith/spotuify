@@ -32,7 +32,7 @@ const track = (id: string, name: string) => ({
   album: { id: "x", name: "Album", uri: "spotify:album:x", images: [] },
 });
 
-function stubApi() {
+function stubApi(options: { playlistGate?: Promise<void> } = {}) {
   globalThis.fetch = (async (url: string | URL | Request) => {
     const path = new URL(String(url)).pathname;
     const json = (body: unknown) =>
@@ -43,6 +43,20 @@ function stubApi() {
 
     if (path.includes("recently-played")) return json({ items: [{ track: track("H", "HOME TRACK") }] });
     if (path.includes("/me/top/tracks")) return json({ items: [] });
+    if (path.includes("/me/playlists")) {
+      await options.playlistGate;
+      return json({
+        items: [
+          {
+            id: "drive",
+            name: "Late Night Drive",
+            uri: "spotify:playlist:drive",
+            owner: { id: "me", display_name: "Me" },
+          },
+        ],
+        next: null,
+      });
+    }
     if (path.includes("/search")) return json({ tracks: { items: [track("S", "SEARCH TRACK")] } });
     return json({});
   }) as unknown as typeof fetch;
@@ -63,7 +77,7 @@ async function openAndType(text: string) {
   const keys = createMockKeys(setup.renderer);
   createRoot(setup.renderer).render(<Palette width={90} height={20} />);
 
-  useSearch.getState().configure(new SpotifyClient(tokens), "US");
+  useSearch.getState().configure(new SpotifyClient(tokens), "US", "me");
   useSearch.getState().openPalette();
   await Bun.sleep(60);
   await setup.renderOnce();
@@ -109,5 +123,81 @@ describe("typing into the palette", () => {
     useSearch.getState().setQuery("");
     await Bun.sleep(30);
     expect(useSearch.getState().current()?.label).toBe("HOME TRACK");
+  });
+
+  test("adds late playlist matches without moving the current selection", async () => {
+    let releasePlaylists: (() => void) | undefined;
+    const playlistGate = new Promise<void>((resolve) => {
+      releasePlaylists = resolve;
+    });
+    stubApi({ playlistGate });
+
+    setup = await createTestRenderer({ width: 90, height: 20 });
+    const keys = createMockKeys(setup.renderer);
+    createRoot(setup.renderer).render(<Palette width={90} height={20} />);
+
+    useSearch.getState().configure(new SpotifyClient(tokens), "US", "me");
+    useSearch.getState().openPalette();
+    await keys.typeText("drive", 5);
+    await Bun.sleep(400);
+
+    expect(useSearch.getState().current()?.label).toBe("SEARCH TRACK");
+    expect(
+      useSearch
+        .getState()
+        .rows()
+        .some((row) => row.kind === "result" && row.label === "Late Night Drive"),
+    ).toBe(false);
+
+    releasePlaylists?.();
+    await Bun.sleep(50);
+
+    expect(
+      useSearch
+        .getState()
+        .rows()
+        .some((row) => row.kind === "result" && row.label === "Late Night Drive"),
+    ).toBe(true);
+    expect(useSearch.getState().current()?.label).toBe("SEARCH TRACK");
+  });
+
+  test("never attaches completed results to a newer query", async () => {
+    let releasePlaylists: (() => void) | undefined;
+    const playlistGate = new Promise<void>((resolve) => {
+      releasePlaylists = resolve;
+    });
+    stubApi({ playlistGate });
+
+    useSearch.getState().configure(new SpotifyClient(tokens), "US", "me");
+    useSearch.getState().openPalette();
+    useSearch.getState().setQuery("drive");
+    await Bun.sleep(250);
+    expect(useSearch.getState().current()?.label).toBe("SEARCH TRACK");
+
+    useSearch.getState().setQuery("other");
+    releasePlaylists?.();
+    await Bun.sleep(50);
+
+    expect(useSearch.getState().query).toBe("other");
+    expect(useSearch.getState().loading()).toBe(true);
+    expect(useSearch.getState().current()).toBeNull();
+  });
+
+  test("clears account-scoped rows when the client is reconfigured", async () => {
+    stubApi();
+    useSearch.getState().configure(new SpotifyClient(tokens), "US", "old-account");
+    useSearch.getState().openPalette();
+    await Bun.sleep(50);
+    expect(useSearch.getState().current()?.label).toBe("HOME TRACK");
+
+    useSearch.getState().configure(new SpotifyClient(tokens), "US", "new-account");
+
+    expect(useSearch.getState()).toMatchObject({
+      open: false,
+      query: "",
+      error: null,
+      showingHome: true,
+    });
+    expect(useSearch.getState().rows()).toEqual([]);
   });
 });

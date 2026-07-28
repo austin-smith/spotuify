@@ -13,8 +13,16 @@ const PADDING_X = 4;
  */
 export const OVERLAY_TOP = 2;
 
-/** Rows the shell itself owns: padding top and bottom, the header, the rule and the footer. */
-const CHROME_ROWS = 6;
+/**
+ * Rows the shell itself owns, counted from what it renders: two of padding at each end, the header,
+ * the rule with its margin above, the margin above the list, and the footer.
+ *
+ * Verified against the renderer rather than counted by hand — it was one too low, so every overlay
+ * asked for one row more than it had and the renderer drew the last two on top of each other. The
+ * symptom was a single garbled row at the bottom of a full list, which reads as a font problem
+ * rather than a layout one.
+ */
+const CHROME_ROWS = 9;
 
 /** Usable width inside the padding. */
 export function overlayInnerWidth(width: number): number {
@@ -28,7 +36,7 @@ export function overlayInnerWidth(width: number): number {
  * so the same shell produced four slightly different list heights.
  */
 export function overlayListHeight(height: number, extraRows = 0): number {
-  return Math.max(1, height - CHROME_ROWS - 2 - extraRows);
+  return Math.max(1, height - CHROME_ROWS - extraRows);
 }
 
 /** The `◈ TITLE` header most overlays use. */

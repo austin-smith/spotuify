@@ -32,6 +32,7 @@ export const KEYMAP: KeyGroup[] = [
     bindings: [
       { key: "/", action: "search" },
       { key: "a", action: "go to" },
+      { key: "l", action: "lyrics" },
       { key: "u", action: "queue" },
       { key: "d", action: "device" },
       { key: "r", action: "resync" },
@@ -44,6 +45,15 @@ export const KEYMAP: KeyGroup[] = [
       { key: "↵", action: "play / open" },
       { key: "ctrl+↵", action: "queue it" },
       { key: "esc", action: "back / close" },
+    ],
+  },
+  {
+    label: "IN LYRICS",
+    bindings: [
+      { key: "↑/↓", action: "scroll" },
+      { key: "pgup/pgdn", action: "scroll a page" },
+      { key: "r", action: "look again" },
+      { key: "esc", action: "close" },
     ],
   },
   {
@@ -75,6 +85,7 @@ export function barFor(state: { playing: boolean; hasTrack: boolean }): Binding[
     { key: "space", action: state.playing ? "pause" : "play" },
     { key: "/", action: "search" },
     { key: "a", action: "go to" },
+    { key: "l", action: "lyrics" },
     { key: "u", action: "queue" },
     { key: "d", action: "device" },
     { key: "?", action: "keys" },

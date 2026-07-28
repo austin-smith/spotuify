@@ -2,14 +2,17 @@ import { create } from "zustand";
 import { albumTracks, artistAlbums } from "../api/catalog.ts";
 import type { SpotifyClient } from "../api/client.ts";
 import { EMPTY_HOME, fetchHome, type HomeData } from "../api/library.ts";
-import { search } from "../api/search.ts";
+import { playlistItems } from "../api/playlists.ts";
+import { search, type SearchResults } from "../api/search.ts";
 import {
   filterRows,
   firstSelectable,
+  matchPlaylists,
   moveSelection,
   toAlbumRows,
   toArtistRows,
   toHomeRows,
+  toPlaylistRows,
   toRows,
   type Drill,
   type Row,
@@ -32,6 +35,13 @@ interface Frame {
   loading: boolean;
   /** Local filter text, used by drilled frames instead of a network query. */
   filter: string;
+  /**
+   * The source data for a root search frame.
+   *
+   * Playlist metadata loads independently from the Spotify search request. Keeping the source lets
+   * that later response add matching owned playlists without issuing the search again.
+   */
+  search?: { query: string; results: SearchResults };
 }
 
 export interface SearchSlice {
@@ -43,9 +53,9 @@ export interface SearchSlice {
   /** True while the root frame is showing the pre-typing view. */
   showingHome: boolean;
 
-  configure: (client: SpotifyClient, market: string | undefined) => void;
+  configure: (client: SpotifyClient, market: string | undefined, meId: string) => void;
   openPalette: () => void;
-  /** Open straight into an album or artist, skipping the search prompt. */
+  /** Open straight into an album, artist or playlist, skipping the search prompt. */
   openAt: (target: Drill) => void;
   closePalette: () => void;
   /** Types into whichever frame is on top: a search query at the root, a filter when drilled. */
@@ -69,6 +79,8 @@ export interface SearchSlice {
 
 let client: SpotifyClient | null = null;
 let market: string | undefined;
+/** Spotify id of the signed-in user; only their own playlists can be opened. */
+let meId = "";
 let debounce: ReturnType<typeof setTimeout> | null = null;
 let inFlight: AbortController | null = null;
 let drillLoad: AbortController | null = null;
@@ -89,12 +101,17 @@ let home: HomeData = EMPTY_HOME;
  * Highlighting on arrival is the combobox convention: the text field keeps the caret throughout and
  * the highlight marks your place in the list rather than competing for focus.
  */
-const frameOf = (rows: Row[], title?: string): Frame => ({
+const frameOf = (
+  rows: Row[],
+  title?: string,
+  searchSource?: { query: string; results: SearchResults },
+): Frame => ({
   rows,
   selected: firstSelectable(rows),
   loading: false,
   filter: "",
   ...(title !== undefined ? { title } : {}),
+  ...(searchSource !== undefined ? { search: searchSource } : {}),
 });
 
 const loadingFrame = (title?: string): Frame => ({
@@ -117,6 +134,53 @@ function topOf(frames: Frame[]): Frame | undefined {
   return frames[frames.length - 1];
 }
 
+type ResultRow = Extract<Row, { kind: "result" }>;
+
+/** Stable identity for preserving a result selection when groups are inserted around it. */
+function resultKey(row: ResultRow): string {
+  if (row.drill !== undefined) return `${row.drill.kind}:${row.drill.id}`;
+  if ("uris" in row.play) return `uris:${row.play.uris.join("\u0000")}`;
+  return `context:${row.play.contextUri}`;
+}
+
+function replaceRootRows(
+  root: Frame,
+  rows: Row[],
+  searchSource?: { query: string; results: SearchResults },
+): Frame {
+  const selected = root.rows[root.selected];
+  const key = selected?.kind === "result" ? resultKey(selected) : null;
+  const next = frameOf(rows, root.title, searchSource);
+  if (key === null) return next;
+
+  const selectedIndex = next.rows.findIndex(
+    (row) => row.kind === "result" && resultKey(row) === key,
+  );
+  return selectedIndex === -1 ? next : { ...next, selected: selectedIndex };
+}
+
+/** The rows behind one drill target. */
+async function rowsFor(
+  client: SpotifyClient,
+  target: Drill,
+  options: { market?: string; signal: AbortSignal },
+): Promise<Row[]> {
+  switch (target.kind) {
+    case "artist":
+      return toArtistRows(await artistAlbums(client, target.id, options));
+    case "album":
+      return toAlbumRows(
+        { name: target.name, uri: target.uri },
+        await albumTracks(client, target.id, options),
+      );
+    case "playlist":
+      return toPlaylistRows(
+        { name: target.name, uri: target.uri },
+        await playlistItems(client, target.id, options),
+      );
+  }
+}
+
 function cancelPending(): void {
   if (debounce !== null) clearTimeout(debounce);
   debounce = null;
@@ -131,9 +195,27 @@ export const useSearch = create<SearchSlice>((set, get) => ({
   error: null,
   showingHome: true,
 
-  configure(nextClient, nextMarket) {
+  configure(nextClient, nextMarket, nextMeId) {
+    if (client !== nextClient || market !== nextMarket || meId !== nextMeId) {
+      // The cache belongs to one authenticated client and market. Reconfiguration is rare, but
+      // retaining another account's library would be both stale and a privacy bug.
+      cancelPending();
+      drillLoad?.abort();
+      drillLoad = null;
+      homeLoad?.abort();
+      homeLoad = null;
+      home = EMPTY_HOME;
+      set({
+        open: false,
+        query: "",
+        frames: [frameOf([])],
+        error: null,
+        showingHome: true,
+      });
+    }
     client = nextClient;
     market = nextMarket;
+    meId = nextMeId;
   },
 
   openPalette() {
@@ -153,18 +235,43 @@ export const useSearch = create<SearchSlice>((set, get) => ({
 
     void (async () => {
       try {
-        const data = await fetchHome(client, { market, signal: controller.signal });
+        const data = await fetchHome(client, { market, meId, signal: controller.signal });
         if (controller.signal.aborted) return;
         home = data;
-        // A drilled frame owns the view now, so leave it alone — clearing its loading flag here
-        // would blank the list while the drill is still in flight. `back()` fills the root frame in
-        // from this cache on the way out.
-        if (get().frames.length !== 1) return;
-        // A query typed while this was loading takes precedence.
-        if (get().query.trim().length === 0) {
-          set({ frames: [frameOf(toHomeRows(data))], showingHome: true });
-        } else {
-          set({ frames: withTop(get().frames, { loading: false }) });
+        const { frames, query } = get();
+
+        // Fill the root even when a drilled frame currently owns the screen. Only the first frame
+        // changes, so the active drill and its loading state remain untouched while Back is made
+        // ready with the newly loaded library.
+        if (query.trim().length === 0) {
+          set({
+            frames: [frameOf(toHomeRows(data)), ...frames.slice(1)],
+            showingHome: true,
+          });
+          return;
+        }
+
+        // Search may have completed while the playlist library was still loading. Rebuild that
+        // frame from its source response so owned playlist-name matches appear without another
+        // network search or an extra keystroke. If search is still loading, it will use `home`
+        // itself when its response arrives.
+        const root = frames[0];
+        if (root?.search?.query === query) {
+          const context = {
+            meId,
+            libraryMatches: matchPlaylists(data.playlists, query),
+          };
+          set({
+            frames: [
+              replaceRootRows(
+                root,
+                toRows(root.search.results, context),
+                root.search,
+              ),
+              ...frames.slice(1),
+            ],
+            showingHome: false,
+          });
         }
       } catch (err) {
         if (controller.signal.aborted) return;
@@ -179,7 +286,7 @@ export const useSearch = create<SearchSlice>((set, get) => ({
   },
 
   /**
-   * Open the palette already inside an album or artist.
+   * Open the palette already inside an album, artist or playlist.
    *
    * The root frame is still pushed underneath, so escape lands on home-or-search rather than
    * closing outright — the same place `back()` would take you from any other drilled frame.
@@ -236,7 +343,17 @@ export const useSearch = create<SearchSlice>((set, get) => ({
           const results = await search(client, text, { market, signal: controller.signal });
           // A newer keystroke may have superseded this request while it was in flight.
           if (controller.signal.aborted || get().query !== text) return;
-          set({ frames: [frameOf(toRows(results))], showingHome: false, error: null });
+          const context = {
+            meId,
+            libraryMatches: matchPlaylists(home.playlists, text),
+          };
+          set({
+            frames: [
+              frameOf(toRows(results, context), undefined, { query: text, results }),
+            ],
+            showingHome: false,
+            error: null,
+          });
         } catch (err) {
           if (controller.signal.aborted) return;
           set({
@@ -271,15 +388,7 @@ export const useSearch = create<SearchSlice>((set, get) => ({
 
     void (async () => {
       try {
-        const rows =
-          target.kind === "artist"
-            ? toArtistRows(
-                await artistAlbums(client, target.id, { market, signal: controller.signal }),
-              )
-            : toAlbumRows(
-                { name: target.name, uri: target.uri },
-                await albumTracks(client, target.id, { market, signal: controller.signal }),
-              );
+        const rows = await rowsFor(client, target, { market, signal: controller.signal });
         if (controller.signal.aborted) return;
         set({
           frames: withTop(get().frames, { rows, selected: firstSelectable(rows), loading: false }),
@@ -303,9 +412,9 @@ export const useSearch = create<SearchSlice>((set, get) => ({
     drillLoad = null;
 
     const remaining = frames.slice(0, -1);
-    // Opening straight into an album leaves the root frame unfilled, because the home fetch
-    // deliberately skips a view a deeper frame owns. Fill it in here so escaping out shows home
-    // rather than the spinner it was left on.
+    // Back can beat the home request when opening straight into a drill. Fill the root from whatever
+    // is cached now rather than briefly returning to the spinner; the request will replace it when
+    // it settles.
     const root = remaining[0];
     if (remaining.length === 1 && root !== undefined && root.rows.length === 0 && query === "") {
       set({ frames: [frameOf(toHomeRows(home))], showingHome: true, error: null });

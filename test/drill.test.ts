@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { AlbumTrack } from "../src/api/catalog.ts";
 import type { SimpleAlbum } from "../src/api/types.ts";
-import { filterRows, toAlbumRows, toArtistRows, toRows, type Row } from "../src/store/rows.ts";
+import {
+  filterRows,
+  matchPlaylists,
+  toAlbumRows,
+  toArtistRows,
+  toHomeRows,
+  toPlaylistRows,
+  toRows,
+  type Row,
+} from "../src/store/rows.ts";
 
 const albumTrack = (n: number, name: string): AlbumTrack => ({
   id: String(n),
@@ -168,5 +177,190 @@ describe("filterRows", () => {
   test("never leaves a trailing orphan header", () => {
     const filtered = filterRows(rows, "brainy");
     expect(filtered.at(-1)?.kind).toBe("result");
+  });
+});
+
+describe("playlist rows", () => {
+  const owned = {
+    id: "p1",
+    name: "DRV",
+    uri: "spotify:playlist:p1",
+    ownerId: "me",
+    ownerName: "me",
+    mine: true,
+  };
+  const followed = { ...owned, id: "p2", name: "This is The Strokes", ownerName: "manuchabu", ownerId: "manuchabu", mine: false };
+
+  /**
+   * Spotify answers 403 for the contents of any playlist the user does not own, so offering to open
+   * one is offering a dead end.
+   */
+  test("only the user's own playlists can be opened", () => {
+    const rows = toHomeRows({ recent: [], top: [], playlists: [owned, followed] });
+    const byLabel = new Map(results(rows).map((r) => [r.label, r]));
+    expect(byLabel.get("DRV")?.drill).toEqual({
+      kind: "playlist",
+      id: "p1",
+      name: "DRV",
+      uri: "spotify:playlist:p1",
+    });
+    expect(byLabel.get("This is The Strokes")?.drill).toBeUndefined();
+  });
+
+  // The owner doubles as the reason that row will not open.
+  test("names the owner only when it is someone else", () => {
+    const rows = toHomeRows({ recent: [], top: [], playlists: [owned, followed] });
+    const byLabel = new Map(results(rows).map((r) => [r.label, r]));
+    expect(byLabel.get("DRV")?.detail).toBe("");
+    expect(byLabel.get("This is The Strokes")?.detail).toBe("manuchabu");
+  });
+
+  test("every playlist still plays as a context", () => {
+    const rows = toHomeRows({ recent: [], top: [], playlists: [followed] });
+    expect(results(rows)[0]).toMatchObject({ play: { contextUri: "spotify:playlist:p1" } });
+  });
+
+  test("a search hit is openable when the owner is us", () => {
+    const rows = toRows(
+      {
+        tracks: [],
+        artists: [],
+        albums: [],
+        playlists: [
+          { id: "s1", name: "Mine", uri: "u1", owner: { id: "me", display_name: "me" } },
+          { id: "s2", name: "Theirs", uri: "u2", owner: { id: "other", display_name: "Other" } },
+        ],
+      },
+      { meId: "me", libraryMatches: [] },
+    );
+    const byLabel = new Map(results(rows).map((r) => [r.label, r]));
+    expect(byLabel.get("Mine")?.drill).toMatchObject({ kind: "playlist" });
+    expect(byLabel.get("Theirs")?.drill).toBeUndefined();
+  });
+
+  // Spotify's playlist search returns mostly nulls and other people's playlists, so the user's own
+  // matches lead — they are the only ones that open.
+  test("the user's own matches lead the results", () => {
+    const rows = toRows(
+      { tracks: [], artists: [], albums: [], playlists: [] },
+      { meId: "me", libraryMatches: [owned] },
+    );
+    expect(rows[0]).toMatchObject({ kind: "header", label: "YOUR PLAYLISTS" });
+    expect(results(rows)[0]?.drill).toMatchObject({ kind: "playlist" });
+  });
+
+  test("does not repeat a library playlist returned by remote search", () => {
+    const rows = toRows(
+      {
+        tracks: [],
+        artists: [],
+        albums: [],
+        playlists: [
+          {
+            id: owned.id,
+            name: owned.name,
+            uri: owned.uri,
+            owner: { id: "me", display_name: "me" },
+          },
+        ],
+      },
+      { meId: "me", libraryMatches: [owned] },
+    );
+    expect(results(rows).filter((row) => row.label === owned.name)).toHaveLength(1);
+  });
+});
+
+describe("toPlaylistRows", () => {
+  const entry = (position: number, name: string) => ({
+    position,
+    isLocal: false,
+    track: {
+      id: name,
+      name,
+      uri: `spotify:track:${name}`,
+      duration_ms: 200_000,
+      artists: [{ id: "a", name: "The National", uri: "spotify:artist:a" }],
+      album: album(),
+    },
+  });
+
+  const playlist = { name: "DRV", uri: "spotify:playlist:p1" };
+
+  test("plays the playlist as context, offset to the chosen track", () => {
+    const rows = toPlaylistRows(playlist, [entry(0, "One"), entry(1, "Two")]);
+    expect(results(rows)[0]).toMatchObject({
+      play: { contextUri: "spotify:playlist:p1", offset: 0 },
+    });
+    expect(results(rows)[1]).toMatchObject({
+      play: { contextUri: "spotify:playlist:p1", offset: 1 },
+    });
+  });
+
+  /**
+   * The offset is the position within the playlist, not the index in this array. An entry dropped
+   * for being a podcast still occupies a slot in the context, and ignoring that starts the wrong
+   * song for every row after it.
+   */
+  test("uses the entry's position, not its index", () => {
+    const rows = toPlaylistRows(playlist, [entry(0, "One"), entry(7, "Eight")]);
+    expect(results(rows)[1]).toMatchObject({
+      play: { contextUri: "spotify:playlist:p1", offset: 7 },
+    });
+  });
+
+  test("shows the artist and duration", () => {
+    const rows = toPlaylistRows(playlist, [entry(0, "One")]);
+    expect(results(rows)[0]?.detail).toBe("The National");
+    expect(results(rows)[0]?.trailing).toBe("3:20");
+  });
+
+  test("never offers a further drill", () => {
+    const rows = toPlaylistRows(playlist, [entry(0, "One")]);
+    expect(results(rows).every((r) => r.drill === undefined)).toBe(true);
+  });
+
+  test("handles an empty playlist", () => {
+    expect(toPlaylistRows(playlist, [])).toEqual([]);
+  });
+});
+
+describe("matchPlaylists", () => {
+  const list = (name: string) => ({
+    id: name,
+    name,
+    uri: `spotify:playlist:${name}`,
+    ownerId: "me",
+    ownerName: "me",
+    mine: true,
+  });
+  const all = [list("Late Night Drive"), list("Morning"), list("driving songs")];
+
+  test("matches case-insensitively anywhere in the name", () => {
+    expect(matchPlaylists(all, "driv").map((p) => p.name)).toEqual([
+      "Late Night Drive",
+      "driving songs",
+    ]);
+  });
+
+  test("matches nothing for a blank query", () => {
+    expect(matchPlaylists(all, "   ")).toEqual([]);
+  });
+
+  test("caps how many it returns", () => {
+    expect(matchPlaylists([list("a1"), list("a2"), list("a3")], "a", 2)).toHaveLength(2);
+  });
+
+  test("prioritizes openable owned playlists before applying the cap", () => {
+    const followed = Array.from({ length: 5 }, (_, index) => ({
+      ...list(`drive followed ${index}`),
+      ownerId: "other",
+      ownerName: "other",
+      mine: false,
+    }));
+    const owned = list("drive mine");
+
+    const matches = matchPlaylists([...followed, owned], "drive", 5);
+    expect(matches[0]?.name).toBe("drive mine");
+    expect(matches).toHaveLength(5);
   });
 });

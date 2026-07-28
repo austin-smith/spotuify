@@ -5,7 +5,8 @@ export interface SimplePlaylist {
   id: string;
   name: string;
   uri: string;
-  owner?: { display_name: string | null };
+  /** `id` is what decides whether the playlist can be opened; only the owner's own can. */
+  owner?: { id?: string; display_name: string | null };
   tracks?: { total: number };
 }
 
