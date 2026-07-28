@@ -3,6 +3,13 @@
 <p align="center">🕺 spotify in ur terminal</p>
 
 <p align="center">
+  <img alt="Bun 1.3" src="https://img.shields.io/badge/Bun%201.3-000000?logo=bun&logoColor=white">
+  <img alt="React 19" src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black">
+  <img alt="OpenTUI 0.4" src="https://img.shields.io/badge/OpenTUI%200.4-6E56CF">
+  <img alt="librespot 0.8" src="https://img.shields.io/badge/librespot%200.8-000000?logo=rust&logoColor=white">
+</p>
+
+<p align="center">
   <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="90%" />
 </p>
 

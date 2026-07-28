@@ -23,7 +23,7 @@
     "@opentui/core": "0.4.5",
     "@opentui/react": "0.4.5",
     "jpeg-js": "0.4.4",
-    "react": "19.2.6",
+    "react": "19.2.8",
     "zustand": "5.0.14"
   }
 }
