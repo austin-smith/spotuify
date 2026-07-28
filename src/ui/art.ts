@@ -1,6 +1,12 @@
 import jpeg from "jpeg-js";
 import type { Image } from "../api/types.ts";
 
+export interface Rgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
 export interface ArtBitmap {
   /** RGBA pixels, `width * height * 4` bytes, ready for `drawSuperSampleBuffer`. */
   rgba: Uint8Array;
@@ -156,6 +162,36 @@ export function resizeRgba(
   }
 
   return dst;
+}
+
+/**
+ * Average the two pixel rows a single cell row covers, per column.
+ *
+ * The art is drawn as half-block glyphs, so each cell normally holds two colours. A terminal's block
+ * cursor fills a whole cell and composites badly against that, so the row the caret sits on is
+ * redrawn as solid cells using these averaged colours.
+ */
+export function flattenCellRow(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  cellRow: number,
+): Rgb[] {
+  const top = cellRow * 2;
+  if (top < 0 || top >= height) return [];
+  const bottom = Math.min(top + 1, height - 1);
+
+  const colors: Rgb[] = [];
+  for (let x = 0; x < width; x++) {
+    const a = (top * width + x) * 4;
+    const b = (bottom * width + x) * 4;
+    colors.push({
+      r: Math.round(((rgba[a] ?? 0) + (rgba[b] ?? 0)) / 2),
+      g: Math.round(((rgba[a + 1] ?? 0) + (rgba[b + 1] ?? 0)) / 2),
+      b: Math.round(((rgba[a + 2] ?? 0) + (rgba[b + 2] ?? 0)) / 2),
+    });
+  }
+  return colors;
 }
 
 /**

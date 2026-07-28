@@ -7,9 +7,11 @@ import { tokenStore } from "../auth/flow.ts";
 import { DEVICE_NAME, MissingClientIdError, REDIRECT_URI } from "../config.ts";
 import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
 import { usePlayback } from "../store/playback.ts";
+import { useSearch } from "../store/search.ts";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { Hud, HUD_ROWS, TopBar } from "./Hud.tsx";
 import { KeyHints } from "./KeyHints.tsx";
+import { Palette, PROMPT_ROW } from "./Palette.tsx";
 import { theme } from "./theme.ts";
 
 type Boot =
@@ -47,6 +49,9 @@ export function App() {
   const deviceName = usePlayback((s) => s.deviceName);
   const ready = usePlayback((s) => s.ready);
   const error = usePlayback((s) => s.error);
+  // Must sit with the other hooks: below the `boot.phase` early returns the hook count would
+  // differ between the loading and ready renders, which React rejects outright.
+  const paletteOpen = useSearch((s) => s.open);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +61,7 @@ export function App() {
         const client = new SpotifyClient(await tokenStore());
         const me = await client.get<Me>("/me");
         if (cancelled) return;
+        useSearch.getState().configure(client, me.country);
         setBoot({ phase: "ready", me, player: new PlayerApi(client) });
       } catch (err) {
         if (cancelled) return;
@@ -121,11 +127,57 @@ export function App() {
   }, [boot, engine.state]);
 
   useKeyboard((key) => {
+    const palette = useSearch.getState();
+
+    // While the palette is open the input consumes printable characters; only navigation,
+    // confirmation and dismissal are handled here, and nothing falls through to transport keys.
+    if (palette.open) {
+      // Standard combobox keys: the field always holds the caret, arrows move the list highlight,
+      // Enter accepts the highlighted row, escape closes. Left/Right stay text editing.
+      if (key.name === "escape") {
+        if (!palette.back()) palette.closePalette();
+      } else if (key.name === "up" || (key.ctrl && key.name === "p")) {
+        palette.move(-1);
+      } else if (key.name === "down" || (key.ctrl && key.name === "n")) {
+        palette.move(1);
+      } else if (key.name === "return") {
+        const row = palette.current();
+        if (row === null || boot.phase !== "ready") return;
+
+        // Artists and albums open into their contents; anything else plays.
+        if (row.drill !== undefined) {
+          palette.drillInto(row.drill);
+          return;
+        }
+
+        const deviceId = usePlayback.getState().deviceId;
+        void (async () => {
+          try {
+            await boot.player.play({
+              ...row.play,
+              ...(deviceId !== null ? { deviceId } : {}),
+            });
+            await Bun.sleep(300);
+            await usePlayback.getState().refresh();
+          } catch {
+            // Playback failures surface through the store's error state.
+          }
+        })();
+        palette.closePalette();
+      }
+      return;
+    }
+
     if (key.name === "q" || (key.ctrl && key.name === "c")) {
       renderer.destroy();
       return;
     }
     if (boot.phase !== "ready") return;
+
+    if (key.name === "/") {
+      palette.openPalette();
+      return;
+    }
 
     const store = usePlayback.getState();
     switch (key.name) {
@@ -174,13 +226,24 @@ export function App() {
   if (boot.phase === "needs-setup") return <Setup message={boot.message} />;
 
   const images = item !== null && isTrack(item) ? item.album.images : null;
-  // The keybind strip is the last row, so the HUD's scrim starts one row above it.
+  // Row the HUD's darkened band starts at. The keybind strip draws over the cover on the final row,
+  // so the scrim has to reach the very bottom.
   const hudTop = height - HUD_ROWS;
 
   return (
     <box flexGrow={1} position="relative">
       {images !== null && images.length > 0 ? (
-        <CoverBackdrop images={images} width={width} height={height - 1} scrimFromRow={hudTop - 1} />
+        <CoverBackdrop
+          images={images}
+          width={width}
+          // Full height in every state. Sizing this one row short to make room for the keybind
+          // strip left an empty band whenever that strip was not drawn; the strip is an overlay and
+          // sits on top of the cover instead.
+          height={height}
+          scrimFromRow={hudTop - 1}
+          dim={paletteOpen}
+          solidRow={paletteOpen ? PROMPT_ROW : null}
+        />
       ) : null}
 
       <TopBar
@@ -190,7 +253,7 @@ export function App() {
         width={width}
       />
 
-      {item !== null ? (
+      {item !== null && !paletteOpen ? (
         <Hud
           item={item}
           progressMs={progressMs}
@@ -203,7 +266,7 @@ export function App() {
           width={width}
           height={height - 1}
         />
-      ) : (
+      ) : paletteOpen ? null : (
         <box position="absolute" left={2} top={Math.floor(height / 2)} zIndex={2}>
           <text fg={theme.muted}>
             {ready ? "NOTHING PLAYING — start a track on any device, then press R" : "LOADING…"}
@@ -217,9 +280,13 @@ export function App() {
         </box>
       ) : null}
 
-      <box position="absolute" left={0} top={height - 1} width={width} zIndex={2}>
-        <KeyHints width={width} />
-      </box>
+      {paletteOpen ? null : (
+        <box position="absolute" left={0} top={height - 1} width={width} zIndex={2}>
+          <KeyHints width={width} />
+        </box>
+      )}
+
+      {paletteOpen ? <Palette width={width} height={height} /> : null}
     </box>
   );
 }

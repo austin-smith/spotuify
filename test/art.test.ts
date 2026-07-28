@@ -4,6 +4,7 @@ import {
   chooseImage,
   coverCrop,
   fitSquare,
+  flattenCellRow,
   pixelDimsFor,
   regionAspect,
   resizeRgba,
@@ -211,6 +212,62 @@ describe("applyScrim", () => {
     for (let i = 0; i < buf.length; i++) {
       expect(buf[i]).toBeGreaterThanOrEqual(0);
       expect(buf[i]).toBeLessThanOrEqual(255);
+    }
+  });
+});
+
+describe("flattenCellRow", () => {
+  /** Two pixel rows per cell row, distinguishable per row so averaging is observable. */
+  const buf = (w: number, h: number, at: (x: number, y: number) => number) => {
+    const b = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const v = at(x, y);
+        const i = (y * w + x) * 4;
+        b[i] = v;
+        b[i + 1] = v;
+        b[i + 2] = v;
+        b[i + 3] = 255;
+      }
+    return b;
+  };
+
+  test("averages the two pixel rows a cell covers", () => {
+    // Cell row 0 covers pixel rows 0 and 1: values 0 and 100 average to 50.
+    const colors = flattenCellRow(buf(3, 4, (_x, y) => (y === 0 ? 0 : y === 1 ? 100 : 200)), 3, 4, 0);
+    expect(colors).toHaveLength(3);
+    expect(colors[0]).toEqual({ r: 50, g: 50, b: 50 });
+  });
+
+  test("returns one colour per column", () => {
+    const colors = flattenCellRow(buf(7, 6, () => 120), 7, 6, 2);
+    expect(colors).toHaveLength(7);
+    expect(colors.every((c) => c.r === 120)).toBe(true);
+  });
+
+  test("varies across columns", () => {
+    const colors = flattenCellRow(buf(4, 2, (x) => x * 60), 4, 2, 0);
+    expect(colors.map((c) => c.r)).toEqual([0, 60, 120, 180]);
+  });
+
+  test("returns empty for a row outside the buffer", () => {
+    expect(flattenCellRow(buf(4, 4, () => 10), 4, 4, 5)).toEqual([]);
+    expect(flattenCellRow(buf(4, 4, () => 10), 4, 4, -1)).toEqual([]);
+  });
+
+  test("clamps when the cell's lower pixel row is past the end", () => {
+    // Odd pixel height: the last cell row has only one pixel row available.
+    const colors = flattenCellRow(buf(2, 3, (_x, y) => y * 90), 2, 3, 1);
+    expect(colors).toHaveLength(2);
+    expect(colors[0]?.r).toBe(180);
+  });
+
+  test("keeps channels in range", () => {
+    for (const c of flattenCellRow(buf(5, 4, () => 255), 5, 4, 1)) {
+      for (const v of [c.r, c.g, c.b]) {
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThanOrEqual(255);
+      }
     }
   });
 });

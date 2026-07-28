@@ -1,8 +1,8 @@
-import { FrameBufferRenderable } from "@opentui/core";
+import { FrameBufferRenderable, RGBA } from "@opentui/core";
 import { ptr } from "bun:ffi";
 import { useEffect, useRef } from "react";
 import type { Image } from "../api/types.ts";
-import { chooseImage, loadCoverArt, pixelDimsFor, type ArtBitmap } from "./art.ts";
+import { chooseImage, flattenCellRow, loadCoverArt, pixelDimsFor, type ArtBitmap } from "./art.ts";
 
 const cache = new Map<string, ArtBitmap>();
 
@@ -13,6 +13,16 @@ interface CoverBackdropProps {
   height: number;
   /** Cell row from which the art is darkened, so the HUD stays legible. */
   scrimFromRow: number;
+  /** Darken the whole cover, for overlays that need the full screen readable. */
+  dim?: boolean;
+  /**
+   * Cell row to draw as solid single-colour cells rather than half-blocks.
+   *
+   * A terminal's block cursor fills an entire cell, so it only looks right over a cell holding one
+   * colour. This flattens the row the caret sits on; the row loses half its vertical detail, which
+   * is imperceptible across a single row.
+   */
+  solidRow?: number | null;
 }
 
 /**
@@ -22,7 +32,14 @@ interface CoverBackdropProps {
  * replaced a centred square: with the art bounded by the smaller axis there was always a leftover
  * band, and no amount of aligning made that band look intentional.
  */
-export function CoverBackdrop({ images, width, height, scrimFromRow }: CoverBackdropProps) {
+export function CoverBackdrop({
+  images,
+  width,
+  height,
+  scrimFromRow,
+  dim = false,
+  solidRow = null,
+}: CoverBackdropProps) {
   const hostRef = useRef<any>(null);
   const fbRef = useRef<FrameBufferRenderable | null>(null);
 
@@ -39,11 +56,14 @@ export function CoverBackdrop({ images, width, height, scrimFromRow }: CoverBack
     let disposed = false;
 
     void (async () => {
-      const key = `${url}@${width}x${height}@${scrimFromRow}`;
+      // Terminals have no alpha compositing, so dimming is baked into the pixel buffer. The dimmed
+      // variant is a separate cache entry, costing one decode per album.
+      const scrim = dim ? 0 : scrimFromRow;
+      const key = `${url}@${width}x${height}@${scrim}`;
       try {
         let art = cache.get(key);
         if (art === undefined) {
-          art = await loadCoverArt(url, width, height, scrimFromRow, controller.signal);
+          art = await loadCoverArt(url, width, height, scrim, controller.signal);
           cache.set(key, art);
         }
         if (disposed) return;
@@ -62,6 +82,20 @@ export function CoverBackdrop({ images, width, height, scrimFromRow }: CoverBack
           "rgba8unorm",
           art.width * 4,
         );
+        if (solidRow !== null && solidRow >= 0 && solidRow < height) {
+          const flat = flattenCellRow(art.rgba, art.width, art.height, solidRow);
+          const fg = RGBA.fromInts(255, 255, 255, 255);
+          flat.forEach((color: { r: number; g: number; b: number }, x: number) => {
+            fb.frameBuffer.setCell(
+              x,
+              solidRow,
+              " ",
+              fg,
+              RGBA.fromInts(color.r, color.g, color.b, 255),
+            );
+          });
+        }
+
         host.add(fb);
         fbRef.current = fb;
       } catch {
@@ -75,7 +109,7 @@ export function CoverBackdrop({ images, width, height, scrimFromRow }: CoverBack
       fbRef.current?.destroyRecursively?.();
       fbRef.current = null;
     };
-  }, [url, width, height, scrimFromRow]);
+  }, [url, width, height, scrimFromRow, dim, solidRow]);
 
   return (
     <box
