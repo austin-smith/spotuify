@@ -1,4 +1,5 @@
 import { artistLine, isTrack, type PlayableItem, type RepeatState } from "../api/types.ts";
+import { DEVICE_NAME } from "../config.ts";
 import { formatDuration, progressBar } from "../store/progress.ts";
 import type { EngineStatus } from "../engine/librespot.ts";
 import { theme } from "./theme.ts";
@@ -17,44 +18,6 @@ function truncate(value: string, max: number): string {
 }
 
 const REPEAT_LABEL: Record<RepeatState, string> = { off: "OFF", track: "TRACK", context: "ALL" };
-
-/** Top-left corner: identity and engine health, over the art. */
-export function TopBar({
-  engine,
-  account,
-  product,
-  width,
-}: {
-  engine: EngineStatus;
-  account: string;
-  product: string | undefined;
-  width: number;
-}) {
-  const engineOk = engine.state === "running";
-  return (
-    <box
-      position="absolute"
-      left={2}
-      top={1}
-      width={width - 4}
-      zIndex={2}
-      flexDirection="row"
-      justifyContent="space-between"
-    >
-      <text>
-        <span fg={theme.accent}>
-          <strong>SPOTUIFY</strong>
-        </span>
-        <span fg={theme.scrimText}>{"  ·  "}</span>
-        <span fg={engineOk ? theme.accent : theme.error}>{engineOk ? "ENGINE" : "NO ENGINE"}</span>
-      </text>
-      <text fg={theme.scrimText}>
-        {account}
-        {product !== undefined ? `  ·  ${product.toUpperCase()}` : ""}
-      </text>
-    </box>
-  );
-}
 
 interface HudProps {
   item: PlayableItem;
@@ -93,11 +56,13 @@ export function Hud({
   const filled = Math.round(ratio * barWidth);
   const bar = progressBar(progressMs, durationMs, barWidth);
 
+  // Spotify's own convention: name the device only when playback is somewhere else. Playing here is
+  // the default, so printing this terminal's own device name every time is noise.
+  const elsewhere = deviceName !== null && deviceName !== DEVICE_NAME;
   const meta = [
-    isPlaying ? "PLAYING" : "PAUSED",
+    elsewhere ? `PLAYING ON ${deviceName.toUpperCase()}` : isPlaying ? "PLAYING" : "PAUSED",
     shuffle ? "SHUFFLE" : null,
     repeat === "off" ? null : `REPEAT ${REPEAT_LABEL[repeat]}`,
-    deviceName,
     volumePercent === null ? null : `VOL ${volumePercent}%`,
   ]
     .filter((v): v is string => v !== null && v.length > 0)
@@ -128,7 +93,7 @@ export function Hud({
         <text fg={theme.scrimText}>{formatDuration(durationMs).padStart(5)}</text>
       </box>
 
-      <text fg={theme.scrimText}>{truncate(meta, inner)}</text>
+      <text fg={elsewhere ? theme.accent : theme.scrimText}>{truncate(meta, inner)}</text>
     </box>
   );
 }

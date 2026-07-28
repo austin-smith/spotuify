@@ -3,7 +3,6 @@ import {
   applyScrim,
   chooseImage,
   coverCrop,
-  fitSquare,
   flattenCellRow,
   pixelDimsFor,
   regionAspect,
@@ -26,30 +25,6 @@ function image(w: number, h: number, at: (x: number, y: number) => [number, numb
   return buf;
 }
 
-describe("fitSquare", () => {
-  // A supersampled cell is 1px wide and 2px tall, and cells are ~2x taller than wide, so a
-  // visually square image needs twice as many columns as rows.
-  test("returns twice as many columns as rows", () => {
-    const { w, h } = fitSquare(80, 40);
-    expect(w).toBe(h * 2);
-  });
-
-  test("is limited by width when width is the constraint", () => {
-    expect(fitSquare(40, 100)).toEqual({ w: 40, h: 20 });
-  });
-
-  test("is limited by height when height is the constraint", () => {
-    expect(fitSquare(200, 10)).toEqual({ w: 20, h: 10 });
-  });
-
-  test("never returns zero or negative dimensions", () => {
-    for (const [w, h] of [[0, 0], [1, 1], [-5, 3], [3, 0]] as const) {
-      const fit = fitSquare(w, h);
-      expect(fit.h).toBeGreaterThanOrEqual(1);
-      expect(fit.w).toBeGreaterThanOrEqual(2);
-    }
-  });
-});
 
 describe("chooseImage", () => {
   const images = [
@@ -91,9 +66,8 @@ describe("pixelDimsFor", () => {
     expect(pixelDimsFor(1, 1)).toEqual({ width: 2, height: 2 });
   });
 
-  test("stays 2:1 for a square-looking region", () => {
-    const { w, h } = fitSquare(120, 60);
-    const px = pixelDimsFor(w, h);
+  test("keeps the region's own ratio", () => {
+    const px = pixelDimsFor(120, 60);
     expect(px.width / px.height).toBe(2);
   });
 });
@@ -271,3 +245,4 @@ describe("flattenCellRow", () => {
     }
   });
 });
+

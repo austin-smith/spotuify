@@ -84,18 +84,6 @@ export function pixelDimsFor(cellsW: number, cellsH: number): { width: number; h
 }
 
 /**
- * Cell dimensions that render `cover` art as a visually square block.
- *
- * A supersampled cell shows 1 pixel across and 2 down, and terminal cells are roughly twice as
- * tall as they are wide — so one pixel ends up about square, and a square image needs twice as
- * many columns as rows.
- */
-export function fitSquare(maxCellsWide: number, maxCellsTall: number): { w: number; h: number } {
-  const h = Math.max(1, Math.min(maxCellsTall, Math.floor(maxCellsWide / 2)));
-  return { w: h * 2, h };
-}
-
-/**
  * Oversampling factor when choosing a source image.
  *
  * Downscaling from a source only as large as the target makes the box filter degenerate into
@@ -226,28 +214,3 @@ export async function loadCoverArt(
   return { rgba, width, height };
 }
 
-/** Fetch and decode album art, scaled for a `cellsW x cellsH` region. */
-export async function loadArt(
-  url: string,
-  cellsW: number,
-  cellsH: number,
-  signal?: AbortSignal,
-): Promise<ArtBitmap> {
-  const res = await fetch(url, signal ? { signal } : {});
-  if (!res.ok) throw new Error(`Album art fetch failed (${res.status})`);
-
-  const decoded = jpeg.decode(new Uint8Array(await res.arrayBuffer()), { useTArray: true });
-
-  // Resizing a square cover to this non-square pixel grid is deliberate: a supersampled pixel is
-  // half a cell wide but a full cell tall, so a 2:1 pixel grid is what displays as a square.
-  const { width, height } = pixelDimsFor(cellsW, cellsH);
-  const rgba = resizeRgba(
-    new Uint8Array(decoded.data.buffer, decoded.data.byteOffset, decoded.data.byteLength),
-    decoded.width,
-    decoded.height,
-    width,
-    height,
-  );
-
-  return { rgba, width, height };
-}

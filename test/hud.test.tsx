@@ -2,7 +2,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Track } from "../src/api/types.ts";
-import { Hud, HUD_ROWS, TopBar } from "../src/ui/Hud.tsx";
+import { Hud, HUD_ROWS } from "../src/ui/Hud.tsx";
 import { KeyHints } from "../src/ui/KeyHints.tsx";
 
 const TRACK: Track = {
@@ -22,19 +22,15 @@ function Overlays({
   width,
   height,
   item = TRACK,
+  deviceName = "spotuify",
 }: {
   width: number;
   height: number;
   item?: Track;
+  deviceName?: string;
 }) {
   return (
     <box flexGrow={1} position="relative">
-      <TopBar
-        engine={{ state: "running", pid: 1 }}
-        account="austinsmith23"
-        product="premium"
-        width={width}
-      />
       <Hud
         item={item}
         progressMs={95_000}
@@ -43,7 +39,7 @@ function Overlays({
         shuffle={false}
         repeat="off"
         volumePercent={100}
-        deviceName="spotuify"
+        deviceName={deviceName}
         width={width}
         height={height - 1}
       />
@@ -61,9 +57,16 @@ afterEach(() => {
   setup = undefined;
 });
 
-async function render(width: number, height: number, item?: Track): Promise<string[]> {
+async function render(
+  width: number,
+  height: number,
+  item?: Track,
+  deviceName?: string,
+): Promise<string[]> {
   setup = await createTestRenderer({ width, height });
-  createRoot(setup.renderer).render(<Overlays width={width} height={height} item={item} />);
+  createRoot(setup.renderer).render(
+    <Overlays width={width} height={height} item={item} deviceName={deviceName} />,
+  );
   // The React reconciler commits asynchronously; without this the frame is blank.
   await Bun.sleep(20);
   await setup.renderOnce();
@@ -106,18 +109,18 @@ describe("hud", () => {
     expect(screen).toMatch(/[█░]/);
   });
 
-  test("top bar shows identity and account", async () => {
-    const lines = await render(100, 32);
-    expect(lines[1]).toContain("SPOTUIFY");
-    expect(lines[1]).toContain("ENGINE");
-    expect(lines[1]).toContain("austinsmith23");
-  });
 
-  test("state line lists device and volume", async () => {
+  // Spotify's convention: the device is named only when playback is somewhere else.
+  test("does not name the device when playing on this terminal", async () => {
     const screen = (await render(100, 32)).join("\n");
     expect(screen).toContain("PLAYING");
-    expect(screen).toContain("spotuify");
     expect(screen).toContain("VOL 100%");
+    expect(screen).not.toContain("spotuify");
+  });
+
+  test("names the device when playing elsewhere", async () => {
+    const screen = (await render(100, 32, undefined, "Austin's mini M4")).join("\n");
+    expect(screen).toContain("PLAYING ON AUSTIN'S MINI M4");
   });
 
   test("long titles are truncated, not wrapped", async () => {

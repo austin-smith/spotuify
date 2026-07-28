@@ -109,8 +109,26 @@ function Column({
   );
 }
 
-/** The complete keymap, opened with `?`. Everything the hint bar leaves out lives here. */
-export function KeymapOverlay({ width, height }: { width: number; height: number }) {
+/**
+ * The keymap, plus who is signed in and whether the engine is up.
+ *
+ * Account and engine state live here rather than on the now-playing view: they are reference
+ * information, and anything permanently overlaid on the cover needs darkening behind it, which
+ * always ends up looking like a patch stuck on the artwork.
+ */
+export function KeymapOverlay({
+  width,
+  height,
+  account,
+  product,
+  engineUp,
+}: {
+  width: number;
+  height: number;
+  account: string;
+  product: string | undefined;
+  engineUp: boolean;
+}) {
   const inner = width - 8;
   const twoColumn = inner >= TWO_COLUMN_MIN;
   const [left, right] = twoColumn ? splitGroups(KEYMAP) : [KEYMAP, []];
@@ -140,10 +158,18 @@ export function KeymapOverlay({ width, height }: { width: number; height: number
       <box flexDirection="column" width={ruleWidth} flexShrink={0}>
         <box flexDirection="row" gap={1}>
           <text fg={theme.accent}>
-            <strong>?</strong>
+            <strong>SPOTUIFY</strong>
           </text>
-          <text fg={theme.text}>
-            <strong>KEYS</strong>
+          <text fg={theme.label}>
+            {account}
+            {product !== undefined ? `  ·  ${product}` : ""}
+          </text>
+        </box>
+
+        <box flexDirection="row" gap={1}>
+          <text fg={engineUp ? theme.accent : theme.error}>{engineUp ? "●" : "✗"}</text>
+          <text fg={theme.label}>
+            {engineUp ? "librespot running" : "librespot not running"}
           </text>
         </box>
 

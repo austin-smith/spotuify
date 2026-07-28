@@ -13,7 +13,7 @@ import { useSearch } from "../store/search.ts";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { DevicePicker } from "./DevicePicker.tsx";
 import { QueueView } from "./QueueView.tsx";
-import { Hud, HUD_ROWS, TopBar } from "./Hud.tsx";
+import { Hud, HUD_ROWS } from "./Hud.tsx";
 import { KeyHints } from "./KeyHints.tsx";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
@@ -295,6 +295,7 @@ export function App() {
   if (boot.phase === "needs-setup") return <Setup message={boot.message} />;
 
   const images = item !== null && isTrack(item) ? item.album.images : null;
+
   // Row the HUD's darkened band starts at. The keybind strip draws over the cover on the final row,
   // so the scrim has to reach the very bottom.
   const hudTop = height - HUD_ROWS;
@@ -314,13 +315,6 @@ export function App() {
           solidRow={paletteOpen ? PROMPT_ROW : null}
         />
       ) : null}
-
-      <TopBar
-        engine={engine}
-        account={boot.me.display_name ?? boot.me.id}
-        product={boot.me.product}
-        width={width}
-      />
 
       {item !== null && !overlayOpen ? (
         <Hud
@@ -358,7 +352,15 @@ export function App() {
       {paletteOpen ? <Palette width={width} height={height} /> : null}
       {devicesOpen ? <DevicePicker width={width} height={height} /> : null}
       {queueOpen ? <QueueView width={width} height={height} /> : null}
-      {keysOpen ? <KeymapOverlay width={width} height={height} /> : null}
+      {keysOpen ? (
+        <KeymapOverlay
+          width={width}
+          height={height}
+          account={boot.me.display_name ?? boot.me.id}
+          product={boot.me.product}
+          engineUp={engine.state === "running"}
+        />
+      ) : null}
     </box>
   );
 }
