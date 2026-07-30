@@ -20,7 +20,7 @@ Usage:
   spotuify auth [--force] [--force-engine]
                              Authorize with Spotify (run this first; opens a browser)
   spotuify whoami            Show the authenticated account
-  spotuify --version         Show the product version
+  spotuify -v, --version     Show the product version
   spotuify                   Launch the TUI
 
 Redirect URI to register in your Spotify app: ${REDIRECT_URI}
@@ -92,6 +92,7 @@ async function main(argv: string[]): Promise<number | null> {
       console.log(USAGE);
       return 0;
 
+    case "-v":
     case "--version":
       console.log(`spotuify ${VERSION}`);
       return 0;
