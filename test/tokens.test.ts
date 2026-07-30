@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReauthRequiredError, TokenStore, type StoredToken } from "../src/auth/tokens.ts";
@@ -179,16 +179,17 @@ describe("TokenStore", () => {
         scopes: [],
       }),
     );
-    await chmod(dir, 0o500);
+    let writeAttempts = 0;
+    const failedMigrationStore = new TokenStore("client-id", tokenPath, async () => {
+      writeAttempts++;
+      throw new Error("simulated migration write failure");
+    });
 
-    try {
-      const migrated = await store().load();
-      expect(migrated?.accessToken).toBe("legacy-access");
-      expect(migrated?.refreshToken).toBe("legacy-refresh");
-      expect(migrated?.authorizationId).toBeString();
-      expect((await Bun.file(tokenPath).json()).authorizationId).toBeUndefined();
-    } finally {
-      await chmod(dir, 0o700);
-    }
+    const migrated = await failedMigrationStore.load();
+    expect(writeAttempts).toBe(1);
+    expect(migrated?.accessToken).toBe("legacy-access");
+    expect(migrated?.refreshToken).toBe("legacy-refresh");
+    expect(migrated?.authorizationId).toBeString();
+    expect((await Bun.file(tokenPath).json()).authorizationId).toBeUndefined();
   });
 });

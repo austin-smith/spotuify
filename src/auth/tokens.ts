@@ -60,6 +60,8 @@ interface OAuthError {
   error_description?: string;
 }
 
+type PrivateFileWriter = (path: string, contents: string) => Promise<void>;
+
 function parseJson<T>(text: string): T | null {
   try {
     return JSON.parse(text) as T;
@@ -154,6 +156,7 @@ export class TokenStore {
   constructor(
     private readonly clientId: string,
     private readonly path: string = TOKEN_PATH,
+    private readonly writePrivateFile: PrivateFileWriter = writePrivateFileAtomic,
   ) {}
 
   async load(): Promise<StoredToken | null> {
@@ -189,7 +192,7 @@ export class TokenStore {
   }
 
   private async persist(token: StoredToken): Promise<void> {
-    await writePrivateFileAtomic(this.path, `${JSON.stringify(token, null, 2)}\n`);
+    await this.writePrivateFile(this.path, `${JSON.stringify(token, null, 2)}\n`);
   }
 
   /** Identity of the current authorization, used to bind account-derived caches. */
