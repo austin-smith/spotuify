@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { SpotifyApiError, SpotifyLimitError } from "../src/api/client.ts";
 import type { SpotifyClient } from "../src/api/client.ts";
 import {
+  bootProfileRecoveryMode,
   loadProfile,
   recoverBootProfile,
   resolveBootProfile,
@@ -17,6 +18,13 @@ import { ReauthRequiredError } from "../src/auth/tokens.ts";
 const AUTHORIZATION_ID = "authorization-1";
 
 describe("cached account profile", () => {
+  test("a finite boot deadline schedules recovery even when a cached profile is usable", () => {
+    expect(bootProfileRecoveryMode(Date.now() + 30_000, 0)).toBe("automatic");
+    expect(bootProfileRecoveryMode(null, 0)).toBeNull();
+    expect(bootProfileRecoveryMode(null, 1)).toBe("manual");
+    expect(bootProfileRecoveryMode(Date.now() + 30_000, 1)).toBe("manual");
+  });
+
   test("routes refresh back to a failed account recovery after its cooldown clears", () => {
     const profile = { id: "user", display_name: "User" };
 

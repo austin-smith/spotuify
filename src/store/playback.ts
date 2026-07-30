@@ -34,6 +34,15 @@ export const ERROR_LINGER_MS = 4_000;
 
 export type PlaybackSessionPresence = "unknown" | "absent" | "present";
 
+export interface PlaybackStartOptions {
+  /**
+   * Keep native events active while another owner performs the sole Web API recovery probe.
+   *
+   * Call `resumeWebReconciliation` after that probe succeeds.
+   */
+  suspendWebReconciliation?: boolean;
+}
+
 export interface PlaybackSlice {
   item: PlayableItem | null;
   isPlaying: boolean;
@@ -61,8 +70,13 @@ export interface PlaybackSlice {
     player: PlayerApi,
     engine?: LibrespotEngine,
     accountId?: string | null,
+    options?: PlaybackStartOptions,
   ) => () => void;
   refresh: (priority?: "foreground" | "background") => Promise<void>;
+  /** Pause and cancel playback reads while another owner uses the shared Web API client. */
+  suspendWebReconciliation: () => void;
+  /** Resume Web reads after a coordinated account-recovery probe and reconcile once if needed. */
+  resumeWebReconciliation: () => Promise<void>;
   /** Coalesce command and picker updates into one delayed playback read. */
   reconcileSoon: () => void;
   /** Record a successful remote-device transfer before Spotify's next playback snapshot arrives. */
@@ -101,9 +115,13 @@ let runId = 0;
 let nativeRevision = 0;
 /** Authoritative Connect activity; a ready sidecar may still be an inactive available receiver. */
 let nativeSessionConnected = false;
+/** A confirmed remote transfer owns playback until Connect proves a new local session. */
+let remoteTransferConfirmed = false;
 /** Device identity rejected after an authoritative local disconnect until Web state moves away. */
 let disconnectedNativeDeviceId: string | null = null;
 let nativeDisconnectRetryCount = 0;
+/** Another owner is using the shared client for the sole quota-recovery probe. */
+let webReconciliationSuspended = false;
 /** Invalidates playback reads across the complete lifetime of a Web API mutation. */
 let webMutationRevision = 0;
 let webMutationsInFlight = 0;
@@ -386,7 +404,7 @@ function nextPollDelay(
 function schedulePoll(get: () => PlaybackSlice, expectedRun: number): void {
   clearTimer(pollTimer);
   pollTimer = null;
-  if (api === null || expectedRun !== runId) return;
+  if (api === null || expectedRun !== runId || webReconciliationSuspended) return;
 
   const delay = nextPollDelay(get());
   if (delay === null) return;
@@ -401,7 +419,7 @@ function scheduleReconciliation(
   requiredRevision: number,
   notBefore: number,
 ): void {
-  if (isNativeDevice(get().deviceId)) return;
+  if (webReconciliationSuspended || isNativeDevice(get().deviceId)) return;
   const expectedRun = runId;
   const expectedApi = api;
   clearTimer(reconcileTimer);
@@ -672,7 +690,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
   ready: false,
 
   /** Begin adaptive, non-overlapping reconciliation. */
-  start(player, engine, accountId = null) {
+  start(player, engine, accountId = null, options = {}) {
     runId++;
     const thisRun = runId;
     api = player;
@@ -680,22 +698,50 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     webAccountId = accountId;
     nativeRevision = 0;
     nativeSessionConnected = nativeAccountMatches() && (native?.isActive?.() ?? false);
+    remoteTransferConfirmed = false;
     disconnectedNativeDeviceId = null;
     nativeDisconnectRetryCount = 0;
+    webReconciliationSuspended = options.suspendWebReconciliation === true;
     webMutationRevision = 0;
     webMutationsInFlight = 0;
     latestRefreshRevision = -1;
     latestRefreshStartedAt = Number.NEGATIVE_INFINITY;
     webReadNotBefore = Number.NEGATIVE_INFINITY;
     const startingState = get();
-    anchor = {
-      progressMs: startingState.progressMs,
-      atMs: performance.now(),
-      isPlaying: startingState.isPlaying,
-      durationMs: startingState.durationMs,
-    };
-    confirmFromStore(startingState);
-    set({ sessionPresence: "unknown", ready: false });
+    if (webReconciliationSuspended) {
+      // No current-run source has authenticated retained playback state. Start empty while native
+      // events remain live; account recovery will resume the Web lane when its sole probe succeeds.
+      set({
+        item: null,
+        isPlaying: false,
+        shuffle: false,
+        repeat: "off",
+        volumePercent: null,
+        deviceId: null,
+        deviceName: null,
+        sessionPresence: "unknown",
+        progressMs: 0,
+        durationMs: 0,
+        error: null,
+        ready: true,
+      });
+      anchor = {
+        progressMs: 0,
+        atMs: performance.now(),
+        isPlaying: false,
+        durationMs: 0,
+      };
+      confirmFromStore(get());
+    } else {
+      anchor = {
+        progressMs: startingState.progressMs,
+        atMs: performance.now(),
+        isPlaying: startingState.isPlaying,
+        durationMs: startingState.durationMs,
+      };
+      confirmFromStore(startingState);
+      set({ sessionPresence: "unknown", ready: false });
+    }
     // An unresolved read belongs to the previous run. Its own identity guards keep it from
     // mutating this run, and the new run must issue an independent initial reconciliation.
     refreshController?.abort();
@@ -735,6 +781,11 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           return;
         }
 
+        // Disconnect is handled above so it always clears authoritative session presence. Other
+        // residual events cannot reclaim playback until a fresh connection proves a local session.
+        if (remoteTransferConfirmed && event.name !== "session_connected") return;
+        if (event.name === "session_connected") remoteTransferConfirmed = false;
+
         const establishesLocalPlayback =
           event.name === "session_connected" ||
           event.name === "track_changed" ||
@@ -762,7 +813,12 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
 
     // A synchronously replayed native snapshot is already newer and more precise than the public
     // player endpoint. Do not immediately spend quota or let a stale Web snapshot overwrite it.
-    if (nativeRevision === 0 || !isNativeDevice(get().deviceId)) void get().refresh();
+    if (
+      !webReconciliationSuspended &&
+      (nativeRevision === 0 || !isNativeDevice(get().deviceId))
+    ) {
+      void get().refresh();
+    }
     tickTimer = setInterval(() => {
       const next = extrapolate(anchor, performance.now());
       // Only write when the rendered second changes, so we don't re-render 4x/sec for nothing.
@@ -792,13 +848,16 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
       native = null;
       webAccountId = null;
       nativeSessionConnected = false;
+      remoteTransferConfirmed = false;
       disconnectedNativeDeviceId = null;
       nativeDisconnectRetryCount = 0;
+      webReconciliationSuspended = false;
     };
   },
 
   async refresh(priority = "background") {
     if (refreshInFlight !== null) return await refreshInFlight;
+    if (webReconciliationSuspended) return;
     const currentApi = api;
     const currentRun = runId;
     const nativeRevisionAtStart = nativeRevision;
@@ -882,12 +941,48 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     }
   },
 
+  suspendWebReconciliation() {
+    webReconciliationSuspended = true;
+    clearTimer(pollTimer);
+    clearTimer(reconcileTimer);
+    pollTimer = null;
+    reconcileTimer = null;
+    refreshController?.abort();
+  },
+
+  async resumeWebReconciliation() {
+    webReconciliationSuspended = false;
+    const pending = refreshInFlight;
+    if (pending !== null) await pending;
+    if (
+      webReconciliationSuspended ||
+      api === null ||
+      // `isNativeDevice` also requires authoritative current connection activity. A disconnect
+      // therefore resumes Web reconciliation even though it increments the current-run revision.
+      (nativeRevision > 0 && isNativeDevice(get().deviceId))
+    ) {
+      return;
+    }
+    if (performance.now() < webReadNotBefore) {
+      scheduleReconciliation(get, webMutationRevision, webReadNotBefore);
+      return;
+    }
+    await get().refresh("foreground");
+  },
+
   reconcileSoon() {
-    if (api === null || isNativeDevice(get().deviceId)) return;
+    if (
+      api === null ||
+      webReconciliationSuspended ||
+      isNativeDevice(get().deviceId)
+    ) {
+      return;
+    }
     reconcileCompletedWebMutation(get);
   },
 
   confirmDeviceTransfer(deviceId, deviceName) {
+    remoteTransferConfirmed = true;
     set({
       deviceId,
       deviceName,

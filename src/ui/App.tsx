@@ -5,6 +5,7 @@ import { PlayerApi } from "../api/player.ts";
 import { isTrack, type Me } from "../api/types.ts";
 import { tokenStore } from "../auth/flow.ts";
 import {
+  bootProfileRecoveryMode,
   recoverBootProfile,
   resolveBootProfile,
   retryBootProfile,
@@ -191,25 +192,38 @@ export function App() {
       });
       return;
     }
-    return usePlayback.getState().start(bootPlayer, engineClient, bootAccountId);
+    return usePlayback.getState().start(bootPlayer, engineClient, bootAccountId, {
+      // `/me` owns the finite Retry-After deadline. Keep librespot live, but do not let playback
+      // schedule a competing `/me/player` probe until account recovery succeeds.
+      suspendWebReconciliation: bootProfileRetryAt !== null,
+    });
+    // Profile recovery resumes the existing store explicitly. Restarting it when only the retry
+    // deadline clears would discard authoritative native state because listeners do not replay it.
   }, [bootPlayer, engineClient, bootAccountId]);
 
   useEffect(() => {
-    const retryingCachedProfile =
-      profileRecoveryRequest > 0 &&
-      bootProfile !== null;
+    const recoveryMode = bootProfileRecoveryMode(
+      bootProfileRetryAt,
+      profileRecoveryRequest,
+    );
     if (
       bootClient === null ||
       bootAuthorizationId === null ||
-      (bootProfile !== null && !retryingCachedProfile)
+      recoveryMode === null
     ) {
       return;
     }
 
     const controller = new AbortController();
     profileRecoveryController.current = controller;
+    const recoveredCachedProfile = bootProfile !== null;
+    // Manual recovery can begin after normal polling has started. Stop that lane before `/me`
+    // probes the shared client so playback cannot consume the next advertised retry deadline.
+    if (recoveredCachedProfile) {
+      usePlayback.getState().suspendWebReconciliation();
+    }
     const recovery =
-      profileRecoveryRequest > 0
+      recoveryMode === "manual"
         ? retryBootProfile(bootClient, bootAuthorizationId, controller.signal)
         : recoverBootProfile(
             bootClient,
@@ -231,10 +245,12 @@ export function App() {
             ? { ...current, me: profile, profileRetryAt: null }
             : current,
         );
-        // A cached profile already started the playback store. Now that the explicit `/me` probe
-        // reopened the shared circuit, reconcile that existing store once; a profile-less boot
-        // starts the store itself when `boot.me` changes and must not issue a duplicate read.
-        if (retryingCachedProfile) void usePlayback.getState().refresh("foreground");
+        // A cached profile already started the playback store with only its Web lane suspended.
+        // Resume it once after `/me` succeeds. A profile-less boot starts the store when `boot.me`
+        // changes and must not issue a duplicate playback read here.
+        if (recoveredCachedProfile) {
+          void usePlayback.getState().resumeWebReconciliation();
+        }
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
@@ -504,6 +520,7 @@ export function App() {
       case "r":
         if (shouldRetryBootProfile(boot.me, profileRecoveryFailed, boot.client.getCooldown())) {
           if (profileRecoveryController.current === null) {
+            if (boot.me !== null) store.suspendWebReconciliation();
             setProfileRecoveryFailed(false);
             usePlayback.setState({ error: null });
             setProfileRecoveryRequest((request) => request + 1);

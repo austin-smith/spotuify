@@ -60,6 +60,69 @@ afterEach(() => {
 });
 
 describe("playback request budget", () => {
+  test("a coordinated account probe can suspend and resume Web reconciliation", async () => {
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return REMOTE_STATE;
+      },
+    } as unknown as PlayerApi;
+
+    stop = usePlayback
+      .getState()
+      .start(player, undefined, "account", { suspendWebReconciliation: true });
+    await Bun.sleep(20);
+
+    expect(reads).toBe(0);
+    expect(usePlayback.getState().ready).toBeTrue();
+    expect(usePlayback.getState().item).toBeNull();
+    expect(usePlayback.getState().deviceId).toBeNull();
+    await usePlayback.getState().refresh();
+    expect(reads).toBe(0);
+
+    await usePlayback.getState().resumeWebReconciliation();
+    expect(reads).toBe(1);
+    expect(usePlayback.getState().deviceId).toBe("remote");
+  });
+
+  test("suspending for a manual account probe cancels an in-flight playback read", async () => {
+    let reads = 0;
+    let firstReadAborted = false;
+    const player = {
+      state: async (
+        _priority: "foreground" | "background",
+        signal?: AbortSignal,
+      ) => {
+        reads++;
+        if (reads > 1) return REMOTE_STATE;
+        return await new Promise<PlaybackState>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              firstReadAborted = true;
+              reject(new DOMException("aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        });
+      },
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await Bun.sleep(1);
+    usePlayback.getState().suspendWebReconciliation();
+    await Bun.sleep(1);
+
+    expect(firstReadAborted).toBeTrue();
+    await usePlayback.getState().refresh();
+    expect(reads).toBe(1);
+
+    await usePlayback.getState().resumeWebReconciliation();
+    expect(reads).toBe(2);
+    expect(usePlayback.getState().deviceId).toBe("remote");
+  });
+
   test("a playback object with no item preserves its active device", async () => {
     const stateWithoutItem: PlaybackState = {
       ...REMOTE_STATE,
@@ -418,6 +481,127 @@ describe("native receiver routing", () => {
     expect(usePlayback.getState().progressMs).toBe(4_000);
   });
 
+  test("suspending Web reconciliation leaves native playback authoritative", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let reads = 0;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      onEvent: (next: (event: EngineEvent) => void) => {
+        events.listener = next;
+        return () => {
+          delete events.listener;
+        };
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => {
+        reads++;
+        return REMOTE_STATE;
+      },
+    } as unknown as PlayerApi;
+
+    stop = usePlayback
+      .getState()
+      .start(player, engine, "account", { suspendWebReconciliation: true });
+    events.listener?.({ name: "session_connected" });
+    events.listener?.({
+      name: "track_changed",
+      media_type: "track",
+      id: "native-track",
+      uri: "spotify:track:native-track",
+      title: "Native Track",
+      duration_ms: 180_000,
+      artists: [],
+      covers: [],
+    });
+    events.listener?.({
+      name: "playing",
+      uri: "spotify:track:native-track",
+      position_ms: 4_000,
+    });
+
+    expect(reads).toBe(0);
+    expect(usePlayback.getState().deviceId).toBe("native");
+    expect(usePlayback.getState().item?.uri).toBe("spotify:track:native-track");
+
+    await usePlayback.getState().resumeWebReconciliation();
+    expect(reads).toBe(0);
+  });
+
+  test("resume refreshes retained native-looking state without a current-run event", async () => {
+    let reads = 0;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => true,
+      onEvent: () => () => {},
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => {
+        reads++;
+        return REMOTE_STATE;
+      },
+    } as unknown as PlayerApi;
+
+    usePlayback.setState({
+      deviceId: "native",
+      deviceName: "spotuify",
+      sessionPresence: "present",
+      ready: true,
+    });
+    stop = usePlayback
+      .getState()
+      .start(player, engine, "account", { suspendWebReconciliation: true });
+
+    await usePlayback.getState().resumeWebReconciliation();
+
+    expect(reads).toBe(1);
+    expect(usePlayback.getState().deviceId).toBe("remote");
+  });
+
+  test("a native disconnect during suspension forces Web reconciliation on resume", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let active = true;
+    let reads = 0;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => active,
+      onEvent: (next: (event: EngineEvent) => void) => {
+        events.listener = next;
+        return () => {
+          delete events.listener;
+        };
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => {
+        reads++;
+        return REMOTE_STATE;
+      },
+    } as unknown as PlayerApi;
+
+    stop = usePlayback
+      .getState()
+      .start(player, engine, "account", { suspendWebReconciliation: true });
+    events.listener?.({ name: "session_connected" });
+    events.listener?.({
+      name: "playing",
+      uri: "spotify:track:native-track",
+      position_ms: 4_000,
+    });
+    active = false;
+    events.listener?.({ name: "session_disconnected" });
+
+    expect(usePlayback.getState().deviceId).toBeNull();
+    await usePlayback.getState().resumeWebReconciliation();
+    await Bun.sleep(COMMAND_RECONCILE_MS + 50);
+
+    expect(reads).toBe(1);
+    expect(usePlayback.getState().deviceId).toBe("remote");
+  });
+
   test("an explicitly absent session activates before loading without a transfer", async () => {
     const order: string[] = [];
     const engine = {
@@ -699,6 +883,89 @@ describe("native receiver routing", () => {
     await usePlayback.getState().next();
 
     expect(targetDevice).toBe("remote");
+  });
+
+  test("residual native playback events cannot reclaim a confirmed remote transfer", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let active = true;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => active,
+      onEvent: (next: (event: EngineEvent) => void) => {
+        events.listener = next;
+        return () => {
+          delete events.listener;
+        };
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => ({
+        ...REMOTE_STATE,
+        device: { ...REMOTE_STATE.device!, id: "native", name: "spotuify" },
+      }),
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, engine, "account");
+    await Bun.sleep(20);
+    usePlayback.getState().confirmDeviceTransfer("remote", "Living Room");
+
+    const residualEvents: EngineEvent[] = [
+      {
+        name: "track_changed",
+        media_type: "track",
+        id: "native-track",
+        uri: "spotify:track:native-track",
+        title: "Native Track",
+        duration_ms: 180_000,
+        artists: [],
+        covers: [],
+      },
+      {
+        name: "paused",
+        uri: "spotify:track:native-track",
+        position_ms: 5_000,
+      },
+      {
+        name: "playing",
+        uri: "spotify:track:native-track",
+        position_ms: 6_000,
+      },
+    ];
+    for (const event of residualEvents) events.listener?.(event);
+    active = false;
+    events.listener?.({ name: "session_disconnected" });
+    events.listener?.({
+      name: "playing",
+      uri: "spotify:track:native-track",
+      position_ms: 7_000,
+    });
+
+    expect(usePlayback.getState().deviceId).toBe("remote");
+    expect(usePlayback.getState().deviceName).toBe("Living Room");
+    expect(usePlayback.getState().item?.uri).toBe("spotify:track:track");
+
+    active = true;
+    events.listener?.({ name: "session_connected" });
+    events.listener?.({
+      name: "track_changed",
+      media_type: "track",
+      id: "native-track",
+      uri: "spotify:track:native-track",
+      title: "Native Track",
+      duration_ms: 180_000,
+      artists: [],
+      covers: [],
+    });
+    events.listener?.({
+      name: "playing",
+      uri: "spotify:track:native-track",
+      position_ms: 8_000,
+    });
+
+    expect(usePlayback.getState().deviceId).toBe("native");
+    expect(usePlayback.getState().item?.uri).toBe("spotify:track:native-track");
+    expect(usePlayback.getState().progressMs).toBe(8_000);
   });
 
   test("a receiver authenticated as another account cannot activate or publish events", async () => {

@@ -16,8 +16,24 @@ interface CachedProfile {
 
 export interface BootProfileResolution {
   profile: Me | null;
-  /** The exact finite deadline from the 429 that forced a profile-less boot. */
+  /** The exact finite deadline from the 429 that prevented a fresh profile read. */
   retryAt: number | null;
+}
+
+export type BootProfileRecoveryMode = "automatic" | "manual";
+
+/**
+ * Select the one account-recovery path that may probe Spotify.
+ *
+ * A finite deadline belongs to automatic recovery even when startup could use a cached profile.
+ * An explicit request takes precedence so indefinite cooldowns can use the client's manual probe.
+ */
+export function bootProfileRecoveryMode(
+  retryAt: number | null,
+  manualRequestCount: number,
+): BootProfileRecoveryMode | null {
+  if (manualRequestCount > 0) return "manual";
+  return retryAt === null ? null : "automatic";
 }
 
 /**
