@@ -4,7 +4,7 @@ import { authenticate, tokenStore } from "./auth/flow.ts";
 import { resolveBootProfile, saveProfileBestEffort } from "./auth/profile.ts";
 import type { Me } from "./api/types.ts";
 import { REDIRECT_URI } from "./config.ts";
-import { LibrespotEngine, authenticateEngine } from "./engine/librespot.ts";
+import { authenticateEngine } from "./engine/librespot.ts";
 
 /** `name (product, country)`, degrading gracefully when the scope didn't grant those fields. */
 function describeAccount(me: Me): string {
@@ -46,17 +46,31 @@ async function main(argv: string[]): Promise<number | null> {
       }
       console.log(`Token expires ${new Date(token.expiresAt).toLocaleTimeString()}.`);
 
-      // Second, independent login: librespot's own session, used only for audio playback.
-      if ((await LibrespotEngine.locate()) === null) {
-        console.warn(
-          "\nlibrespot is not installed, so spotuify cannot play audio itself.\n" +
-            "Install it with `brew install librespot`, then re-run `spotuify auth`.\n" +
-            "Without it, spotuify can only control other Spotify devices.",
-        );
-      } else if (await authenticateEngine({ force: rest.includes("--force-engine") })) {
-        console.log("Playback engine authorized. spotuify will appear as a Spotify device.");
-      } else {
-        console.warn("\nlibrespot sign-in did not complete; playback in the terminal is disabled.");
+      // Second, independent login: the native engine owns librespot's OAuth and credential cache.
+      const playbackAuth = await authenticateEngine({
+        force: rest.includes("--force-engine"),
+      });
+      switch (playbackAuth) {
+        case "authorized":
+          console.log("Playback engine authorized. spotuify will appear as a Spotify device.");
+          break;
+        case "missing":
+          console.warn(
+            "\nThe native playback engine is not built, so spotuify cannot play audio itself.\n" +
+              "Run `bun run engine:build`, then re-run `spotuify auth`.\n" +
+              "Without it, spotuify can only control other Spotify devices.",
+          );
+          break;
+        case "timed-out":
+          console.warn(
+            "\nPlayback sign-in timed out; playback in the terminal is disabled.",
+          );
+          break;
+        case "failed":
+          console.warn(
+            "\nPlayback sign-in did not complete; playback in the terminal is disabled.",
+          );
+          break;
       }
       return 0;
     }

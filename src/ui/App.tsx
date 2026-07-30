@@ -52,7 +52,7 @@ function Setup({ message }: { message: string }) {
       </text>
       <text fg={theme.error}>{message}</text>
       <text fg={theme.label}>Redirect URI to register: {REDIRECT_URI}</text>
-      <text fg={theme.label}>Then run: bun run src/cli.ts auth</text>
+      <text fg={theme.label}>Then run: bun run auth</text>
       <text fg={theme.label}>Q to quit.</text>
     </box>
   );

@@ -1,11 +1,11 @@
+mod playback_auth;
+
 use anyhow::{Context, Result, anyhow};
 use librespot_connect::{
     ConnectConfig, LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack,
     Spirc,
 };
-use librespot_core::{
-    Session, SpotifyUri, authentication::Credentials, cache::Cache, config::SessionConfig,
-};
+use librespot_core::{Session, SpotifyUri, authentication::Credentials, config::SessionConfig};
 use librespot_metadata::{Metadata, Track, audio::UniqueFields};
 use librespot_playback::{
     audio_backend,
@@ -15,7 +15,7 @@ use librespot_playback::{
 };
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     sync::{mpsc, watch},
@@ -237,12 +237,49 @@ enum PlayerEventMessage {
 
 #[tokio::main]
 async fn main() {
-    if let Err(error) = run().await {
-        // Stdout is reserved for the protocol. This terminal message is intentionally credential
-        // free; neither cached credentials nor tokens implement Display here.
+    let invocation = match invocation_from_args(std::env::args_os().skip(1).collect()) {
+        Ok(invocation) => invocation,
+        Err(error) => {
+            eprintln!("spotuify engine failed: {error:#}");
+            std::process::exit(2);
+        }
+    };
+    let result = match invocation {
+        Invocation::Playback => run().await,
+        Invocation::Authenticate => run_auth().await,
+    };
+    if let Err(error) = result {
+        // This terminal message is intentionally credential free; neither cached credentials nor
+        // OAuth tokens implement Display in spotuify's error path.
         eprintln!("spotuify engine failed: {error:#}");
         std::process::exit(1);
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Invocation {
+    Playback,
+    Authenticate,
+}
+
+fn invocation_from_args(args: Vec<OsString>) -> Result<Invocation> {
+    match args.as_slice() {
+        [] => Ok(Invocation::Playback),
+        [command] if command == "auth" => Ok(Invocation::Authenticate),
+        _ => Err(anyhow!("usage: spotuify-engine [auth]")),
+    }
+}
+
+async fn run_auth() -> Result<()> {
+    let mut input = BufReader::new(tokio::io::stdin()).lines();
+    let config_line = input
+        .next_line()
+        .await?
+        .ok_or_else(|| anyhow!("missing authentication configuration"))?;
+    let config: playback_auth::AuthConfig =
+        serde_json::from_str(&config_line).context("invalid authentication configuration")?;
+    let session_config = session_config_for_name(&config.device_name);
+    playback_auth::authenticate(config, session_config).await
 }
 
 async fn run() -> Result<()> {
@@ -421,14 +458,8 @@ impl Runtime {
         config: &StartConfig,
         outgoing: mpsc::UnboundedSender<Outgoing>,
     ) -> Result<Self> {
-        std::fs::create_dir_all(&config.cache_dir).context("creating librespot cache directory")?;
-        let cache = Cache::new(
-            Some(config.cache_dir.clone()),
-            Some(config.cache_dir.clone()),
-            None,
-            None,
-        )
-        .context("opening librespot cache")?;
+        let cache =
+            playback_auth::open_cache(&config.cache_dir).context("opening librespot cache")?;
         let credentials: Credentials = cache.credentials().ok_or_else(|| {
             anyhow!("no cached librespot credentials; run `spotuify auth` outside the TUI")
         })?;
@@ -1098,6 +1129,19 @@ mod tests {
         assert_eq!(
             device_id_for_name("spotuify"),
             "c77941ae06acef3ef6b17f577668e6100c0089ef"
+        );
+    }
+
+    #[test]
+    fn invocation_selects_only_the_documented_engine_modes() {
+        assert_eq!(invocation_from_args(vec![]).unwrap(), Invocation::Playback);
+        assert_eq!(
+            invocation_from_args(vec![OsString::from("auth")]).unwrap(),
+            Invocation::Authenticate
+        );
+        assert!(invocation_from_args(vec![OsString::from("unknown")]).is_err());
+        assert!(
+            invocation_from_args(vec![OsString::from("auth"), OsString::from("--force")]).is_err()
         );
     }
 

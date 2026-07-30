@@ -3,6 +3,7 @@ import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  authenticateEngine,
   engineRestartDelay,
   LibrespotEngine,
   NativePlaybackUnavailableError,
@@ -18,6 +19,64 @@ async function eventually(predicate: () => boolean, timeoutMs = 1_000): Promise<
 }
 
 describe("librespot sidecar protocol", () => {
+  test("delegates playback OAuth and cache ownership to the native engine", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "spotuify-engine-auth-test-"));
+    const sidecar = join(directory, "fake-sidecar");
+    const received = join(directory, "auth-config.json");
+    const source = `#!/usr/bin/env bun
+import { writeFileSync } from "node:fs";
+const config = JSON.parse(await Bun.stdin.text());
+writeFileSync(${JSON.stringify(received)}, JSON.stringify({
+  args: process.argv.slice(2),
+  config,
+}));
+`;
+
+    try {
+      await Bun.write(sidecar, source);
+      await chmod(sidecar, 0o700);
+
+      await expect(
+        authenticateEngine({ force: true, sidecarPath: sidecar }, 1_000),
+      ).resolves.toBe("authorized");
+      expect(await Bun.file(received).json()).toMatchObject({
+        args: ["auth"],
+        config: {
+          cacheDir: expect.stringContaining("spotuify/librespot"),
+          deviceName: "spotuify",
+          force: true,
+        },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("reports native authentication failure and timeout distinctly", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "spotuify-engine-auth-test-"));
+    const failure = join(directory, "failure-sidecar");
+    const silent = join(directory, "silent-sidecar");
+
+    try {
+      await Bun.write(
+        failure,
+        "#!/usr/bin/env bun\nawait Bun.stdin.text();\nprocess.exit(1);\n",
+      );
+      await Bun.write(silent, "#!/usr/bin/env bun\nsetInterval(() => {}, 1000);\n");
+      await chmod(failure, 0o700);
+      await chmod(silent, 0o700);
+
+      await expect(
+        authenticateEngine({ sidecarPath: failure }, 1_000),
+      ).resolves.toBe("failed");
+      await expect(
+        authenticateEngine({ sidecarPath: silent }, 20),
+      ).resolves.toBe("timed-out");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("reconnect backoff is bounded rather than an infinite login loop", () => {
     expect([0, 1, 2, 3].map((attempt) => engineRestartDelay(attempt))).toEqual([
       1_000,
@@ -37,7 +96,6 @@ describe("librespot sidecar protocol", () => {
       await chmod(sidecar, 0o600);
       engine = new LibrespotEngine("spotuify-test", {
         sidecarPath: sidecar,
-        credentialsAvailable: async () => true,
       });
 
       await expect(engine.start()).resolves.toBeUndefined();
@@ -69,7 +127,6 @@ setTimeout(() => {
       await chmod(sidecar, 0o700);
       engine = new LibrespotEngine("spotuify-test", {
         sidecarPath: sidecar,
-        credentialsAvailable: async () => true,
         restartDelaysMs: [10],
         stableUptimeMs: 10_000,
       });
@@ -136,7 +193,6 @@ if (attempt === 1) {
       const events: string[] = [];
       engine = new LibrespotEngine("spotuify-test", {
         sidecarPath: sidecar,
-        credentialsAvailable: async () => true,
         restartDelaysMs: [10],
         stableUptimeMs: 10_000,
       });
@@ -179,7 +235,6 @@ setInterval(() => {}, 1000);
       }> = [];
       engine = new LibrespotEngine("spotuify-test", {
         sidecarPath: sidecar,
-        credentialsAvailable: async () => true,
         restartDelaysMs: [],
       });
       engine.onEvent((event) => {
@@ -259,7 +314,6 @@ process.stdin.on("data", (chunk) => {
       const positions: number[] = [];
       engine = new LibrespotEngine("spotuify-test", {
         sidecarPath: sidecar,
-        credentialsAvailable: async () => true,
       });
       await engine.start();
       await eventually(() => engine?.getStatus().state === "ready");
@@ -297,7 +351,6 @@ setInterval(() => {}, 1000);
       const statuses: string[] = [];
       engine = new LibrespotEngine("spotuify-test", {
         sidecarPath: sidecar,
-        credentialsAvailable: async () => true,
         readinessTimeoutMs: 20,
         restartDelaysMs: [10],
       });
@@ -358,7 +411,6 @@ process.stdin.on("data", (chunk) => {
       await chmod(sidecar, 0o700);
       engine = new LibrespotEngine("spotuify-test", {
         sidecarPath: sidecar,
-        credentialsAvailable: async () => true,
       });
       await engine.start();
       await eventually(() => engine?.getStatus().state === "ready");
@@ -405,7 +457,6 @@ process.stdin.on("data", (chunk) => {
       await chmod(sidecar, 0o700);
       engine = new LibrespotEngine("spotuify-test", {
         sidecarPath: sidecar,
-        credentialsAvailable: async () => true,
       });
       await engine.start();
       await eventually(() => engine?.getStatus().state === "ready");
@@ -476,7 +527,6 @@ process.stdin.on("data", (chunk) => {
       await chmod(sidecar, 0o700);
       engine = new LibrespotEngine("spotuify-test", {
         sidecarPath: sidecar,
-        credentialsAvailable: async () => true,
       });
       await engine.start();
       await eventually(() => engine?.getStatus().state === "ready");
@@ -517,7 +567,6 @@ process.stdin.on("data", (chunk) => {
 import { LibrespotEngine } from ${JSON.stringify(engineModule)};
 const engine = new LibrespotEngine("spotuify-test", {
   sidecarPath: ${JSON.stringify(sidecar)},
-  credentialsAvailable: async () => true,
 });
 await engine.start();
 const deadline = performance.now() + 1_000;

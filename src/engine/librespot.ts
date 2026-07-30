@@ -1,9 +1,6 @@
-import { chmod, mkdir, unlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { DEVICE_NAME, LIBRESPOT_CACHE_DIR } from "../config.ts";
 
-/** librespot writes its cached session credentials here. */
-const CREDENTIALS_PATH = join(LIBRESPOT_CACHE_DIR, "credentials.json");
 const COMMAND_TIMEOUT_MS = 10_000;
 const ENGINE_READINESS_TIMEOUT_MS = 30_000;
 const STABLE_ENGINE_UPTIME_MS = 30_000;
@@ -18,71 +15,53 @@ export function engineRestartDelay(
   return delays[attempt] ?? null;
 }
 
-export async function hasEngineCredentials(): Promise<boolean> {
-  return await Bun.file(CREDENTIALS_PATH).exists();
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Locate the standalone librespot CLI used only for its interactive OAuth bootstrap. */
-async function locateLibrespotCli(): Promise<string | null> {
-  const which = Bun.spawn(["which", "librespot"], { stdout: "pipe", stderr: "ignore" });
-  const out = (await new Response(which.stdout).text()).trim();
-  return (await which.exited) === 0 && out.length > 0 ? out : null;
-}
+export type EngineAuthenticationResult = "authorized" | "missing" | "failed" | "timed-out";
 
 /**
- * Run librespot's own interactive OAuth once so it caches credentials.
+ * Ask the native playback engine to run librespot's independent OAuth flow.
  *
- * The Web API token is never passed to librespot. Authentication runs before the renderer owns the
- * terminal; the native sidecar later opens this same credential cache without invoking a browser.
+ * Authentication runs before the renderer owns the terminal. The Web API token never crosses this
+ * process boundary; the engine owns its own OAuth token, reusable credentials, and cache security.
  */
 export async function authenticateEngine(
-  options: { force?: boolean } = {},
+  options: { force?: boolean; sidecarPath?: string } = {},
   timeoutMs = 180_000,
-): Promise<boolean> {
-  const binary = await locateLibrespotCli();
-  if (binary === null) return false;
-  if (options.force === true) {
-    try {
-      await unlink(CREDENTIALS_PATH);
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    }
-  }
-  if (await hasEngineCredentials()) return true;
+): Promise<EngineAuthenticationResult> {
+  const binary =
+    options.sidecarPath !== undefined
+      ? resolve(options.sidecarPath)
+      : await LibrespotEngine.locateSidecar();
+  if (binary === null) return "missing";
 
-  await mkdir(LIBRESPOT_CACHE_DIR, { recursive: true });
-  console.log("\nlibrespot needs to sign in once to enable playback in the terminal.");
-
-  const proc = Bun.spawn(
-    [
-      binary,
-      "--name",
-      DEVICE_NAME,
-      "--cache",
-      LIBRESPOT_CACHE_DIR,
-      "--enable-oauth",
-      "--disable-discovery",
-    ],
-    { stdin: "inherit", stdout: "inherit", stderr: "inherit" },
+  const proc = Bun.spawn([binary, "auth"], {
+    stdin: "pipe",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  proc.stdin.write(
+    `${JSON.stringify({
+      cacheDir: LIBRESPOT_CACHE_DIR,
+      deviceName: DEVICE_NAME,
+      force: options.force === true,
+    })}\n`,
   );
+  await proc.stdin.end();
 
-  const deadline = Date.now() + timeoutMs;
-  try {
-    while (Date.now() < deadline) {
-      if (await hasEngineCredentials()) {
-        await chmod(CREDENTIALS_PATH, 0o600);
-        return true;
-      }
-      if (proc.exitCode !== null) return false;
-      await Bun.sleep(500);
-    }
-    return false;
-  } finally {
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
     proc.kill();
+  }, timeoutMs);
+  try {
+    const code = await proc.exited;
+    if (timedOut) return "timed-out";
+    return code === 0 ? "authorized" : "failed";
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -194,8 +173,6 @@ interface PendingCommand {
 interface LibrespotEngineOptions {
   /** Explicit process path used by integration tests and packaged launchers. */
   sidecarPath?: string;
-  /** Dependency seam for verifying lifecycle behavior without a user's credential cache. */
-  credentialsAvailable?: () => Promise<boolean>;
   restartDelaysMs?: readonly number[];
   stableUptimeMs?: number;
   readinessTimeoutMs?: number;
@@ -232,11 +209,6 @@ export class LibrespotEngine {
     private readonly deviceName: string = DEVICE_NAME,
     private readonly options: LibrespotEngineOptions = {},
   ) {}
-
-  /** Absolute path to the standalone librespot CLI used by `spotuify auth`. */
-  static async locate(): Promise<string | null> {
-    return await locateLibrespotCli();
-  }
 
   /** Absolute path to the native sidecar built from `native/Cargo.toml`. */
   static async locateSidecar(): Promise<string | null> {
@@ -303,18 +275,6 @@ export class LibrespotEngine {
         this.setStatus({ state: "missing" });
         return;
       }
-      const credentialsAvailable = this.options.credentialsAvailable ?? hasEngineCredentials;
-      if (!(await credentialsAvailable())) {
-        if (!this.isCurrent(lifecycle)) return;
-        this.setStatus({
-          state: "failed",
-          reason: "no cached librespot credentials — run: spotuify auth",
-        });
-        return;
-      }
-
-      await mkdir(LIBRESPOT_CACHE_DIR, { recursive: true });
-      if (!this.isCurrent(lifecycle)) return;
       this.spawn(binary, lifecycle);
     } catch (error) {
       if (!this.isCurrent(lifecycle)) return;

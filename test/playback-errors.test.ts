@@ -3,7 +3,11 @@ import { PlayerCommandRejectedError, PremiumRequiredError, SpotifyApiError } fro
 import type { PlayerApi } from "../src/api/player.ts";
 import type { PlaybackState } from "../src/api/types.ts";
 import { ReauthRequiredError } from "../src/auth/tokens.ts";
-import { ERROR_LINGER_MS, usePlayback } from "../src/store/playback.ts";
+import {
+  COMMAND_RECONCILE_MS,
+  ERROR_LINGER_MS,
+  usePlayback,
+} from "../src/store/playback.ts";
 
 const STATE: PlaybackState = {
   item: {
@@ -24,12 +28,15 @@ const STATE: PlaybackState = {
 };
 
 /** A player whose commands fail in a chosen way; `state()` always succeeds. */
-function player(failure: unknown): PlayerApi {
+function player(failure: unknown, onState?: () => void): PlayerApi {
   const reject = async () => {
     throw failure;
   };
   return {
-    state: async () => STATE,
+    state: async () => {
+      onState?.();
+      return STATE;
+    },
     next: reject,
     previous: reject,
     pause: reject,
@@ -52,10 +59,19 @@ afterEach(() => {
   stop = undefined;
 });
 
-async function withFailure(failure: unknown) {
-  stop = usePlayback.getState().start(player(failure));
+async function withFailure(failure: unknown, onState?: () => void) {
+  stop = usePlayback.getState().start(player(failure, onState));
   // Let the first poll land so the store is populated before the command runs.
   await Bun.sleep(20);
+}
+
+async function eventually(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    if (predicate()) return;
+    await Bun.sleep(10);
+  }
+  expect(predicate()).toBe(true);
 }
 
 describe("declined commands", () => {
@@ -139,11 +155,20 @@ describe("how long an error stays up", () => {
 
   // The successful command reconciliation proves the app recovered, but the message remains
   // readable for the full linger window and then clears without spending another API request.
-  test("successful reconciliation clears it when the linger window ends", async () => {
-    await withFailure(new SpotifyApiError(404, "/me/player/next", "Device not found"));
-    await usePlayback.getState().next();
+  test(
+    "successful reconciliation clears it when the linger window ends",
+    async () => {
+      let reads = 0;
+      await withFailure(
+        new SpotifyApiError(404, "/me/player/next", "Device not found"),
+        () => reads++,
+      );
+      await usePlayback.getState().next();
 
-    await Bun.sleep(ERROR_LINGER_MS + 100);
-    expect(usePlayback.getState().error).toBeNull();
-  });
+      await eventually(() => reads === 2, COMMAND_RECONCILE_MS + 1_000);
+      expect(usePlayback.getState().error).not.toBeNull();
+      await eventually(() => usePlayback.getState().error === null, ERROR_LINGER_MS + 1_000);
+    },
+    8_000,
+  );
 });

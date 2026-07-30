@@ -15,14 +15,7 @@
 
 ## Setup
 
-> **Warning**
->
-> spotuify streams audio through [librespot](https://github.com/librespot-org/librespot) and
-> requires Spotify Premium. Running from source requires Bun 1.3, the stable Rust toolchain, and
-> the standalone librespot CLI:
->
-> - macOS: `brew install librespot`
-> - Most everything else: `cargo install librespot`
+> Playback requires a Spotify Premium account.
 
 ### 1. Register a Spotify app
 
@@ -50,25 +43,20 @@ echo '{"clientId":"<your client id>"}' > ~/.config/spotuify/config.json
 Opens a browser, so run it outside the TUI:
 
 ```bash
-bun run src/cli.ts auth
+bun run auth
 ```
 
 The Web API token pair is cached at `~/.config/spotuify/token.json` with mode `0600` and refreshed
 automatically. Spotify refresh tokens expire six months after authorization; when that happens,
-re-run `bun run src/cli.ts auth` to complete the interactive flow again.
+re-run `bun run auth` to complete the interactive flow again.
 
 This authorizes both the Spotify Web API and terminal playback. Re-run it with `--force` to replace
 the Web API login or `--force-engine` to replace only the playback login.
 
-## Run
-
-```sh
-bun run dev
-```
-
 ## Development
 
 ```sh
+bun run dev           # run the TUI
 bun test              # unit tests
 bun run typecheck     # TypeScript
 bun run engine:test   # native engine tests
