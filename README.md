@@ -15,7 +15,8 @@
 
 ## Setup
 
-> Playback requires a Spotify Premium account.
+Running from source requires [Bun](https://bun.sh) and the stable
+[Rust toolchain](https://rustup.rs/). Playback requires Spotify Premium.
 
 ### 1. Register a Spotify app
 
