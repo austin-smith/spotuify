@@ -81,5 +81,6 @@ Spotuify uses two independent Spotify sessions:
 - The Web API uses Authorization Code + PKCE with your registered Spotify app.
 - Terminal playback uses librespot's own login and a native Rust sidecar.
 
-The Web API token is never passed to librespot. The TUI receives local playback events from the
-sidecar and uses the Web API to browse Spotify and control other devices.
+The Web API token is never passed to librespot. For terminal playback, the TUI sends commands to
+the sidecar and treats its local player events as authoritative. It uses the Web API for browsing,
+remote-device control, and periodic playback-state reconciliation.
