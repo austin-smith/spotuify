@@ -17,14 +17,15 @@ async function render(
   engine: EngineStatus,
   canBrowse = true,
   webAccountId: string | null = canBrowse ? "account" : null,
+  account = "Austin",
 ): Promise<string[]> {
   setup = await createTestRenderer({ width, height });
   createRoot(setup.renderer).render(
     <KeymapOverlay
       width={width}
       height={height}
-      account="Austin"
-      product="premium"
+      version="0.1.0"
+      account={account}
       engine={engine}
       webAccountId={webAccountId}
       canBrowse={canBrowse}
@@ -36,6 +37,17 @@ async function render(
 }
 
 describe("keymap engine status", () => {
+  test("shows the product version in the header", async () => {
+    const lines = await render(80, 24, { state: "missing" });
+    const screen = lines.join("\n");
+    const header = lines.find((line) => line.includes("SPOTUIFY")) ?? "";
+    const rule = lines.find((line) => line.includes("──")) ?? "";
+
+    expect(screen).toContain("SPOTUIFY v0.1.0");
+    expect(header.indexOf("SPOTUIFY")).toBe(rule.indexOf("─"));
+    expect(header.indexOf("Austin") + "Austin".length - 1).toBe(rule.lastIndexOf("─"));
+  });
+
   test("keeps long shortcut labels from wrapping into adjacent keymap rows", async () => {
     const lines = await render(80, 32, {
       state: "ready",
@@ -78,7 +90,22 @@ describe("keymap engine status", () => {
     });
     expect(lines.join("\n")).toContain("local playback failed");
     for (const line of lines.slice(0, 20)) {
-      expect(line.length).toBeLessThanOrEqual(60);
+      expect(Bun.stringWidth(line)).toBeLessThanOrEqual(60);
+    }
+  });
+
+  test("keeps brand and version while truncating a wide Unicode account at compact size", async () => {
+    const account = "Austin界面🎧".repeat(12);
+    const lines = await render(60, 20, { state: "missing" }, true, "account", account);
+    const screen = lines.join("\n");
+    const header = lines.find((line) => line.includes("SPOTUIFY")) ?? "";
+
+    expect(header).toContain("SPOTUIFY v0.1.0");
+    expect(header).toContain("Austin");
+    expect(header).toContain("…");
+    expect(header).not.toContain(account);
+    for (const line of lines.slice(0, 20)) {
+      expect(Bun.stringWidth(line)).toBeLessThanOrEqual(60);
     }
   });
 

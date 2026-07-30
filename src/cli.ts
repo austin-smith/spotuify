@@ -5,6 +5,7 @@ import { resolveBootProfile, saveProfileBestEffort } from "./auth/profile.ts";
 import type { Me } from "./api/types.ts";
 import { REDIRECT_URI } from "./config.ts";
 import { authenticateEngine } from "./engine/librespot.ts";
+import { VERSION } from "./version.ts";
 
 /** `name (product, country)`, degrading gracefully when the scope didn't grant those fields. */
 function describeAccount(me: Me): string {
@@ -19,6 +20,7 @@ Usage:
   spotuify auth [--force] [--force-engine]
                              Authorize with Spotify (run this first; opens a browser)
   spotuify whoami            Show the authenticated account
+  spotuify -v, --version     Show the product version
   spotuify                   Launch the TUI
 
 Redirect URI to register in your Spotify app: ${REDIRECT_URI}
@@ -90,6 +92,11 @@ async function main(argv: string[]): Promise<number | null> {
       console.log(USAGE);
       return 0;
 
+    case "-v":
+    case "--version":
+      console.log(`spotuify ${VERSION}`);
+      return 0;
+
     default:
       if (command !== undefined) {
         console.error(`Unknown command: ${command}\n`);
@@ -105,8 +112,8 @@ async function main(argv: string[]): Promise<number | null> {
 
 try {
   const code = await main(process.argv.slice(2));
-  if (code !== null) process.exit(code);
+  if (code !== null) process.exitCode = code;
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
+  process.exitCode = 1;
 }

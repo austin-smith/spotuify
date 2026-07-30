@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import packageMetadata from "../package.json";
 import { fetchLrclib, parseLrc, pickRecord } from "../src/api/lrclib.ts";
+import { VERSION } from "../src/version.ts";
 
 const realFetch = globalThis.fetch;
 const realDateNow = Date.now;
@@ -245,7 +245,7 @@ describe("fetchLrclib", () => {
 
     await fetchLrclib(TRACK);
     expect(seen.userAgent).toBe(
-      `spotuify/${packageMetadata.version} (https://github.com/austin-smith/spotuify)`,
+      `spotuify/${VERSION} (https://github.com/austin-smith/spotuify)`,
     );
   });
 

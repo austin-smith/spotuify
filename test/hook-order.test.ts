@@ -23,7 +23,7 @@ describe("hook order", () => {
   test("App calls no hooks after its first early return", async () => {
     const source = await Bun.file(new URL("../src/ui/App.tsx", import.meta.url)).text();
 
-    const componentStart = source.indexOf("export function App()");
+    const componentStart = source.indexOf("export function App(");
     expect(componentStart).toBeGreaterThan(-1);
     const body = source.slice(componentStart);
 

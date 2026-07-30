@@ -7,7 +7,7 @@
  */
 
 import type { LyricLine } from "./lyrics.ts";
-import packageMetadata from "../../package.json";
+import { VERSION } from "../version.ts";
 
 const BASE_URL = "https://lrclib.net/api";
 
@@ -24,8 +24,7 @@ const REQUEST_TIMEOUT_MS = 8_000;
 export const LRCLIB_STAGE_TIMEOUT_MS = 3_000;
 
 /** LRCLIB asks clients to identify themselves rather than arrive anonymously. */
-const USER_AGENT =
-  `spotuify/${packageMetadata.version} (https://github.com/austin-smith/spotuify)`;
+const USER_AGENT = `spotuify/${VERSION} (https://github.com/austin-smith/spotuify)`;
 
 /**
  * LRCLIB asks clients to make requests sequentially and leave 200–500ms between them.
