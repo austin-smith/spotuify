@@ -15,6 +15,19 @@ export function engineRestartDelay(
   return delays[attempt] ?? null;
 }
 
+/** Candidate sidecars for source execution, ordered from explicit override to build fallback. */
+export function sidecarCandidatePaths(
+  platform: NodeJS.Platform = process.platform,
+  configured: string | undefined = process.env["SPOTUIFY_ENGINE_PATH"],
+): string[] {
+  const executable = platform === "win32" ? "spotuify-engine.exe" : "spotuify-engine";
+  return [
+    ...(configured && configured.length > 0 ? [resolve(configured)] : []),
+    resolve(import.meta.dir, "../../native/target/debug", executable),
+    resolve(import.meta.dir, "../../native/target/release", executable),
+  ];
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -212,13 +225,7 @@ export class LibrespotEngine {
 
   /** Absolute path to the native sidecar built from `native/Cargo.toml`. */
   static async locateSidecar(): Promise<string | null> {
-    const configured = process.env["SPOTUIFY_ENGINE_PATH"];
-    const candidates = [
-      ...(configured && configured.length > 0 ? [resolve(configured)] : []),
-      resolve(import.meta.dir, "../../native/target/release/spotuify-engine"),
-      resolve(import.meta.dir, "../../native/target/debug/spotuify-engine"),
-    ];
-    for (const candidate of candidates) {
+    for (const candidate of sidecarCandidatePaths()) {
       if (await Bun.file(candidate).exists()) return candidate;
     }
     return null;
@@ -703,6 +710,8 @@ export class LibrespotEngine {
     try {
       proc.stdin.write(`${JSON.stringify({ id, command: "shutdown" })}\n`);
       proc.stdin.flush();
+    } catch {
+      // The child can exit between capture and write; shutdown remains complete in that case.
     } finally {
       const forceKillTimer = setTimeout(() => {
         if (proc.exitCode === null) proc.kill();

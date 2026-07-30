@@ -155,20 +155,57 @@ describe("how long an error stays up", () => {
 
   // The successful command reconciliation proves the app recovered, but the message remains
   // readable for the full linger window and then clears without spending another API request.
-  test(
-    "successful reconciliation clears it when the linger window ends",
-    async () => {
-      let reads = 0;
-      await withFailure(
-        new SpotifyApiError(404, "/me/player/next", "Device not found"),
-        () => reads++,
-      );
-      await usePlayback.getState().next();
+  test("successful reconciliation schedules clearing without another read", async () => {
+    let reads = 0;
+    await withFailure(
+      new SpotifyApiError(404, "/me/player/next", "Device not found"),
+      () => reads++,
+    );
+    await usePlayback.getState().next();
 
-      await eventually(() => reads === 2, COMMAND_RECONCILE_MS + 1_000);
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    const realNow = performance.now;
+    let placeholder: ReturnType<typeof setTimeout> | undefined;
+    let runScheduledClear: (() => void) | undefined;
+    globalThis.setTimeout = ((
+      callback: (...args: unknown[]) => void,
+      delay?: number,
+      ...args: unknown[]
+    ) => {
+      if (
+        runScheduledClear === undefined &&
+        delay !== undefined &&
+        delay > COMMAND_RECONCILE_MS &&
+        delay <= ERROR_LINGER_MS
+      ) {
+        placeholder = realSetTimeout(() => {}, ERROR_LINGER_MS);
+        runScheduledClear = () => {
+          if (placeholder !== undefined) realClearTimeout(placeholder);
+          callback(...args);
+        };
+        return placeholder;
+      }
+      return realSetTimeout(callback, delay, ...args);
+    }) as typeof setTimeout;
+
+    try {
+      const reconciliationDeadline = realNow() + COMMAND_RECONCILE_MS + 1;
+      performance.now = () => reconciliationDeadline;
+      await usePlayback.getState().refresh();
+
+      expect(reads).toBe(2);
+      expect(runScheduledClear).toBeFunction();
       expect(usePlayback.getState().error).not.toBeNull();
-      await eventually(() => usePlayback.getState().error === null, ERROR_LINGER_MS + 1_000);
-    },
-    8_000,
-  );
+
+      runScheduledClear?.();
+
+      expect(usePlayback.getState().error).toBeNull();
+      expect(reads).toBe(2);
+    } finally {
+      performance.now = realNow;
+      globalThis.setTimeout = realSetTimeout;
+      if (placeholder !== undefined) realClearTimeout(placeholder);
+    }
+  });
 });

@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
   authenticateEngine,
   engineRestartDelay,
   LibrespotEngine,
   NativePlaybackUnavailableError,
   parseEngineMessage,
+  sidecarCandidatePaths,
 } from "../src/engine/librespot.ts";
 
 async function eventually(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
@@ -19,6 +20,24 @@ async function eventually(predicate: () => boolean, timeoutMs = 1_000): Promise<
 }
 
 describe("librespot sidecar protocol", () => {
+  test("uses the platform-specific native executable name", () => {
+    expect(sidecarCandidatePaths("darwin", undefined).map((path) => basename(path))).toEqual(
+      ["spotuify-engine", "spotuify-engine"],
+    );
+    expect(sidecarCandidatePaths("win32", undefined).map((path) => basename(path))).toEqual(
+      ["spotuify-engine.exe", "spotuify-engine.exe"],
+    );
+  });
+
+  test("prefers an explicit sidecar and then the freshly built debug artifact", () => {
+    const configured = join(tmpdir(), "configured-sidecar");
+    const candidates = sidecarCandidatePaths(process.platform, configured);
+
+    expect(candidates[0]).toBe(configured);
+    expect(candidates[1]).toContain(`${join("native", "target", "debug")}`);
+    expect(candidates[2]).toContain(`${join("native", "target", "release")}`);
+  });
+
   test("delegates playback OAuth and cache ownership to the native engine", async () => {
     const directory = await mkdtemp(join(tmpdir(), "spotuify-engine-auth-test-"));
     const sidecar = join(directory, "fake-sidecar");
