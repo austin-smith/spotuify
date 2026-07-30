@@ -276,14 +276,17 @@ describe("cached account profile", () => {
       },
     } as unknown as Pick<SpotifyClient, "get">;
 
-    expect(
-      await recoverBootProfile(
+    await expect(
+      recoverBootProfile(
         client,
         AUTHORIZATION_ID,
         new AbortController().signal,
         Date.now() - 1,
       ),
-    ).toBeNull();
+    ).rejects.toMatchObject({
+      status: 429,
+      retryAt: expect.any(Number),
+    });
     expect(reads).toBe(1);
   });
 

@@ -1,6 +1,6 @@
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
-import { SpotifyApiError, SpotifyClient } from "../api/client.ts";
+import { SpotifyApiError, SpotifyClient, SpotifyLimitError } from "../api/client.ts";
 import { PlayerApi } from "../api/player.ts";
 import { isTrack, type Me } from "../api/types.ts";
 import { tokenStore } from "../auth/flow.ts";
@@ -238,7 +238,12 @@ export function App() {
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
-        const message = err instanceof Error ? err.message : String(err);
+        const message =
+          err instanceof SpotifyLimitError
+            ? "Spotify is still limiting account verification"
+            : err instanceof Error
+              ? err.message
+              : String(err);
         if (
           err instanceof ReauthRequiredError ||
           (err instanceof SpotifyApiError &&

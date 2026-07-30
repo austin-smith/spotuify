@@ -196,8 +196,9 @@ async function recoverProfile(
       if (error instanceof SpotifyLimitError) {
         transientAttempt = 0;
         // A zero or already elapsed replacement would make the loop immediately hit `/me` again.
-        // Stop instead of converting Spotify's repeated 429s into a client-side retry storm.
-        if (error.retryAt === null || error.retryAt <= Date.now()) return null;
+        // Surface the typed failure instead of converting Spotify's repeated 429s into either a
+        // client-side retry storm or an ambiguous successful `null` result.
+        if (error.retryAt === null || error.retryAt <= Date.now()) throw error;
         retryAt = error.retryAt;
         continue;
       }
