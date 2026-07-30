@@ -1,5 +1,6 @@
 {
   "name": "spotuify",
+  "version": "0.0.1",
   "module": "src/index.tsx",
   "type": "module",
   "private": true,

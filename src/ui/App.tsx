@@ -101,7 +101,7 @@ export function App() {
   const bootProfileRetryAt = boot.phase === "ready" ? boot.profileRetryAt : null;
 
   useEffect(() => {
-    let cancelled = false;
+    let canceled = false;
 
     void (async () => {
       try {
@@ -112,7 +112,7 @@ export function App() {
         // restricted profile-less mode, keeps the independent local receiver available.
         const profileResolution = await resolveBootProfile(client, authorizationId);
         const me = profileResolution.profile;
-        if (cancelled) return;
+        if (canceled) return;
         const player = new PlayerApi(client);
         if (me !== null) useSearch.getState().configure(client, me.country, me.id);
         useDevices.getState().configure(player, undefined, me?.id ?? null);
@@ -126,7 +126,7 @@ export function App() {
           profileRetryAt: profileResolution.retryAt,
         });
       } catch (err) {
-        if (cancelled) return;
+        if (canceled) return;
         setBoot({
           phase: "needs-setup",
           message:
@@ -140,7 +140,7 @@ export function App() {
     })();
 
     return () => {
-      cancelled = true;
+      canceled = true;
     };
   }, []);
 
@@ -148,13 +148,13 @@ export function App() {
     if (bootPlayer === null) return;
 
     const supervisor = new LibrespotEngine();
-    let cancelled = false;
+    let canceled = false;
     const unsubscribe = supervisor.onStatus(setEngine);
     setEngineClient(supervisor);
     void supervisor.start().catch((err) => {
       // The supervisor owns normal launch failures. This is a final boundary for unexpected setup
       // errors so a rejected promise can never leave the UI stuck at "starting".
-      if (!cancelled) {
+      if (!canceled) {
         setEngine({
           state: "failed",
           reason: err instanceof Error ? err.message : String(err),
@@ -163,7 +163,7 @@ export function App() {
     });
 
     return () => {
-      cancelled = true;
+      canceled = true;
       unsubscribe();
       supervisor.stop();
       setEngineClient(null);
@@ -349,7 +349,10 @@ export function App() {
       else if (key.name === "down" || (key.ctrl && key.name === "n")) lyrics.scrollBy(1, viewport);
       else if (key.name === "pageup") lyrics.scrollBy(-viewport, viewport);
       else if (key.name === "pagedown") lyrics.scrollBy(viewport, viewport);
-      else if (key.name === "home") lyrics.scrollTo(0);
+      else if (key.name === "home") {
+        lyrics.setFollowing(false);
+        lyrics.scrollTo(0);
+      } else if (key.name === "f") lyrics.setFollowing(true);
       else if (key.name === "r") lyrics.openLyrics(usePlayback.getState().item);
       return;
     }

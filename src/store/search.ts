@@ -88,7 +88,7 @@ let drillLoad: AbortController | null = null;
  * Tracked separately from `drillLoad`.
  *
  * Opening straight into an album drills immediately, and a shared controller meant that drill
- * cancelled the home fetch it had just started — leaving the root frame loading forever, so escaping
+ * canceled the home fetch it had just started — leaving the root frame loading forever, so escaping
  * back out landed on a spinner that never resolved.
  */
 let homeLoad: AbortController | null = null;

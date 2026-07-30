@@ -16,10 +16,10 @@ interface CoverBackdropProps {
   /** Darken the whole cover, for overlays that need the full screen readable. */
   dim?: boolean;
   /**
-   * Cell row to draw as solid single-colour cells rather than half-blocks.
+   * Cell row to draw as solid single-color cells rather than half-blocks.
    *
    * A terminal's block cursor fills an entire cell, so it only looks right over a cell holding one
-   * colour. This flattens the row the caret sits on; the row loses half its vertical detail, which
+   * color. This flattens the row the caret sits on; the row loses half its vertical detail, which
    * is imperceptible across a single row.
    */
   solidRow?: number | null;
@@ -29,7 +29,7 @@ interface CoverBackdropProps {
  * The album cover, filling the entire terminal behind the HUD.
  *
  * Absolutely positioned at the origin with the lowest z-index so every overlay draws on top. This
- * replaced a centred square: with the art bounded by the smaller axis there was always a leftover
+ * replaced a centered square: with the art bounded by the smaller axis there was always a leftover
  * band, and no amount of aligning made that band look intentional.
  */
 export function CoverBackdrop({

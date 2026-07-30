@@ -90,7 +90,7 @@ export async function awaitAuthCode(expectedState: string, signal?: AbortSignal)
     },
   });
 
-  const onAbort = () => settle({ ok: false, err: new Error("Authorization was cancelled.") });
+  const onAbort = () => settle({ ok: false, err: new Error("Authorization was canceled.") });
   signal?.addEventListener("abort", onAbort, { once: true });
 
   try {

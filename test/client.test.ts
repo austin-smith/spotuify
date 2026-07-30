@@ -34,7 +34,7 @@ describe("response bodies", () => {
   // Measured against the live API: POST /me/player/next answers 200 with a bare command id and no
   // content-type at all, e.g. `xnhCFLSU-oYEeK59yBVw1tAwgNI`. Parsing that as JSON threw a raw
   // SyntaxError, so every transport keypress flashed an error despite having worked.
-  test("a 200 with an unlabelled body is not parsed", async () => {
+  test("a 200 with an unlabeled body is not parsed", async () => {
     reply("xnhCFLSU-oYEeK59yBVw1tAwgNI", { status: 200 });
     expect(await client().request("/me/player/next", { method: "POST" })).toBeNull();
   });
@@ -49,7 +49,7 @@ describe("response bodies", () => {
     await player.seek(1_000);
   });
 
-  test("a body labelled as JSON is parsed", async () => {
+  test("a body labeled as JSON is parsed", async () => {
     reply(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },

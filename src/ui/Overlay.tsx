@@ -1,3 +1,4 @@
+import type { MouseEvent } from "@opentui/core";
 import type { ReactNode } from "react";
 import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
@@ -64,14 +65,16 @@ interface OverlayProps {
   hints: string;
   /** Renders `status` as an error. */
   isError?: boolean;
+  /** Handles wheel/trackpad input while the pointer is over the list viewport. */
+  onMouseScroll?: (event: MouseEvent) => void;
   children: ReactNode;
 }
 
 /**
  * Shared shell for the overlays that cover the cover art.
  *
- * Full-bleed rather than a centred dialog: these are lists you navigate, and their length varies
- * with their contents. The one centred overlay is the keymap, which is a fixed reference card.
+ * Full-bleed rather than a centered dialog: these are lists you navigate, and their length varies
+ * with their contents. The one centered overlay is the keymap, which is a fixed reference card.
  */
 export function Overlay({
   width,
@@ -80,6 +83,7 @@ export function Overlay({
   status,
   hints,
   isError = false,
+  onMouseScroll,
   children,
 }: OverlayProps) {
   const inner = overlayInnerWidth(width);
@@ -102,7 +106,13 @@ export function Overlay({
         <text fg={theme.faint}>{"─".repeat(Math.max(0, inner))}</text>
       </box>
 
-      <box flexDirection="column" flexGrow={1} overflow="hidden" marginTop={1}>
+      <box
+        flexDirection="column"
+        flexGrow={1}
+        overflow="hidden"
+        marginTop={1}
+        onMouseScroll={onMouseScroll}
+      >
         {children}
       </box>
 

@@ -36,6 +36,24 @@ async function render(
 }
 
 describe("keymap engine status", () => {
+  test("keeps long shortcut labels from wrapping into adjacent keymap rows", async () => {
+    const lines = await render(80, 32, {
+      state: "ready",
+      pid: 42,
+      deviceId: "receiver",
+      accountId: "account",
+    });
+    const screen = lines.join("\n");
+
+    expect(screen).toContain("IN LYRICS");
+    expect(screen).toContain("pgup/pgdn  scroll a page");
+    expect(screen).not.toContain("look again");
+    expect(screen).not.toContain("↑/↓LYRICscroll");
+    for (const line of lines.slice(0, 32)) {
+      expect(line.length).toBeLessThanOrEqual(80);
+    }
+  });
+
   test("describes a ready local receiver without the ambiguous activation message", async () => {
     const screen = (await render(80, 24, {
       state: "ready",

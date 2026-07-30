@@ -451,7 +451,7 @@ export class SpotifyClient {
   }
 }
 
-/** Whether Spotify labelled the body as JSON. Transport commands send no content-type at all. */
+/** Whether Spotify labeled the body as JSON. Transport commands send no content-type at all. */
 function isJson(res: Response): boolean {
   return (res.headers.get("content-type") ?? "").toLowerCase().includes("json");
 }

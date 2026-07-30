@@ -200,7 +200,7 @@ interface LibrespotEngineOptions {
 /**
  * Supervises Spotuify's structured librespot sidecar.
  *
- * Stdout is a JSON-lines protocol for readiness, command acknowledgements and player events.
+ * Stdout is a JSON-lines protocol for readiness, command acknowledgments and player events.
  * Librespot credentials remain in its own cache and never cross this boundary.
  */
 export class LibrespotEngine {

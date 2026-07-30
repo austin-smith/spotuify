@@ -32,7 +32,7 @@ export function regionAspect(cellsW: number, cellsH: number): number {
 }
 
 /**
- * Largest centred rect of `srcW x srcH` matching `targetAspect`.
+ * Largest centered rect of `srcW x srcH` matching `targetAspect`.
  *
  * Cover-crop rather than fit: a full-bleed background must fill the frame, and letterboxing a
  * square cover into a landscape terminal would reintroduce the empty bands.
@@ -104,7 +104,7 @@ export function chooseImage(images: Image[], targetEdge: number): Image | null {
  * Box-filter downscale of an RGBA image.
  *
  * Averaging over each source rect rather than point-sampling matters here: album art is full of
- * fine detail and text, and nearest-neighbour turns it into aliased noise at 40x20.
+ * fine detail and text, and nearest-neighbor turns it into aliased noise at 40x20.
  */
 export function resizeRgba(
   src: Uint8Array,
@@ -155,9 +155,9 @@ export function resizeRgba(
 /**
  * Average the two pixel rows a single cell row covers, per column.
  *
- * The art is drawn as half-block glyphs, so each cell normally holds two colours. A terminal's block
+ * The art is drawn as half-block glyphs, so each cell normally holds two colors. A terminal's block
  * cursor fills a whole cell and composites badly against that, so the row the caret sits on is
- * redrawn as solid cells using these averaged colours.
+ * redrawn as solid cells using these averaged colors.
  */
 export function flattenCellRow(
   rgba: Uint8Array,
@@ -213,4 +213,3 @@ export async function loadCoverArt(
   if (scrimFromCell !== null) applyScrim(rgba, width, height, scrimFromCell * 2);
   return { rgba, width, height };
 }
-

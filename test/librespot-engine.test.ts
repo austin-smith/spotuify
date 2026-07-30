@@ -551,7 +551,7 @@ process.stdin.on("data", (chunk) => {
     }
   });
 
-  test("serializes stateful commands before starting their acknowledgement timeout", async () => {
+  test("serializes stateful commands before starting their acknowledgment timeout", async () => {
     const directory = await mkdtemp(join(tmpdir(), "spotuify-engine-test-"));
     const sidecar = join(directory, "fake-sidecar");
     let engine: LibrespotEngine | null = null;
@@ -691,7 +691,7 @@ engine.stop();
     ).toBeNull();
   });
 
-  test("accepts command acknowledgements and rejects unsafe ids", () => {
+  test("accepts command acknowledgments and rejects unsafe ids", () => {
     expect(
       parseEngineMessage(JSON.stringify({ type: "response", id: 4, ok: false, error: "nope" })),
     ).toEqual({ type: "response", id: 4, ok: false, error: "nope" });

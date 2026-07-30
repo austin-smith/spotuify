@@ -9,7 +9,7 @@ import {
   resizeRgba,
 } from "../src/ui/art.ts";
 
-/** Build an RGBA buffer from a per-pixel colour function. */
+/** Build an RGBA buffer from a per-pixel color function. */
 function image(w: number, h: number, at: (x: number, y: number) => [number, number, number]) {
   const buf = new Uint8Array(w * h * 4);
   for (let y = 0; y < h; y++) {
@@ -78,13 +78,13 @@ describe("resizeRgba", () => {
     expect(resizeRgba(src, 64, 64, 40, 20)).toHaveLength(40 * 20 * 4);
   });
 
-  test("preserves a flat colour exactly", () => {
+  test("preserves a flat color exactly", () => {
     const src = image(64, 64, () => [10, 20, 30]);
     const out = resizeRgba(src, 64, 64, 8, 8);
     expect([out[0], out[1], out[2], out[3]]).toEqual([10, 20, 30, 255]);
   });
 
-  // Point-sampling a black/white checkerboard yields all-black or all-white; a box filter greys it.
+  // Point-sampling a black/white checkerboard yields all-black or all-white; a box filter grays it.
   test("averages rather than point-samples", () => {
     const src = image(64, 64, (x, y) => ((x + y) % 2 === 0 ? [0, 0, 0] : [255, 255, 255]));
     const out = resizeRgba(src, 64, 64, 8, 8);
@@ -118,7 +118,7 @@ describe("regionAspect", () => {
 
 describe("coverCrop", () => {
   test("trims top and bottom when the source is too tall", () => {
-    // Square cover into a landscape terminal: keep full width, crop vertically, stay centred.
+    // Square cover into a landscape terminal: keep full width, crop vertically, stay centered.
     const crop = coverCrop(640, 640, 100 / 64);
     expect(crop.w).toBe(640);
     expect(crop.h).toBeLessThan(640);
@@ -213,7 +213,7 @@ describe("flattenCellRow", () => {
     expect(colors[0]).toEqual({ r: 50, g: 50, b: 50 });
   });
 
-  test("returns one colour per column", () => {
+  test("returns one color per column", () => {
     const colors = flattenCellRow(buf(7, 6, () => 120), 7, 6, 2);
     expect(colors).toHaveLength(7);
     expect(colors.every((c) => c.r === 120)).toBe(true);
@@ -245,4 +245,3 @@ describe("flattenCellRow", () => {
     }
   });
 });
-

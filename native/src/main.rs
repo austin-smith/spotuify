@@ -342,7 +342,7 @@ async fn run() -> Result<()> {
     });
 
     // Metadata reads are independent of Spirc's ordered command stream. Track them so a slow
-    // catalog lookup never holds up play/pause/seek, while still cancelling every lookup before
+    // catalog lookup never holds up play/pause/seek, while still canceling every lookup before
     // the Session is shut down.
     let mut metadata_tasks = JoinSet::new();
     while let Some(line) = input.next_line().await? {
@@ -789,7 +789,7 @@ impl Runtime {
                 self.spirc.load(request).context("loading playback")?;
                 wait_for_load(self.playback.clone(), before).await?;
             }
-            // `run` writes the acknowledgement before `Runtime::shutdown` sends the one shutdown
+            // `run` writes the acknowledgment before `Runtime::shutdown` sends the one shutdown
             // command. Sending it here as well creates a duplicate command and can race the reply.
             Command::Shutdown { .. } => {}
         }

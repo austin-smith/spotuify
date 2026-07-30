@@ -292,7 +292,7 @@ export function moveSelection(rows: Row[], current: number, delta: number): numb
  */
 export function windowStart(rows: Row[], selected: number, height: number): number {
   if (rows.length <= height || height <= 0) return 0;
-  // Keep the selection roughly centred, then clamp so the window never runs past either end.
+  // Keep the selection roughly centered, then clamp so the window never runs past either end.
   const ideal = selected - Math.floor(height / 2);
   return Math.min(Math.max(0, ideal), rows.length - height);
 }

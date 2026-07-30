@@ -2,7 +2,7 @@
  * Fixed, high-contrast palette.
  *
  * Deliberately *not* derived from album art. Sampling produced an unpredictable, usually muddy
- * colour, applied it to the largest element on screen, and left the app with no identity of its own
+ * color, applied it to the largest element on screen, and left the app with no identity of its own
  * — it looked different every track without ever looking better.
  *
  * Swap `ACCENT` alone to reskin: amber `#ffb000`, phosphor `#33ff66`, magenta `#ff4fa3`.
