@@ -250,6 +250,17 @@ function confirmFromStore(state: PlaybackSlice): void {
   markAuthoritative("playing", "progress", "volume", "shuffle", "repeat");
 }
 
+/**
+ * Playback position right now, extrapolated from the last poll.
+ *
+ * The store writes `progressMs` only when the displayed second changes, which is deliberately too
+ * coarse to animate against. Anything needing finer steps — the lyric follow — reads this instead,
+ * so a 10Hz animation costs no store writes and re-renders nothing else.
+ */
+export function positionMs(): number {
+  return extrapolate(anchor, performance.now());
+}
+
 function applyState(state: PlaybackState | null): Partial<PlaybackSlice> {
   if (state === null) {
     anchor = { progressMs: 0, atMs: performance.now(), isPlaying: false, durationMs: 0 };

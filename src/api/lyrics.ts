@@ -6,18 +6,37 @@
  * Genius's own search API answers unauthenticated; the lyric itself only exists in the page HTML.
  */
 
+import {
+  fetchLrclib,
+  LRCLIB_STAGE_TIMEOUT_MS,
+  type LrclibResult,
+} from "./lrclib.ts";
+
 const SEARCH_URL = "https://genius.com/api/search";
 
 /** Genius is not on the critical path — give up rather than hang the overlay on a slow page. */
 const TIMEOUT_MS = 10_000;
 
+export interface LyricLine {
+  text: string;
+  /** Milliseconds into the track, when the source stamps its lines. Null when it does not. */
+  atMs: number | null;
+}
+
+/** Which of the two sources the words came from, so the overlay can say. */
+export type LyricsSource = "lrclib" | "genius";
+
 export interface Lyrics {
-  /** Genius's title and artist, which is what was actually matched — not what Spotify calls it. */
+  /** The source's own title and artist — what was actually matched, not what Spotify calls it. */
   title: string;
   artists: string;
-  url: string;
+  source: LyricsSource;
+  /** The Genius page, when that is where the words came from. */
+  url: string | null;
   /** Lyric lines, blank lines included, section markers like `[Verse 1]` on their own line. */
-  lines: string[];
+  lines: LyricLine[];
+  /** True when the lines carry timings and the overlay can follow the music. */
+  synced: boolean;
 }
 
 export class LyricsUnavailableError extends Error {
@@ -57,7 +76,7 @@ const METADATA_SEGMENT =
  * Remix", "Song (feat. X)" — and searching Genius with any of it attached reliably returns either
  * nothing or the wrong song. Returned lowercase, which is how Genius's search behaves anyway.
  */
-function improveTitle(title: string): string {
+export function improveTitle(title: string): string {
   let name = title.toLowerCase();
 
   // Featured artists live in the artist field on Genius, never the title.
@@ -85,6 +104,31 @@ function improveTitle(title: string): string {
   const cleaned = name.replace(/\s+/g, " ").trim();
   // Refuse to hand back an empty or near-empty title: a song genuinely called "Remix" would
   // otherwise be scrubbed down to nothing and search for the artist alone.
+  return cleaned.length >= 2 ? cleaned : title.toLowerCase().trim();
+}
+
+/**
+ * Strip only remaster labels for a timed-source retry.
+ *
+ * Genius needs aggressive cleanup to find words at all, but timings identify a recording. Removing
+ * "live", "remix", "radio edit", or similar suffixes can attach studio timestamps to a different
+ * version with nearly the same duration. A remaster keeps the performance and its timing intact.
+ */
+function improveTimedTitle(title: string): string {
+  let name = title.toLowerCase();
+  const remaster = /\bremaster(?:ed)?\b/;
+
+  name = name.replace(
+    /\s*[([]([^)\]]*)[)\]]/g,
+    (whole: string, segment: string) => (remaster.test(segment) ? "" : whole),
+  );
+
+  const segments = name.split(/\s+-\s+/);
+  if (segments.length > 1) {
+    name = segments.filter((segment, index) => index === 0 || !remaster.test(segment)).join(" - ");
+  }
+
+  const cleaned = name.replace(/\s+/g, " ").trim();
   return cleaned.length >= 2 ? cleaned : title.toLowerCase().trim();
 }
 
@@ -292,6 +336,32 @@ export function toLines(lyric: string): string[] {
   return normalised.split("\n");
 }
 
+/**
+ * Index of the line being sung at `positionMs`, or -1 before the first one starts.
+ *
+ * Binary search rather than a scan: this runs on every animation tick, and a long lyric is a few
+ * hundred lines.
+ */
+export function lineAt(lines: LyricLine[], positionMs: number): number {
+  let low = 0;
+  let high = lines.length - 1;
+  let found = -1;
+
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const at = lines[mid]?.atMs;
+    if (at === undefined || at === null || at > positionMs) {
+      high = mid - 1;
+    } else {
+      found = mid;
+      low = mid + 1;
+    }
+  }
+
+  return found;
+}
+
+
 /** Whether a line is a section marker like `[Chorus]` rather than a sung line. */
 export function isSection(line: string): boolean {
   return line.startsWith("[") && line.trimEnd().endsWith("]");
@@ -302,7 +372,7 @@ export function isSection(line: string): boolean {
  *
  * Two requests: Genius's search API to find the song, then its page for the words.
  */
-export async function fetchLyrics(
+export async function fetchGenius(
   track: { name: string; artists: string[] },
   options: { signal?: AbortSignal } = {},
 ): Promise<Lyrics> {
@@ -329,5 +399,77 @@ export async function fetchLyrics(
   // placeholder with no transcription yet. Either way there is nothing to show.
   if (lines.length === 0) throw new LyricsUnavailableError("no lyrics found for this track");
 
-  return { title: hit.title, artists: hit.artistNames, url: hit.url, lines };
+  return {
+    title: hit.title,
+    artists: hit.artistNames,
+    source: "genius",
+    url: hit.url,
+    lines: lines.map((text) => ({ text, atMs: null })),
+    synced: false,
+  };
+}
+
+/**
+ * The lyric for a track, timed if anyone has timed it.
+ *
+ * LRCLIB is asked first because it stamps every line, which is what lets the overlay follow the
+ * music; Genius is the fallback and covers the long tail LRCLIB has never seen. An LRCLIB failure
+ * is deliberately swallowed rather than surfaced — it is an optimisation over the Genius path, and
+ * its being down should cost the timings, not the words.
+ */
+export async function fetchLyrics(
+  track: { name: string; artists: string[]; durationMs?: number },
+  options: { signal?: AbortSignal } = {},
+): Promise<Lyrics> {
+  let timed: LrclibResult = { kind: "none" };
+  // LRCLIB is an optional timing upgrade, so its entire cascade gets one deadline. Reusing this
+  // signal across exact/search and the remaster retry prevents each request from renewing the wait.
+  const lrclibTimeout = AbortSignal.timeout(LRCLIB_STAGE_TIMEOUT_MS);
+  const lrclibSignal =
+    options.signal === undefined
+      ? lrclibTimeout
+      : AbortSignal.any([options.signal, lrclibTimeout]);
+  try {
+    timed = await fetchLrclib(track, { signal: lrclibSignal });
+
+    // LRCLIB indexes some tracks under Spotify's exact title and others under a clean one, so the
+    // raw title is tried first and the stripped one only as a fallback. Without this,
+    // "Paranoid Android - 2017 Remaster" fell through to Genius and lost its timings, even though
+    // LRCLIB has the song.
+    const cleaned = improveTimedTitle(track.name);
+    const needsTimedAlternative =
+      timed.kind === "none" || (timed.kind === "lyrics" && !timed.synced);
+    if (needsTimedAlternative && cleaned !== track.name.toLowerCase().trim()) {
+      const alternative = await fetchLrclib(
+        { ...track, name: cleaned },
+        { signal: lrclibSignal },
+      );
+      if (alternative.kind === "lyrics" && alternative.synced) {
+        timed = alternative;
+      } else if (timed.kind === "none") {
+        timed = alternative;
+      }
+    }
+  } catch {
+    // Fall through to Genius.
+  }
+
+  if (timed.kind === "lyrics") {
+    return {
+      title: timed.title,
+      artists: timed.artists,
+      source: "lrclib",
+      url: null,
+      lines: timed.lines,
+      synced: timed.synced,
+    };
+  }
+
+  // Only LRCLIB knows this, and it is worth saying: searching Genius for an instrumental returns
+  // some other song's words with total confidence.
+  if (timed.kind === "instrumental") {
+    throw new LyricsUnavailableError("this track is instrumental");
+  }
+
+  return await fetchGenius(track, options);
 }

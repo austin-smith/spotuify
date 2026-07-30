@@ -5,6 +5,7 @@ import {
   extractLyrics,
   improveQuery,
   isSection,
+  lineAt,
   pickHit,
   toLines,
   type SongHit,
@@ -294,6 +295,8 @@ describe("fetchLyrics", () => {
     const queries: string[] = [];
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = new URL(String(input));
+      // LRCLIB is asked first; these cases are about the Genius fallback, so it has nothing.
+      if (url.hostname.endsWith("lrclib.net")) return new Response("nope", { status: 404 });
       if (url.pathname.startsWith("/api/search")) {
         const q = url.searchParams.get("q") ?? "";
         queries.push(q);
@@ -329,7 +332,7 @@ describe("fetchLyrics", () => {
       name: "Paranoid Android - 2017 Remaster",
       artists: ["Radiohead"],
     });
-    expect(lyrics.lines[0]).toBe("Don't remind me");
+    expect(lyrics.lines[0]?.text).toBe("Don't remind me");
     expect(queries).toEqual(["paranoid android radiohead"]);
   });
 
@@ -408,5 +411,189 @@ describe("fetchLyrics", () => {
     globalThis.fetch = (async () =>
       new Response("nope", { status: 503 })) as unknown as typeof fetch;
     await expect(fetchLyrics({ name: "X", artists: ["Y"] })).rejects.toThrow("genius search failed");
+  });
+});
+
+describe("lineAt", () => {
+  const lines = [
+    { text: "first", atMs: 1_000 },
+    { text: "second", atMs: 5_000 },
+    { text: "third", atMs: 9_000 },
+  ];
+
+  test("finds the line being sung", () => {
+    expect(lineAt(lines, 1_000)).toBe(0);
+    expect(lineAt(lines, 4_999)).toBe(0);
+    expect(lineAt(lines, 5_000)).toBe(1);
+    expect(lineAt(lines, 100_000)).toBe(2);
+  });
+
+  // The intro before the first word: nothing is being sung yet, and highlighting line one would be
+  // a lie for however long the intro runs.
+  test("reports nothing before the first line starts", () => {
+    expect(lineAt(lines, 0)).toBe(-1);
+    expect(lineAt(lines, 999)).toBe(-1);
+  });
+
+  test("has nothing to find in an unstamped lyric", () => {
+    expect(lineAt([{ text: "a", atMs: null }], 5_000)).toBe(-1);
+    expect(lineAt([], 5_000)).toBe(-1);
+  });
+});
+
+
+describe("fetchLyrics source cascade", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** Route by host so the two sources can be failed independently. */
+  function route(lrclib: unknown | number, genius: { hit: boolean }) {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.hostname.endsWith("lrclib.net")) {
+        if (typeof lrclib === "number") return new Response("nope", { status: lrclib });
+        return new Response(JSON.stringify(lrclib), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.pathname.startsWith("/api/search")) {
+        const hits = genius.hit
+          ? [
+              {
+                type: "song",
+                result: {
+                  url: "https://genius.com/s",
+                  title: "Song",
+                  artist_names: "Artist",
+                },
+              },
+            ]
+          : [];
+        return new Response(JSON.stringify({ meta: { status: 200 }, response: { hits } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(`<div data-lyrics-container="true">from genius</div>`, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+  }
+
+  const TRACK = { name: "Song", artists: ["Artist"], durationMs: 200_000 };
+
+  test("prefers timed lyrics when they exist", async () => {
+    route({ trackName: "Song", artistName: "Artist", syncedLyrics: "[00:01.00]timed" }, { hit: true });
+    const lyrics = await fetchLyrics(TRACK);
+    expect(lyrics.source).toBe("lrclib");
+    expect(lyrics.synced).toBe(true);
+    expect(lyrics.lines[0]).toEqual({ text: "timed", atMs: 1_000 });
+  });
+
+  test("tries the cleaned title for timings while retaining the raw plain fallback", async () => {
+    const titles: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (!url.hostname.endsWith("lrclib.net")) {
+        throw new Error("genius should not be needed");
+      }
+
+      const title = url.searchParams.get("track_name") ?? "";
+      titles.push(title);
+      if (title === "Song - 2020 Remaster") {
+        const body = url.pathname.endsWith("/get")
+          ? { trackName: title, artistName: "Artist", plainLyrics: "plain fallback" }
+          : [];
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          trackName: "Song",
+          artistName: "Artist",
+          syncedLyrics: "[00:01.00]timed",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const lyrics = await fetchLyrics({ ...TRACK, name: "Song - 2020 Remaster" });
+    expect(lyrics).toMatchObject({ source: "lrclib", synced: true });
+    expect(lyrics.lines[0]).toEqual({ text: "timed", atMs: 1_000 });
+    expect(titles).toEqual(["Song - 2020 Remaster", "Song - 2020 Remaster", "song"]);
+  });
+
+  test("does not erase a recording variant to obtain unrelated timings", async () => {
+    const titles: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (!url.hostname.endsWith("lrclib.net")) {
+        throw new Error("genius should not be needed");
+      }
+
+      titles.push(url.searchParams.get("track_name") ?? "");
+      const body = url.pathname.endsWith("/get")
+        ? {
+            trackName: "Song - Club Remix",
+            artistName: "Artist",
+            plainLyrics: "remix words",
+          }
+        : [];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const lyrics = await fetchLyrics({ ...TRACK, name: "Song - Club Remix" });
+    expect(lyrics).toMatchObject({ source: "lrclib", synced: false });
+    expect(lyrics.lines[0]?.text).toBe("remix words");
+    expect(titles).toEqual(["Song - Club Remix", "Song - Club Remix"]);
+  });
+
+  test("falls back to genius when nothing has timed it", async () => {
+    route(404, { hit: true });
+    const lyrics = await fetchLyrics(TRACK);
+    expect(lyrics.source).toBe("genius");
+    expect(lyrics.synced).toBe(false);
+    expect(lyrics.lines[0]?.text).toBe("from genius");
+  });
+
+  /**
+   * The timed source is an improvement on the untimed one, not a dependency of it. Its being down
+   * should cost the timings, never the words.
+   */
+  test("an lrclib outage costs the timings, not the lyric", async () => {
+    route(500, { hit: true });
+    const lyrics = await fetchLyrics(TRACK);
+    expect(lyrics.source).toBe("genius");
+  });
+
+  // Searching Genius for an instrumental returns some other song's words with total confidence.
+  test("says a track is instrumental rather than inventing words for it", async () => {
+    route(
+      {
+        trackName: "Song",
+        artistName: "Artist",
+        duration: 200,
+        instrumental: true,
+        syncedLyrics: null,
+        plainLyrics: null,
+      },
+      { hit: true },
+    );
+    await expect(fetchLyrics(TRACK)).rejects.toThrow("instrumental");
+  });
+
+  test("reports nothing when neither source has it", async () => {
+    route(404, { hit: false });
+    await expect(fetchLyrics(TRACK)).rejects.toThrow("no lyrics found");
   });
 });

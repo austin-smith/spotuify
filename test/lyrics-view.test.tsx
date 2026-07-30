@@ -15,11 +15,15 @@ const TRACK: Track = {
   album: { id: "al", name: "OK Computer", uri: "spotify:album:al", images: [] },
 };
 
+const plain = (...texts: string[]) => texts.map((text) => ({ text, atMs: null }));
+
 const LYRICS: Lyrics = {
   title: "Paranoid Android",
   artists: "Radiohead",
+  source: "genius",
+  synced: false,
   url: "https://genius.com/Radiohead-paranoid-android-lyrics",
-  lines: [
+  lines: plain(
     "[Verse 1]",
     "Please could you stop the noise? I'm trying to get some rest",
     "From all the unborn chicken voices in my head",
@@ -31,7 +35,7 @@ const LYRICS: Lyrics = {
     "[Verse 2]",
     "When I am king you will be first against the wall",
     "With your opinion, which is of no consequence at all",
-  ],
+  ),
 };
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
@@ -90,7 +94,7 @@ describe("lyrics overlay", () => {
 
   test("says what it is doing while it looks", async () => {
     seed({ loading: true, lyrics: null });
-    expect((await render(100, 32)).join("\n")).toContain("searching genius");
+    expect((await render(100, 32)).join("\n")).toContain("searching for lyrics");
   });
 
   // The failure the user will actually hit: Genius has no page for the track.
@@ -108,13 +112,32 @@ describe("lyrics overlay", () => {
     expect(screen).not.toContain("Please could you stop");
   });
 
+  test("scrolls with wheel or trackpad input and stops auto-following", async () => {
+    seed({ lyrics: LYRICS, following: true });
+    const screen = await render(60, 12);
+    const y = screen.findIndex((row) => row.includes("[Verse 1]"));
+    const x = screen[y]?.indexOf("[Verse 1]") ?? -1;
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(y).toBeGreaterThanOrEqual(0);
+
+    // Target a rendered lyric so this verifies hit testing and event bubbling as well as state.
+    await setup?.mockMouse.scroll(x, y, "down");
+    expect(useLyrics.getState()).toMatchObject({ offset: 1, following: false });
+
+    // Let React commit the new visible rows before hit-testing the opposite gesture.
+    await Bun.sleep(20);
+    await setup?.renderOnce();
+    await setup?.mockMouse.scroll(x, y, "up");
+    expect(useLyrics.getState().offset).toBe(0);
+  });
+
   // A lyric taller than the overlay is the normal case, so the indicator has to appear.
   test("shows a scroll indicator only when there is more than fits", async () => {
     seed({ lyrics: LYRICS });
     expect((await render(60, 12)).join("\n")).toContain("│");
     setup?.renderer.destroy();
 
-    seed({ lyrics: { ...LYRICS, lines: ["[Verse 1]", "One line"] } });
+    seed({ lyrics: { ...LYRICS, lines: plain("[Verse 1]", "One line") } });
     expect((await render(100, 32)).join("\n")).not.toContain("│");
   });
 

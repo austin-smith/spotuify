@@ -349,7 +349,10 @@ export function App() {
       else if (key.name === "down" || (key.ctrl && key.name === "n")) lyrics.scrollBy(1, viewport);
       else if (key.name === "pageup") lyrics.scrollBy(-viewport, viewport);
       else if (key.name === "pagedown") lyrics.scrollBy(viewport, viewport);
-      else if (key.name === "home") lyrics.scrollTo(0);
+      else if (key.name === "home") {
+        lyrics.setFollowing(false);
+        lyrics.scrollTo(0);
+      } else if (key.name === "f") lyrics.setFollowing(true);
       else if (key.name === "r") lyrics.openLyrics(usePlayback.getState().item);
       return;
     }

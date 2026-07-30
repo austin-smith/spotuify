@@ -3,8 +3,10 @@ import { theme } from "./theme.ts";
 import type { EngineStatus } from "../engine/librespot.ts";
 import { truncate } from "./text.ts";
 
-/** Width of the key column, so actions line up within a column. */
-const KEY_WIDTH = 8;
+/** Minimum width of the key column, so short shortcuts and actions remain comfortably separated. */
+const MIN_KEY_WIDTH = 8;
+/** Space between the longest shortcut and its action. */
+const KEY_ACTION_GAP = 2;
 /**
  * Below this width two columns would each be too narrow.
  *
@@ -39,11 +41,33 @@ export function keymapFor(canBrowse: boolean): KeyGroup[] {
  * column reserving ~55 cells for ~20 cells of text, so the two sat absurdly far apart.
  */
 export function columnWidthFor(groups: KeyGroup[]): number {
-  const longest = groups.reduce(
-    (max, group) => Math.max(max, ...group.bindings.map((b) => b.action.length), group.label.length),
+  if (groups.length === 0) return 0;
+
+  const keyWidth = keyWidthFor(groups);
+  return groups.reduce(
+    (max, group) =>
+      Math.max(
+        max,
+        Bun.stringWidth(group.label),
+        ...group.bindings.map(({ action }) => keyWidth + Bun.stringWidth(action)),
+      ),
     0,
   );
-  return KEY_WIDTH + longest;
+}
+
+/** Width shared by shortcut labels in a column, derived from what that column actually contains. */
+function keyWidthFor(groups: KeyGroup[]): number {
+  const longest = groups.reduce(
+    (max, group) =>
+      Math.max(max, ...group.bindings.map(({ key }) => Bun.stringWidth(key))),
+    0,
+  );
+  return Math.max(MIN_KEY_WIDTH, longest + KEY_ACTION_GAP);
+}
+
+/** Pad by terminal cells rather than JavaScript code units, which diverge for some key glyphs. */
+function padKey(key: string, width: number): string {
+  return key + " ".repeat(Math.max(0, width - Bun.stringWidth(key)));
 }
 
 /** Rows a group occupies: its header plus one per binding. */
@@ -102,6 +126,8 @@ function Column({
   width: number;
   maxRows: number;
 }) {
+  const keyWidth = keyWidthFor(groups);
+
   return (
     <box flexDirection="column" width={width} flexShrink={0}>
       {groupsThatFit(groups, maxRows).map((group, index) => (
@@ -117,7 +143,7 @@ function Column({
           </text>
           {group.bindings.map(({ key, action }) => (
             <text key={`${group.label}-${key}-${action}`}>
-              <span fg={theme.text}>{key.padEnd(KEY_WIDTH)}</span>
+              <span fg={theme.text}>{padKey(key, keyWidth)}</span>
               <span fg={theme.muted}>{action}</span>
             </text>
           ))}

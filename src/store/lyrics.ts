@@ -35,13 +35,22 @@ export interface LyricsSlice {
   total: number;
   /** The track the current lyric belongs to, so a track change can be noticed. */
   trackKey: string | null;
+  /**
+   * Whether the view scrolls itself to keep the sung line in sight.
+   *
+   * On until the reader scrolls by hand, because taking the scroll back from someone mid-verse is
+   * infuriating. A new track turns it back on.
+   */
+  following: boolean;
 
   openLyrics: (item: PlayableItem | null) => void;
   closeLyrics: () => void;
   /** Load the new track's lyric if the overlay is open and the track actually changed. */
   follow: (item: PlayableItem | null) => void;
   scrollBy: (delta: number, viewport: number) => void;
+  /** Programmatic scroll, which does not count as taking over. */
   scrollTo: (offset: number) => void;
+  setFollowing: (following: boolean) => void;
   /** Record a relayout and keep the current scroll position inside its new viewport. */
   setTotal: (total: number, viewport: number) => void;
 }
@@ -56,10 +65,18 @@ export const useLyrics = create<LyricsSlice>((set, get) => ({
   offset: 0,
   total: 0,
   trackKey: null,
+  following: true,
 
   openLyrics(item) {
     if (item === null) {
-      set({ open: true, loading: false, error: "nothing playing", lyrics: null, trackKey: null });
+      set({
+        open: true,
+        loading: false,
+        error: "nothing playing",
+        lyrics: null,
+        trackKey: null,
+        following: true,
+      });
       return;
     }
 
@@ -73,6 +90,7 @@ export const useLyrics = create<LyricsSlice>((set, get) => ({
         lyrics: null,
         trackKey: keyOf(item),
         offset: 0,
+        following: true,
       });
       return;
     }
@@ -80,7 +98,15 @@ export const useLyrics = create<LyricsSlice>((set, get) => ({
     const key = keyOf(item);
     const cached = cache.get(key);
     if (cached !== undefined) {
-      set({ open: true, loading: false, error: null, lyrics: cached, trackKey: key, offset: 0 });
+      set({
+        open: true,
+        loading: false,
+        error: null,
+        lyrics: cached,
+        trackKey: key,
+        offset: 0,
+        following: true,
+      });
       return;
     }
 
@@ -88,12 +114,25 @@ export const useLyrics = create<LyricsSlice>((set, get) => ({
     const controller = new AbortController();
     inFlight = controller;
 
-    set({ open: true, loading: true, error: null, lyrics: null, trackKey: key, offset: 0 });
+    set({
+      open: true,
+      loading: true,
+      error: null,
+      lyrics: null,
+      trackKey: key,
+      offset: 0,
+      following: true,
+    });
 
     void (async () => {
       try {
         const lyrics = await fetchLyrics(
-          { name: item.name, artists: item.artists.map((artist) => artist.name) },
+          {
+            name: item.name,
+            artists: item.artists.map((artist) => artist.name),
+            // LRCLIB matches on length: it is how a live cut is told from the studio recording.
+            durationMs: item.duration_ms,
+          },
           { signal: controller.signal },
         );
         if (controller.signal.aborted) return;
@@ -101,7 +140,7 @@ export const useLyrics = create<LyricsSlice>((set, get) => ({
         // The track may have moved on while Genius was answering; a late lyric must not replace the
         // one belonging to whatever is playing now.
         if (get().trackKey !== key) return;
-        set({ loading: false, lyrics, error: null, offset: 0 });
+        set({ loading: false, lyrics, error: null, offset: 0, following: true });
       } catch (err) {
         if (controller.signal.aborted || get().trackKey !== key) return;
         set({
@@ -134,11 +173,16 @@ export const useLyrics = create<LyricsSlice>((set, get) => ({
     // Never scroll the last line off the top: past the end there is nothing to read, and a blank
     // screen looks like the lyric failed to load.
     const max = Math.max(0, total - viewport);
-    set({ offset: Math.min(max, Math.max(0, offset + delta)) });
+    // Scrolling by hand is how the reader says they want to look somewhere else.
+    set({ offset: Math.min(max, Math.max(0, offset + delta)), following: false });
   },
 
   scrollTo(offset) {
     set({ offset: Math.max(0, offset) });
+  },
+
+  setFollowing(following) {
+    set({ following });
   },
 
   setTotal(total, viewport) {

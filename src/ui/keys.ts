@@ -52,7 +52,7 @@ export const KEYMAP: KeyGroup[] = [
     bindings: [
       { key: "↑/↓", action: "scroll" },
       { key: "pgup/pgdn", action: "scroll a page" },
-      { key: "r", action: "look again" },
+      { key: "f", action: "follow along" },
       { key: "esc", action: "close" },
     ],
   },
