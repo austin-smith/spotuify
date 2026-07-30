@@ -1,0 +1,141 @@
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+ignore-transitive-dependencies = false
+private = { ignore = true }
+workarounds = ["chrono"]
+
+# The librespot workspace crates declare MIT but do not package the workspace
+# LICENSE. Retrieve the exact notice from their shared locked source commit.
+[librespot-audio.clarify]
+license = "MIT"
+override-git-commit = "d36f9f1907e8cc9d68a93f8ebc6b627b1bf7267d"
+
+[[librespot-audio.clarify.git]]
+path = "LICENSE"
+checksum = "b6e979ad38c429c5811e9eb6930040a984619786f55ebc60660db05df5325ed6"
+license = "MIT"
+
+[librespot-connect.clarify]
+license = "MIT"
+override-git-commit = "d36f9f1907e8cc9d68a93f8ebc6b627b1bf7267d"
+
+[[librespot-connect.clarify.git]]
+path = "LICENSE"
+checksum = "b6e979ad38c429c5811e9eb6930040a984619786f55ebc60660db05df5325ed6"
+license = "MIT"
+
+[librespot-core.clarify]
+license = "MIT"
+override-git-commit = "d36f9f1907e8cc9d68a93f8ebc6b627b1bf7267d"
+
+[[librespot-core.clarify.git]]
+path = "LICENSE"
+checksum = "b6e979ad38c429c5811e9eb6930040a984619786f55ebc60660db05df5325ed6"
+license = "MIT"
+
+[librespot-metadata.clarify]
+license = "MIT"
+override-git-commit = "d36f9f1907e8cc9d68a93f8ebc6b627b1bf7267d"
+
+[[librespot-metadata.clarify.git]]
+path = "LICENSE"
+checksum = "b6e979ad38c429c5811e9eb6930040a984619786f55ebc60660db05df5325ed6"
+license = "MIT"
+
+[librespot-oauth.clarify]
+license = "MIT"
+override-git-commit = "d36f9f1907e8cc9d68a93f8ebc6b627b1bf7267d"
+
+[[librespot-oauth.clarify.git]]
+path = "LICENSE"
+checksum = "b6e979ad38c429c5811e9eb6930040a984619786f55ebc60660db05df5325ed6"
+license = "MIT"
+
+[librespot-playback.clarify]
+license = "MIT"
+override-git-commit = "d36f9f1907e8cc9d68a93f8ebc6b627b1bf7267d"
+
+[[librespot-playback.clarify.git]]
+path = "LICENSE"
+checksum = "b6e979ad38c429c5811e9eb6930040a984619786f55ebc60660db05df5325ed6"
+license = "MIT"
+
+[librespot-protocol.clarify]
+license = "MIT"
+override-git-commit = "d36f9f1907e8cc9d68a93f8ebc6b627b1bf7267d"
+
+[[librespot-protocol.clarify.git]]
+path = "LICENSE"
+checksum = "b6e979ad38c429c5811e9eb6930040a984619786f55ebc60660db05df5325ed6"
+license = "MIT"
+
+# libm's repository-level file contains its MIT terms and the notices for
+# incorporated math implementations.
+[libm.clarify]
+license = "MIT"
+override-git-commit = "dfd2203a4d6110820ad7bb65cafe1bf331a03a3d"
+
+[[libm.clarify.git]]
+path = "libm/LICENSE.txt"
+checksum = "3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7"
+license = "MIT"
+
+# These objc2 crates declare MIT in their manifests and share the same
+# repository-level licensing statement.
+[objc2.clarify]
+license = "MIT"
+override-git-commit = "8852b424193ca41602281b3d7540d7c8ed51e49a"
+
+[[objc2.clarify.git]]
+path = "LICENSE.md"
+checksum = "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+license = "MIT"
+
+[objc2-encode.clarify]
+license = "MIT"
+override-git-commit = "8d214f5477365ffcbcbb7de058c86ed9a518efb7"
+
+[[objc2-encode.clarify.git]]
+path = "LICENSE.md"
+checksum = "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+license = "MIT"
+
+[objc2-foundation.clarify]
+license = "MIT"
+override-git-commit = "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+
+[[objc2-foundation.clarify.git]]
+path = "LICENSE.md"
+checksum = "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+license = "MIT"
+
+# These versions share the same root ISC license. Automatic scanning otherwise
+# treats an ISC header in a source file as the license text and includes code.
+[rustls-webpki.clarify]
+license = "ISC"
+
+[[rustls-webpki.clarify.files]]
+path = "LICENSE"
+checksum = "5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a"
+license = "ISC"
+
+# webpki 0.22.4's packaged source contains third-party test fixtures under
+# third-party/, but only its ISC-licensed src/ code is part of the release
+# dependency graph. Bind the clarification to the packaged root license.
+[webpki.clarify]
+license = "ISC"
+
+[[webpki.clarify.files]]
+path = "LICENSE"
+checksum = "5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a"
+license = "ISC"
