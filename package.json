@@ -3,6 +3,7 @@
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
+  "license": "MIT",
   "bin": {
     "spotuify": "src/cli.ts"
   },
@@ -12,6 +13,8 @@
     "engine:build": "cargo build --manifest-path native/Cargo.toml",
     "engine:build:release": "cargo build --release --manifest-path native/Cargo.toml",
     "engine:test": "cargo test --manifest-path native/Cargo.toml",
+    "licenses:check": "scripts/licenses.sh check",
+    "licenses:generate": "scripts/licenses.sh generate",
     "spotuify": "bun run src/cli.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"

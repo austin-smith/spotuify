@@ -1,5 +1,10 @@
 # spotuify Agent Guide
 
+## Project
+
+Spotuify is a Bun/TypeScript TUI built with React and OpenTUI. A Rust sidecar embeds librespot for
+terminal audio playback.
+
 ## Authentication
 
 There are two independent logins. Do not attempt to unify them.
@@ -9,6 +14,15 @@ There are two independent logins. Do not attempt to unify them.
 - Never pass the Web API token to `librespot --access-token`. Spotify's login5 rejects tokens issued to third-party apps.
 - `src/cli.ts auth` prints URLs and waits on a browser. It must never run once the renderer owns the terminal.
 - Never log or print token contents.
+
+## Native Playback Sidecar
+
+- `src/engine/librespot.ts` supervises the embedded Rust engine in `native/`; never invoke the standalone librespot binary. Source lookup is `SPOTUIFY_ENGINE_PATH`, then debug and release artifacts.
+- Playback uses newline-delimited JSON: configuration and commands on stdin, status/responses/events on stdout, and credential-free diagnostics on stderr. Auth is a separate pre-renderer mode.
+- Keep the TypeScript and Rust protocol schemas in lockstep and validate the boundary. `ready` requires device and account IDs but does not mean the receiver is active.
+- Route locally only when the librespot and Web API accounts match; identify devices by ID, not name. Stateful commands are serialized and acknowledged only after confirming player events; metadata reads may run concurrently.
+- Native events are authoritative while the local receiver is active. Preserve bounded lifecycle handling, stale-state guards, the stopped-receiver Web Resume fallback, and Web-reconciliation suspension during profile recovery.
+- Keep librespot credentials private and inside its cache. Cover protocol/lifecycle changes in `test/librespot-engine.test.ts`, routing changes in playback/device tests, and Rust behavior in native tests.
 
 ## Spotify API
 
@@ -38,11 +52,19 @@ There are two independent logins. Do not attempt to unify them.
 
 - Keep `README.md` for humans: what it is, how to set it up, how to run it. No conversation history, planning notes, or architecture essays.
 
-## Running
+## Licensing
+
+- `THIRD_PARTY_NOTICES.txt` is generated and must not be edited manually.
+- After changing `native/Cargo.toml`, `native/Cargo.lock`, or `tools/licenses/`, run `bun run licenses:generate` and `bun run licenses:check`.
+
+## Running and Validation
 
 ```sh
 bun run dev              # run the TUI
 bun test
 bun run typecheck
+bun run engine:test
+cargo fmt --manifest-path native/Cargo.toml --check
+cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
 bun run auth             # build the native engine and sign in; needs a TTY and a browser
 ```
