@@ -114,7 +114,7 @@ describe("moveSelection", () => {
     expect(moveSelection(rows, 1, -1)).toBe(1);
   });
 
-  test("honours multi-step deltas", () => {
+  test("honors multi-step deltas", () => {
     expect(moveSelection(rows, 1, 2)).toBe(4);
     expect(moveSelection(rows, 4, -2)).toBe(1);
   });

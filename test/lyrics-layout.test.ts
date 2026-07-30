@@ -178,16 +178,16 @@ describe("followOffset", () => {
     }
   });
 
-  test("re-centres once the line reaches the bottom of the band", () => {
+  test("re-centers once the line reaches the bottom of the band", () => {
     expect(followOffset(35, VIEWPORT, TOTAL, 20)).toBe(25);
   });
 
-  test("re-centres once the line reaches the top of the band", () => {
+  test("re-centers once the line reaches the top of the band", () => {
     expect(followOffset(21, VIEWPORT, TOTAL, 20)).toBe(11);
   });
 
   // Scrolling back is what happens after a seek backwards, and it needs the same treatment.
-  test("re-centres when the line is above the view entirely", () => {
+  test("re-centers when the line is above the view entirely", () => {
     expect(followOffset(5, VIEWPORT, TOTAL, 60)).toBe(0);
   });
 
@@ -215,8 +215,8 @@ describe("followOffset", () => {
     expect(followOffset(20, 5, TOTAL, 0, 27)).toBe(20);
   });
 
-  // A band wider than the viewport would leave nowhere to sit and re-centre on every line, which is
-  // the behaviour it exists to replace.
+  // A band wider than the viewport would leave nowhere to sit and re-center on every line, which is
+  // the behavior it exists to replace.
   test("keeps a usable band in a very short viewport", () => {
     for (const viewport of [1, 2, 3, 5]) {
       const held = followOffset(10, viewport, TOTAL, 10);
@@ -236,7 +236,7 @@ describe("brightness falloff", () => {
   test("during the intro, lines already fade from the top", () => {
     const intro = [0, 1, 2, 3].map((line) => distanceFrom(line, -1, true));
     expect(intro).toEqual([1, 2, 3, 4]);
-    // Distinct colours, and none of them the accent reserved for the line being sung.
+    // Distinct colors, and none of them the accent reserved for the line being sung.
     const colors = intro.map(colorFor);
     expect(new Set(colors).size).toBeGreaterThan(1);
     expect(colors).not.toContain(colorFor(0));

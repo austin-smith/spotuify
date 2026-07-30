@@ -141,8 +141,8 @@ const SCROLL_MARGIN = 0.25;
 /**
  * Where to scroll so the sung line stays readable.
  *
- * Holds the current offset while the line sits in the comfortable middle band, and re-centres only
- * when it reaches the edge. Centred on the re-centre rather than pinned to an edge: what is coming
+ * Holds the current offset while the line sits in the comfortable middle band, and re-centers only
+ * when it reaches the edge. Centered on the re-center rather than pinned to an edge: what is coming
  * next matters as much as what is being sung.
  */
 export function followOffset(
@@ -167,7 +167,7 @@ export function followOffset(
   }
 
   const span = Math.max(1, lastRow - row + 1);
-  // Centre the whole wrapped line when it fits. If it is taller than the viewport, start at its
+  // Center the whole wrapped line when it fits. If it is taller than the viewport, start at its
   // first row: hiding the beginning would also hide the only current-line marker.
   return clamp(
     span >= viewport

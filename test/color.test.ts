@@ -35,14 +35,14 @@ describe("lerpColor", () => {
     expect(lerpColor("#f00", "#f00", 0.5)).toBe("#ff0000");
   });
 
-  test("always produces a valid colour", () => {
+  test("always produces a valid color", () => {
     for (let t = 0; t <= 1; t += 0.017) {
       expect(lerpColor("#1ed760", "#3a3a42", t)).toMatch(/^#[0-9a-f]{6}$/);
     }
   });
 
-  // Rendering an unparseable colour as black would be a far worse failure than ignoring the blend.
-  test("passes an unparseable colour through instead of rendering black", () => {
+  // Rendering an unparseable color as black would be a far worse failure than ignoring the blend.
+  test("passes an unparseable color through instead of rendering black", () => {
     expect(lerpColor("rebeccapurple", "#ffffff", 0.2)).toBe("rebeccapurple");
     expect(lerpColor("rebeccapurple", "#ffffff", 0.8)).toBe("#ffffff");
   });

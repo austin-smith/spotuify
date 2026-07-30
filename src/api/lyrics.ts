@@ -314,12 +314,12 @@ export function extractLyrics(html: string): string {
 /**
  * Split a raw lyric into display lines.
  *
- * Genius is inconsistent about the blank line before a section marker, so sections are normalised to
+ * Genius is inconsistent about the blank line before a section marker, so sections are normalized to
  * exactly one blank line above them and runs of blank lines are collapsed. Without this the same
  * song renders with ragged gaps that look like a rendering fault.
  */
 export function toLines(lyric: string): string[] {
-  const normalised = lyric
+  const normalized = lyric
     .replace(/\r\n?/g, "\n")
     // Trim each line before anything else. Indentation in the page source becomes real text, and a
     // line of nothing but spaces is not blank to a regex — it silently defeats the collapsing below
@@ -332,8 +332,8 @@ export function toLines(lyric: string): string[] {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  if (normalised.length === 0) return [];
-  return normalised.split("\n");
+  if (normalized.length === 0) return [];
+  return normalized.split("\n");
 }
 
 /**
@@ -381,7 +381,7 @@ export async function fetchGenius(
    *
    * Genius searches the whole string, so every extra credited name is noise: "miss you oliver tree,
    * robin schulz" returned an unrelated poem, while "miss you oliver tree" finds the song. The full
-   * list is still used to recognise the right hit, since Genius credits collaborations in full.
+   * list is still used to recognize the right hit, since Genius credits collaborations in full.
    */
   const lead = track.artists[0] ?? "";
   const wanted = { title: track.name, artists: track.artists };
@@ -414,7 +414,7 @@ export async function fetchGenius(
  *
  * LRCLIB is asked first because it stamps every line, which is what lets the overlay follow the
  * music; Genius is the fallback and covers the long tail LRCLIB has never seen. An LRCLIB failure
- * is deliberately swallowed rather than surfaced — it is an optimisation over the Genius path, and
+ * is deliberately swallowed rather than surfaced — it is an optimization over the Genius path, and
  * its being down should cost the timings, not the words.
  */
 export async function fetchLyrics(

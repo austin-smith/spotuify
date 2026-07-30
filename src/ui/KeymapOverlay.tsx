@@ -222,7 +222,7 @@ export function KeymapOverlay({
       width={width}
       height={height}
       zIndex={10}
-      // Both axes at once: the inner block is sized to its own content, and this box centres it
+      // Both axes at once: the inner block is sized to its own content, and this box centers it
       // horizontally and vertically so it reads as a dialog rather than a corner fragment.
       alignItems="center"
       justifyContent="center"

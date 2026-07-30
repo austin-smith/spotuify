@@ -1581,7 +1581,7 @@ describe("native receiver routing", () => {
     const command = usePlayback.getState().adjustVolume(5);
     await Bun.sleep(1);
     events.listener?.({ name: "volume_changed", percent: 60 });
-    rejectVolume?.(new Error("acknowledgement lost"));
+    rejectVolume?.(new Error("acknowledgment lost"));
     await command;
 
     expect(usePlayback.getState().volumePercent).toBe(60);

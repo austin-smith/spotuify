@@ -29,7 +29,7 @@ pub async fn authenticate(config: AuthConfig, session_config: SessionConfig) -> 
     let cache = open_cache(&config.cache_dir)?;
 
     // Forced replacement deliberately leaves the old file in place until Session::connect has
-    // obtained and persisted new reusable credentials. Cancelling OAuth cannot destroy a working
+    // obtained and persisted new reusable credentials. Canceling OAuth cannot destroy a working
     // playback login.
     if !needs_oauth(&cache, config.force) {
         secure_credentials_file(&credentials_path)?;

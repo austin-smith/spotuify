@@ -1,12 +1,12 @@
 /**
- * Colour interpolation, for transitions between palette entries.
+ * Color interpolation, for transitions between palette entries.
  *
- * A terminal cannot move text by half a row, so position can only ever be stepped. Colour is the one
+ * A terminal cannot move text by half a row, so position can only ever be stepped. Color is the one
  * axis with real resolution — 24 bits of it — which makes it the only place a transition can
  * genuinely be smooth rather than merely fast.
  *
- * Everything here interpolates *between* colours the theme already defines. It never invents one:
- * the palette is deliberately fixed, and a colour that varies per track is exactly what `theme.ts`
+ * Everything here interpolates *between* colors the theme already defines. It never invents one:
+ * the palette is deliberately fixed, and a color that varies per track is exactly what `theme.ts`
  * rejects.
  */
 
@@ -35,7 +35,7 @@ function toHex(channel: number): string {
 }
 
 /**
- * Blend two colours, `t` running from `from` at 0 to `to` at 1.
+ * Blend two colors, `t` running from `from` at 0 to `to` at 1.
  *
  * Interpolates in plain sRGB rather than a perceptual space. The palette's steps are close enough
  * together that the difference is invisible over a 150ms transition, and the conversion either way
@@ -47,7 +47,7 @@ export function lerpColor(from: string, to: string, t: number): string {
 
   const start = parseHex(from);
   const end = parseHex(to);
-  // A colour that cannot be parsed is passed through rather than silently rendered as black.
+  // A color that cannot be parsed is passed through rather than silently rendered as black.
   if (start === null || end === null) return t < 0.5 ? from : to;
 
   const channels = start.map((channel, index) => channel + (end[index]! - channel) * t);

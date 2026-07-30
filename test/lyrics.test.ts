@@ -189,7 +189,7 @@ describe("pickHit", () => {
     ).toBeNull();
   });
 
-  test("distinguishes non-Latin titles instead of normalising both to empty", () => {
+  test("distinguishes non-Latin titles instead of normalizing both to empty", () => {
     expect(
       pickHit([hit("世界", "Someone")], {
         title: "花",
@@ -271,7 +271,7 @@ describe("decodeEntities", () => {
 });
 
 describe("isSection", () => {
-  test("recognises section markers", () => {
+  test("recognizes section markers", () => {
     expect(isSection("[Verse 1]")).toBe(true);
     expect(isSection("[Chorus: Etta James]")).toBe(true);
   });

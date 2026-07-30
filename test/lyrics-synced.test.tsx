@@ -9,7 +9,7 @@ import { useLyrics } from "../src/store/lyrics.ts";
  * The sung position, under the test's control.
  *
  * `positionMs` extrapolates from a private anchor inside the playback store, which a test cannot
- * reach. Mocking it is what makes the following behaviour observable at all.
+ * reach. Mocking it is what makes the following behavior observable at all.
  */
 let nowMs = 0;
 mock.module("../src/store/playback.ts", () => ({ positionMs: () => nowMs }));
@@ -253,7 +253,7 @@ describe("line rendering", () => {
   };
 
   /**
-   * A row is split across spans for the marker and the indent, and its colour is recomputed on every
+   * A row is split across spans for the marker and the indent, and its color is recomputed on every
    * frame. Both are places a line could come out altered, and a lyric missing characters is not a
    * lyric.
    */
@@ -267,7 +267,7 @@ describe("line rendering", () => {
   });
 
   test("shows the whole line while the page is still settling", async () => {
-    // Inside the 150ms transition, when the colours are mid-blend.
+    // Inside the 150ms transition, when the colors are mid-blend.
     for (const at of [10_010, 10_070, 10_140]) {
       seed({ lyrics: FILLED });
       const screen = await renderAt(at, 100, 24);
@@ -334,7 +334,7 @@ describe("scrolling", () => {
   });
 
   test("moves once the line reaches the edge of the band", async () => {
-    // Line 24 has reached the bottom margin, so the page re-centres.
+    // Line 24 has reached the bottom margin, so the page re-centers.
     seed({ offset: 15 });
     const visible = await settleAt(240_000);
     expect(visible[0]).toBe("19");

@@ -73,8 +73,8 @@ interface OverlayProps {
 /**
  * Shared shell for the overlays that cover the cover art.
  *
- * Full-bleed rather than a centred dialog: these are lists you navigate, and their length varies
- * with their contents. The one centred overlay is the keymap, which is a fixed reference card.
+ * Full-bleed rather than a centered dialog: these are lists you navigate, and their length varies
+ * with their contents. The one centered overlay is the keymap, which is a fixed reference card.
  */
 export function Overlay({
   width,
