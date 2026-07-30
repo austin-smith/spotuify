@@ -16,12 +16,17 @@
 ## Setup
 
 Running from source requires [Bun](https://bun.sh) and the stable
-[Rust toolchain](https://rustup.rs/). Playback requires Spotify Premium.
+[Rust toolchain](https://rustup.rs/).
+
+On Linux, the Rust build also needs `pkg-config` and the ALSA development
+package (`libasound2-dev` on Debian/Ubuntu or `alsa-lib-devel` on Fedora).
+
+Playback requires Spotify Premium.
 
 ### 1. Register a Spotify app
 
-Create one at <https://developer.spotify.com/dashboard> and add exactly this redirect URI — it must
-match byte-for-byte, including the trailing path:
+Create one at <https://developer.spotify.com/dashboard> and add exactly this
+redirect URI — it must match byte-for-byte, including the trailing path:
 
 ```
 http://127.0.0.1:8989/callback
