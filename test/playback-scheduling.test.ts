@@ -6,6 +6,7 @@ import {
   type LibrespotEngine,
   NativePlaybackUnavailableError,
 } from "../src/engine/librespot.ts";
+import { chooseImage } from "../src/ui/art.ts";
 import {
   COMMAND_RECONCILE_MS,
   ERROR_LINGER_MS,
@@ -1137,7 +1138,7 @@ describe("native receiver routing", () => {
     expect(usePlayback.getState().isPlaying).toBe(true);
   });
 
-  test("native track events preserve catalog artists and distinguish episodes", async () => {
+  test("native events preserve catalog metadata and distinguish episodes", async () => {
     const events: { listener?: (event: EngineEvent) => void } = {};
     const engine = {
       getStatus: () => ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
@@ -1170,7 +1171,11 @@ describe("native receiver routing", () => {
         },
       ],
       album: "Album",
-      covers: [],
+      covers: [
+        { url: "large", width: 640, height: 640 },
+        { url: "medium", width: 300, height: 300 },
+        { url: "small", width: 64, height: 64 },
+      ],
     });
     const track = usePlayback.getState().item;
     expect(track).not.toBeNull();
@@ -1178,6 +1183,12 @@ describe("native receiver routing", () => {
     if (track !== null && isTrack(track)) {
       expect(track.id).toBe("catalog-track");
       expect(track.artists[0]?.id).toBe("catalog-artist");
+      expect(track.album.images).toEqual([
+        { url: "large", width: 640, height: 640 },
+        { url: "medium", width: 300, height: 300 },
+        { url: "small", width: 64, height: 64 },
+      ]);
+      expect(chooseImage(track.album.images, 200)?.url).toBe("large");
     }
 
     events.listener?.({

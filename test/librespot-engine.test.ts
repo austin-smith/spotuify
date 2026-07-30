@@ -650,7 +650,7 @@ engine.stop();
     ).toBeNull();
   });
 
-  test("preserves native media type and structured catalog artists", () => {
+  test("preserves structured native track metadata", () => {
     expect(
       parseEngineMessage(
         JSON.stringify({
@@ -665,7 +665,7 @@ engine.stop();
             artists: [],
             album: null,
             show: "Show",
-            covers: ["https://image"],
+            covers: [{ url: "https://image", width: 640, height: 640 }],
           },
         }),
       ),
@@ -680,7 +680,7 @@ engine.stop();
         duration_ms: 1234,
         artists: [],
         show: "Show",
-        covers: ["https://image"],
+        covers: [{ url: "https://image", width: 640, height: 640 }],
       },
     });
   });
@@ -789,6 +789,22 @@ engine.stop();
             duration_ms: 1000,
             artists: ["not structured"],
             covers: [],
+          },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseEngineMessage(
+        JSON.stringify({
+          type: "event",
+          event: {
+            name: "track_changed",
+            media_type: "track",
+            uri: "spotify:track:one",
+            title: "Track",
+            duration_ms: 1000,
+            artists: [],
+            covers: ["https://image"],
           },
         }),
       ),

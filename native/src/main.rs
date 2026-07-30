@@ -183,6 +183,13 @@ struct NativeArtist {
     uri: String,
 }
 
+#[derive(Debug, Eq, PartialEq, Serialize)]
+struct NativeCover {
+    url: String,
+    width: u32,
+    height: u32,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "name", rename_all = "snake_case")]
 enum PlayerEventMessage {
@@ -197,7 +204,7 @@ enum PlayerEventMessage {
         album: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         show: Option<String>,
-        covers: Vec<String>,
+        covers: Vec<NativeCover>,
     },
     Playing {
         uri: String,
@@ -1010,6 +1017,12 @@ fn volume_percent(volume: u16) -> u8 {
     ((f64::from(volume) / f64::from(u16::MAX)) * 100.0).round() as u8
 }
 
+fn native_cover(url: String, width: i32, height: i32) -> Option<NativeCover> {
+    let width = u32::try_from(width).ok().filter(|width| *width > 0)?;
+    let height = u32::try_from(height).ok().filter(|height| *height > 0)?;
+    Some(NativeCover { url, width, height })
+}
+
 fn map_player_event(event: PlayerEvent) -> Option<PlayerEventMessage> {
     match event {
         PlayerEvent::TrackChanged { audio_item } => {
@@ -1058,7 +1071,7 @@ fn map_player_event(event: PlayerEvent) -> Option<PlayerEventMessage> {
                 covers: audio_item
                     .covers
                     .into_iter()
-                    .map(|cover| cover.url)
+                    .filter_map(|cover| native_cover(cover.url, cover.width, cover.height))
                     .collect(),
             })
         }
@@ -1151,6 +1164,20 @@ mod tests {
     }
 
     #[test]
+    fn native_covers_preserve_valid_dimensions() {
+        assert_eq!(
+            native_cover("https://image".to_owned(), 640, 640),
+            Some(NativeCover {
+                url: "https://image".to_owned(),
+                width: 640,
+                height: 640,
+            })
+        );
+        assert_eq!(native_cover("https://image".to_owned(), 0, 640), None);
+        assert_eq!(native_cover("https://image".to_owned(), 640, -1), None);
+    }
+
+    #[test]
     fn stale_player_events_do_not_change_the_observed_playback_phase() {
         let track_id =
             SpotifyUri::from_uri("spotify:track:4uLU6hMCjMI75M1A2tKUQC").expect("valid track URI");
@@ -1203,6 +1230,45 @@ mod tests {
                     "name": "playing",
                     "uri": "spotify:track:one",
                     "position_ms": 42
+                }
+            })
+        );
+
+        let track_changed = Outgoing::Event {
+            event: PlayerEventMessage::TrackChanged {
+                media_type: "track",
+                id: Some("track".to_owned()),
+                uri: "spotify:track:track".to_owned(),
+                title: "Track".to_owned(),
+                duration_ms: 1_000,
+                artists: Vec::new(),
+                album: Some("Album".to_owned()),
+                show: None,
+                covers: vec![NativeCover {
+                    url: "https://image".to_owned(),
+                    width: 640,
+                    height: 640,
+                }],
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(track_changed).unwrap(),
+            serde_json::json!({
+                "type": "event",
+                "event": {
+                    "name": "track_changed",
+                    "media_type": "track",
+                    "id": "track",
+                    "uri": "spotify:track:track",
+                    "title": "Track",
+                    "duration_ms": 1_000,
+                    "artists": [],
+                    "album": "Album",
+                    "covers": [{
+                        "url": "https://image",
+                        "width": 640,
+                        "height": 640
+                    }]
                 }
             })
         );

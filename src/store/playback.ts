@@ -527,7 +527,7 @@ function itemFromNative(event: Extract<EngineEvent, { name: "track_changed" }>):
       id: "",
       name: event.album ?? "",
       uri: "",
-      images: event.covers.map((url) => ({ url, width: null, height: null })),
+      images: event.covers.map(({ url, width, height }) => ({ url, width, height })),
     },
     ...(event.media_type === "local" ? { is_local: true } : {}),
   };

@@ -91,6 +91,12 @@ export interface NativeArtist {
   uri: string;
 }
 
+export interface NativeCover {
+  url: string;
+  width: number;
+  height: number;
+}
+
 export type EngineEvent =
   | {
       name: "track_changed";
@@ -102,7 +108,7 @@ export type EngineEvent =
       artists: NativeArtist[];
       album?: string;
       show?: string;
-      covers: string[];
+      covers: NativeCover[];
     }
   | {
       name: "playing" | "paused" | "seeked" | "position_changed";
@@ -801,7 +807,7 @@ function parseEngineEvent(value: unknown): EngineEvent | null {
         typeof value["title"] !== "string" ||
         !isUnsignedInteger(value["duration_ms"]) ||
         !isNativeArtistArray(value["artists"]) ||
-        !isStringArray(value["covers"]) ||
+        !isNativeCoverArray(value["covers"]) ||
         (value["album"] !== undefined &&
           value["album"] !== null &&
           typeof value["album"] !== "string") ||
@@ -895,8 +901,19 @@ function isUnsignedInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+function isNativeCoverArray(value: unknown): value is NativeCover[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        isRecord(entry) &&
+        typeof entry["url"] === "string" &&
+        isUnsignedInteger(entry["width"]) &&
+        entry["width"] > 0 &&
+        isUnsignedInteger(entry["height"]) &&
+        entry["height"] > 0,
+    )
+  );
 }
 
 function isNativeArtistArray(value: unknown): value is NativeArtist[] {
