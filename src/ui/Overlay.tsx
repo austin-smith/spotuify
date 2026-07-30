@@ -4,7 +4,7 @@ import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
 /** Horizontal inset of every overlay. */
-const PADDING_X = 4;
+export const OVERLAY_PADDING_X = 4;
 
 /**
  * Vertical inset of every overlay.
@@ -27,7 +27,7 @@ const CHROME_ROWS = 9;
 
 /** Usable width inside the padding. */
 export function overlayInnerWidth(width: number): number {
-  return width - PADDING_X * 2;
+  return width - OVERLAY_PADDING_X * 2;
 }
 
 /**
@@ -97,7 +97,7 @@ export function Overlay({
       height={height}
       zIndex={10}
       flexDirection="column"
-      paddingX={PADDING_X}
+      paddingX={OVERLAY_PADDING_X}
       paddingY={OVERLAY_TOP}
     >
       {header}

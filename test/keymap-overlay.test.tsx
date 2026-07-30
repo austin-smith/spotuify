@@ -58,7 +58,7 @@ describe("keymap engine status", () => {
     const screen = lines.join("\n");
 
     expect(screen).toContain("IN LYRICS");
-    expect(screen).toContain("pgup/pgdn  scroll a page");
+    expect(screen).toContain("pgup/pgdn   scroll a page");
     expect(screen).not.toContain("look again");
     expect(screen).not.toContain("↑/↓LYRICscroll");
     for (const line of lines.slice(0, 32)) {
@@ -121,6 +121,7 @@ describe("keymap engine status", () => {
 
     expect(screen).not.toContain("search");
     expect(screen).not.toContain("go to");
+    expect(screen).not.toContain("save / unsave");
     expect(screen).not.toContain("device");
     expect(screen).toContain("retry account");
     expect(screen).toContain("waiting for account verification");

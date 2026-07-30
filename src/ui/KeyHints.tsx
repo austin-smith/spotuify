@@ -3,6 +3,9 @@ import { theme } from "./theme.ts";
 
 const GAP = 2;
 
+/** Terminal rows reserved for the persistent key-hint footer. */
+export const KEY_HINT_ROWS = 1;
+
 /**
  * As many whole hints as fit the width.
  *

@@ -2,7 +2,13 @@ import type { AlbumTrack } from "../api/catalog.ts";
 import type { HomeData } from "../api/library.ts";
 import type { Playlist, PlaylistEntry } from "../api/playlists.ts";
 import type { SearchResults, SimplePlaylist } from "../api/search.ts";
-import { artistLine, type SimpleAlbum, type SimpleArtist, type Track } from "../api/types.ts";
+import {
+  artistLine,
+  type PlayableItem,
+  type SimpleAlbum,
+  type SimpleArtist,
+  type Track,
+} from "../api/types.ts";
 import { formatDuration } from "./progress.ts";
 
 /**
@@ -20,6 +26,8 @@ export type Row =
       trailing: string;
       /** What to hand the player when this row is chosen. */
       play: PlayTarget;
+      /** Full item context for save and add-to-playlist actions, when this is a playable item. */
+      actionItem?: PlayableItem;
       /** Set when choosing this row should open a deeper list rather than play. */
       drill?: Drill;
     };
@@ -62,6 +70,7 @@ function trackRow(track: Track): ResultRow {
     detail: artistLine(track),
     trailing: formatDuration(track.duration_ms),
     play: { uris: [track.uri] },
+    actionItem: track,
   };
 }
 
@@ -151,6 +160,7 @@ export function toPlaylistRows(
     detail: artistLine(entry.track),
     trailing: formatDuration(entry.track.duration_ms),
     play: { contextUri: playlist.uri, offset: entry.position },
+    actionItem: entry.track,
   }));
 }
 
@@ -161,13 +171,30 @@ export function toPlaylistRows(
  * the play target. Each row starts the album at its own position rather than playing one track
  * alone, so the album continues afterwards.
  */
-export function toAlbumRows(album: { name: string; uri: string }, tracks: AlbumTrack[]): Row[] {
+export function toAlbumRows(
+  album: { id?: string; name: string; uri: string },
+  tracks: AlbumTrack[],
+): Row[] {
+  const albumId = album.id ?? album.uri.split(":").at(-1) ?? "";
   return tracks.map((track, index) => ({
     kind: "result" as const,
     label: `${String(track.track_number || index + 1).padStart(2)}  ${track.name}`,
     detail: track.artists.map((a) => a.name).join(", "),
     trailing: formatDuration(track.duration_ms),
     play: { contextUri: album.uri, offset: index },
+    actionItem: {
+      id: track.id,
+      name: track.name,
+      uri: track.uri,
+      duration_ms: track.duration_ms,
+      artists: track.artists,
+      album: {
+        id: albumId,
+        name: album.name,
+        uri: album.uri,
+        images: [],
+      },
+    },
   }));
 }
 
@@ -291,8 +318,13 @@ export function moveSelection(rows: Row[], current: number, delta: number): numb
  * Returns the slice start so the caller can render `rows.slice(start, start + height)`.
  */
 export function windowStart(rows: Row[], selected: number, height: number): number {
-  if (rows.length <= height || height <= 0) return 0;
+  return listWindowStart(rows.length, selected, height);
+}
+
+/** Generic list windowing for overlays whose rows are not palette `Row`s. */
+export function listWindowStart(length: number, selected: number, height: number): number {
+  if (length <= height || height <= 0) return 0;
   // Keep the selection roughly centered, then clamp so the window never runs past either end.
   const ideal = selected - Math.floor(height / 2);
-  return Math.min(Math.max(0, ideal), rows.length - height);
+  return Math.min(Math.max(0, ideal), length - height);
 }

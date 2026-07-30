@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SpotifyClient } from "../src/api/client.ts";
-import { myPlaylists, playlistItems } from "../src/api/playlists.ts";
+import { addPlaylistItems, myPlaylists, playlistItems } from "../src/api/playlists.ts";
 import type { TokenStore } from "../src/auth/tokens.ts";
 
 const realFetch = globalThis.fetch;
@@ -219,5 +219,59 @@ describe("myPlaylists", () => {
     const lists = await myPlaylists(new SpotifyClient(tokens), "me");
     expect(lists).toHaveLength(201);
     expect(lists.at(-1)?.id).toBe("last");
+  });
+});
+
+describe("addPlaylistItems", () => {
+  test("posts URI items to the current /items endpoint and returns its snapshot", async () => {
+    let call:
+      | { method: string | undefined; path: string; body: unknown }
+      | undefined;
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      call = {
+        method: init?.method,
+        path: new URL(String(input)).pathname.replace("/v1", ""),
+        body: JSON.parse(String(init?.body)),
+      };
+      return Response.json({ snapshot_id: "snapshot-1" }, { status: 201 });
+    }) as unknown as typeof fetch;
+
+    const snapshot = await addPlaylistItems(new SpotifyClient(tokens), "owned", [
+      "spotify:track:one",
+    ]);
+
+    expect(snapshot).toBe("snapshot-1");
+    expect(call).toEqual({
+      method: "POST",
+      path: "/playlists/owned/items",
+      body: { uris: ["spotify:track:one"] },
+    });
+  });
+
+  test("requires Spotify's confirmation instead of assuming a successful write", async () => {
+    globalThis.fetch = (async () => Response.json({})) as unknown as typeof fetch;
+    await expect(
+      addPlaylistItems(new SpotifyClient(tokens), "owned", ["spotify:track:one"]),
+    ).rejects.toThrow("did not confirm");
+  });
+
+  test("enforces the documented 100-item request limit before the network", async () => {
+    let requested = false;
+    globalThis.fetch = (async () => {
+      requested = true;
+      return Response.json({ snapshot_id: "unexpected" });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      addPlaylistItems(
+        new SpotifyClient(tokens),
+        "owned",
+        Array.from({ length: 101 }, (_, index) => `spotify:track:${index}`),
+      ),
+    ).rejects.toThrow("at most 100");
+    expect(requested).toBe(false);
   });
 });

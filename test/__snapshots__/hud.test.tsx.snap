@@ -32,7 +32,7 @@ exports[`hud overlay at 100x32 1`] = `
   ▶  1:35 █████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  3:26    
   PLAYING   ·   VOL 100%                                                                            
                                                                                                     
- space pause  / search  a go to  l lyrics  u queue  d device  ? keys                                
+ space pause  / search  a actions  l lyrics  u queue  d device  ? keys                              
 "
 `;
 
@@ -60,6 +60,6 @@ exports[`hud overlay at 80x24 1`] = `
   ▶  1:35 ████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  3:26    
   PLAYING   ·   VOL 100%                                                        
                                                                                 
- space pause  / search  a go to  l lyrics  u queue  d device  ? keys            
+ space pause  / search  a actions  l lyrics  u queue  d device  ? keys          
 "
 `;

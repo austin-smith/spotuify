@@ -1,52 +1,63 @@
-import { artistLine, type PlayableItem } from "../api/types.ts";
 import { useActions } from "../store/actions.ts";
+import { listWindowStart } from "../store/rows.ts";
 import { Overlay, OverlayTitle, overlayInnerWidth, overlayListHeight } from "./Overlay.tsx";
 import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
-/** Width of the verb column, so the details line up. */
-const LABEL_WIDTH = 14;
+/** Width of the verb column, so every detail begins at the same cell. */
+const LABEL_WIDTH = 20;
 
-/**
- * Actions on the playing track.
- *
- * A menu rather than a key per destination: album and artist are two of many verbs a track will
- * eventually have, and binding each to its own letter is how a keymap becomes unlearnable.
- */
-export function ActionsMenu({
-  width,
-  height,
-  item,
-}: {
-  width: number;
-  height: number;
-  item: PlayableItem;
-}) {
+/** Contextual verbs for either the playing item or a highlighted palette item. */
+export function ActionsMenu({ width, height }: { width: number; height: number }) {
+  const target = useActions((s) => s.target);
   const entries = useActions((s) => s.entries);
   const selected = useActions((s) => s.selected);
+  const savedLoading = useActions((s) => s.savedLoading);
+  const busy = useActions((s) => s.busy);
+  const error = useActions((s) => s.error);
+
+  if (target === null) return null;
 
   const inner = overlayInnerWidth(width);
   const listHeight = overlayListHeight(height);
+  const start = listWindowStart(entries.length, selected, listHeight);
+  const visible = entries.slice(start, start + listHeight);
+  const status =
+    error ?? (busy ? "updating spotify…" : savedLoading ? "checking liked state…" : "actions");
 
   return (
     <Overlay
       width={width}
       height={height}
-      header={<OverlayTitle glyph="◈" title={truncate(item.name.toUpperCase(), inner - 4)} />}
-      status={artistLine(item)}
-      hints="↑↓ move · ↵ open · esc close"
+      header={<OverlayTitle glyph="◈" title={truncate(target.name.toUpperCase(), inner - 4)} />}
+      status={status}
+      isError={error !== null}
+      hints="↑↓ move · ↵ choose · esc close"
     >
-      {entries.slice(0, listHeight).map((entry, index) => (
-        <box key={`${entry.label}-${entry.drill.id}`} flexDirection="row" gap={1}>
-          <text fg={index === selected ? theme.accent : theme.faint}>
-            {index === selected ? "▌" : " "}
-          </text>
-          <text fg={index === selected ? theme.text : theme.muted}>
-            {entry.label.padEnd(LABEL_WIDTH)}
-          </text>
-          <text fg={theme.label}>{truncate(entry.detail, inner - LABEL_WIDTH - 4)}</text>
-        </box>
-      ))}
+      {visible.map((entry, offset) => {
+        const index = start + offset;
+        const active = index === selected;
+        return (
+          <box key={entry.id} flexDirection="row" gap={1}>
+            <text fg={active ? theme.accent : theme.faint}>{active ? "▌" : " "}</text>
+            <text
+              fg={
+                entry.disabled
+                  ? theme.faint
+                  : active
+                    ? theme.text
+                    : theme.muted
+              }
+            >
+              {entry.label.padEnd(LABEL_WIDTH)}
+            </text>
+            <text fg={entry.disabled ? theme.faint : theme.label}>
+              {truncate(entry.detail, inner - LABEL_WIDTH - 4)}
+            </text>
+          </box>
+        );
+      })}
+      {entries.length === 0 ? <text fg={theme.label}>no actions available</text> : null}
     </Overlay>
   );
 }

@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SpotifyClient, SpotifyLimitError } from "../src/api/client.ts";
-import { fetchHome } from "../src/api/library.ts";
+import {
+  fetchHome,
+  libraryContains,
+  removeLibraryItems,
+  saveLibraryItems,
+} from "../src/api/library.ts";
 import type { TokenStore } from "../src/auth/tokens.ts";
 import { toHomeRows } from "../src/store/rows.ts";
 
@@ -169,6 +174,85 @@ describe("fetchHome", () => {
     expect(home.playlists.map((playlist) => playlist.name)).toEqual(["One", "Two"]);
     expect(calls.filter((path) => path === "/me/playlists")).toHaveLength(1);
     expect(calls.some((path) => path.startsWith("/playlists/"))).toBe(false);
+  });
+});
+
+describe("current library writes", () => {
+  test("checks URI membership on the current endpoint", async () => {
+    const calls: Array<{ method: string; path: string; uris: string | null }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push({
+        method: init?.method ?? "GET",
+        path: url.pathname.replace("/v1", ""),
+        uris: url.searchParams.get("uris"),
+      });
+      return Response.json([true, false]);
+    }) as unknown as typeof fetch;
+
+    const result = await libraryContains(new SpotifyClient(tokens), [
+      "spotify:track:one",
+      "spotify:episode:two",
+    ]);
+
+    expect(result).toEqual([true, false]);
+    expect(calls).toEqual([
+      {
+        method: "GET",
+        path: "/me/library/contains",
+        uris: "spotify:track:one,spotify:episode:two",
+      },
+    ]);
+  });
+
+  test("batches membership at Spotify's 40-URI limit", async () => {
+    const sizes: number[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const values = new URL(String(input)).searchParams.get("uris")?.split(",") ?? [];
+      sizes.push(values.length);
+      return Response.json(values.map((_, index) => index % 2 === 0));
+    }) as unknown as typeof fetch;
+
+    const result = await libraryContains(
+      new SpotifyClient(tokens),
+      Array.from({ length: 41 }, (_, index) => `spotify:track:${index}`),
+    );
+
+    expect(sizes).toEqual([40, 1]);
+    expect(result).toHaveLength(41);
+  });
+
+  test("rejects a malformed membership response instead of treating it as unsaved", async () => {
+    globalThis.fetch = (async () => Response.json([false])) as unknown as typeof fetch;
+    await expect(
+      libraryContains(new SpotifyClient(tokens), [
+        "spotify:track:one",
+        "spotify:track:two",
+      ]),
+    ).rejects.toThrow("invalid library membership");
+  });
+
+  test("saves and removes by URI on /me/library", async () => {
+    const calls: Array<{ method: string; path: string; uris: string | null }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push({
+        method: init?.method ?? "GET",
+        path: url.pathname.replace("/v1", ""),
+        uris: url.searchParams.get("uris"),
+      });
+      return new Response(null, { status: 200, headers: { "content-length": "0" } });
+    }) as unknown as typeof fetch;
+    const spotify = new SpotifyClient(tokens);
+
+    await saveLibraryItems(spotify, ["spotify:track:one"]);
+    await removeLibraryItems(spotify, ["spotify:track:one"]);
+
+    expect(calls).toEqual([
+      { method: "PUT", path: "/me/library", uris: "spotify:track:one" },
+      { method: "DELETE", path: "/me/library", uris: "spotify:track:one" },
+    ]);
+    expect(calls.some(({ path }) => path === "/me/tracks")).toBe(false);
   });
 });
 

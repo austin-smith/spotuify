@@ -3,7 +3,7 @@ import { createRoot } from "@opentui/react";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Track } from "../src/api/types.ts";
 import { Hud, HUD_ROWS } from "../src/ui/Hud.tsx";
-import { KeyHints } from "../src/ui/KeyHints.tsx";
+import { KeyHints, KEY_HINT_ROWS } from "../src/ui/KeyHints.tsx";
 import { barFor } from "../src/ui/keys.ts";
 
 const TRACK: Track = {
@@ -45,9 +45,15 @@ function Overlays({
       deviceName={deviceName}
       isLocalDevice={isLocalDevice}
         width={width}
-        height={height - 1}
+        height={height - KEY_HINT_ROWS}
       />
-      <box position="absolute" left={0} top={height - 1} width={width} zIndex={2}>
+      <box
+        position="absolute"
+        left={0}
+        top={height - KEY_HINT_ROWS}
+        width={width}
+        zIndex={2}
+      >
         <KeyHints width={width} playing hasTrack />
       </box>
     </box>
@@ -103,8 +109,7 @@ test("profile-less quota mode does not advertise account-bound actions", () => {
 describe("hud", () => {
   test.each(SIZES)("identity sits on the first HUD row at %ix%i", async (w, h) => {
     const lines = await render(w, h);
-    // height - 1 is passed to the HUD (the keybind strip owns the final row).
-    const expected = h - 1 - HUD_ROWS;
+    const expected = h - KEY_HINT_ROWS - HUD_ROWS;
     expect(lines[expected]).toContain("MISS YOU");
   });
 
@@ -118,7 +123,7 @@ describe("hud", () => {
 
   test.each(SIZES)("keybinds occupy the last row at %ix%i", async (w, h) => {
     const lines = await render(w, h);
-    expect(lines[h - 1] ?? "").toContain("space");
+    expect(lines[h - KEY_HINT_ROWS] ?? "").toContain("space");
   });
 
   test.each(SIZES)("transport and times render at %ix%i", async (w, h) => {
@@ -154,11 +159,11 @@ describe("hud", () => {
       name: "Ugly Is Beautiful: Shorter, Thicker & Uglier — Deluxe Edition Bonus Track",
     };
     const lines = await render(40, 20, long);
-    const titleRow = lines[20 - 1 - HUD_ROWS] ?? "";
+    const titleRow = lines[20 - KEY_HINT_ROWS - HUD_ROWS] ?? "";
     expect(titleRow.length).toBeLessThanOrEqual(40);
     expect(titleRow).toContain("…");
     // The row below must still be the artist, not a continuation of the title.
-    expect(lines[20 - HUD_ROWS]).toContain("Oliver Tree");
+    expect(lines[20 - KEY_HINT_ROWS - HUD_ROWS + 1]).toContain("Oliver Tree");
   });
 
   test("overlay at 100x32", async () => {
