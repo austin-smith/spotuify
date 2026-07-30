@@ -10,12 +10,35 @@ import {
   resolveBootProfile,
   retryBootProfile,
   saveProfile,
+  shouldRetryBootProfile,
 } from "../src/auth/profile.ts";
 import { ReauthRequiredError } from "../src/auth/tokens.ts";
 
 const AUTHORIZATION_ID = "authorization-1";
 
 describe("cached account profile", () => {
+  test("routes refresh back to a failed account recovery after its cooldown clears", () => {
+    const profile = { id: "user", display_name: "User" };
+
+    expect(shouldRetryBootProfile(profile, true, null)).toBeTrue();
+    expect(shouldRetryBootProfile(profile, false, null)).toBeFalse();
+    expect(
+      shouldRetryBootProfile(profile, false, {
+        kind: "quota",
+        retryAt: null,
+        detail: "Too many requests",
+      }),
+    ).toBeTrue();
+    expect(
+      shouldRetryBootProfile(profile, false, {
+        kind: "rate-limit",
+        retryAt: Date.now() + 30_000,
+        detail: "Slow down",
+      }),
+    ).toBeFalse();
+    expect(shouldRetryBootProfile(null, false, null)).toBeTrue();
+  });
+
   test("round-trips the minimal boot identity with owner-only permissions", async () => {
     const dir = await mkdtemp(join(tmpdir(), "spotuify-profile-"));
     const path = join(dir, "profile.json");

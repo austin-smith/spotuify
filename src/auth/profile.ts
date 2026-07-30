@@ -1,4 +1,9 @@
-import { SpotifyApiError, SpotifyLimitError, type SpotifyClient } from "../api/client.ts";
+import {
+  SpotifyApiError,
+  SpotifyLimitError,
+  type SpotifyClient,
+  type SpotifyCooldown,
+} from "../api/client.ts";
 import type { Me } from "../api/types.ts";
 import { PROFILE_PATH } from "../config.ts";
 import { writePrivateFileAtomic } from "./private-file.ts";
@@ -13,6 +18,21 @@ export interface BootProfileResolution {
   profile: Me | null;
   /** The exact finite deadline from the 429 that forced a profile-less boot. */
   retryAt: number | null;
+}
+
+/**
+ * Decide whether the refresh key belongs to account recovery instead of playback refresh.
+ *
+ * A missing cooldown is normally healthy and must not turn every refresh into a `/me` request.
+ * The explicit failure flag preserves the recovery route after a probe clears its cooldown but
+ * later exhausts the bounded transient retry budget.
+ */
+export function shouldRetryBootProfile(
+  profile: Me | null,
+  previousRecoveryFailed: boolean,
+  cooldown: SpotifyCooldown | null,
+): boolean {
+  return profile === null || previousRecoveryFailed || cooldown?.retryAt === null;
 }
 
 function minimalProfile(profile: Me): Me {

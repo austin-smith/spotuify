@@ -8,6 +8,7 @@ import {
   recoverBootProfile,
   resolveBootProfile,
   retryBootProfile,
+  shouldRetryBootProfile,
 } from "../auth/profile.ts";
 import { ReauthRequiredError } from "../auth/tokens.ts";
 import { MissingClientIdError, REDIRECT_URI } from "../config.ts";
@@ -65,6 +66,7 @@ export function App() {
   const [engine, setEngine] = useState<EngineStatus>({ state: "starting" });
   const [engineClient, setEngineClient] = useState<LibrespotEngine | null>(null);
   const [profileRecoveryRequest, setProfileRecoveryRequest] = useState(0);
+  const [profileRecoveryFailed, setProfileRecoveryFailed] = useState(false);
   const profileRecoveryController = useRef<AbortController | null>(null);
   const activatedDevice = useRef<string | null>(null);
 
@@ -195,8 +197,7 @@ export function App() {
   useEffect(() => {
     const retryingCachedProfile =
       profileRecoveryRequest > 0 &&
-      bootProfile !== null &&
-      bootClient?.getCooldown()?.retryAt === null;
+      bootProfile !== null;
     if (
       bootClient === null ||
       bootAuthorizationId === null ||
@@ -219,6 +220,8 @@ export function App() {
     void recovery
       .then((profile) => {
         if (controller.signal.aborted || profile === null) return;
+        setProfileRecoveryFailed(false);
+        setProfileRecoveryRequest(0);
         useSearch.getState().configure(bootClient, profile.country, profile.id);
         usePlayback.setState({ error: null });
         setBoot((current) =>
@@ -249,6 +252,7 @@ export function App() {
               : current,
           );
         } else {
+          setProfileRecoveryFailed(true);
           usePlayback.setState({
             error: `${message} — press r to retry account verification`,
           });
@@ -493,11 +497,9 @@ export function App() {
         void store.previous();
         break;
       case "r":
-        if (
-          boot.me === null ||
-          boot.client.getCooldown()?.retryAt === null
-        ) {
+        if (shouldRetryBootProfile(boot.me, profileRecoveryFailed, boot.client.getCooldown())) {
           if (profileRecoveryController.current === null) {
+            setProfileRecoveryFailed(false);
             usePlayback.setState({ error: null });
             setProfileRecoveryRequest((request) => request + 1);
           }
