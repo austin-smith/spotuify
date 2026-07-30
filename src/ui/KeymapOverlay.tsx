@@ -17,6 +17,9 @@ const TWO_COLUMN_MIN = 46;
 
 /** Gap between the two columns. */
 const COLUMN_GAP = 6;
+/** Minimum breathing room between the title and right-aligned account details. */
+const HEADER_GAP = 4;
+const BRAND = "SPOTUIFY";
 
 export function keymapFor(canBrowse: boolean): KeyGroup[] {
   if (canBrowse) return KEYMAP;
@@ -163,16 +166,16 @@ function Column({
 export function KeymapOverlay({
   width,
   height,
+  version,
   account,
-  product,
   engine,
   webAccountId,
   canBrowse = true,
 }: {
   width: number;
   height: number;
+  version: string;
   account: string;
-  product: string | undefined;
   engine: EngineStatus;
   webAccountId: string | null;
   canBrowse?: boolean;
@@ -204,12 +207,22 @@ export function KeymapOverlay({
             : `local playback failed — ${engine.reason}`;
   const engineLabel = truncate(rawEngineLabel, Math.max(0, inner - 2));
   const engineUp = nativeAccountMatches;
+  const versionLabel = `v${version}`;
+  const brandAndVersionWidth =
+    Bun.stringWidth(BRAND) + 1 + Bun.stringWidth(versionLabel);
+  const headerWidth =
+    brandAndVersionWidth + HEADER_GAP + Bun.stringWidth(account);
   const ruleWidth = Math.min(
     inner,
     Math.max(
-      engineLabel.length + 2,
+      headerWidth,
+      Bun.stringWidth(engineLabel) + 2,
       leftWidth + (rightWidth > 0 ? COLUMN_GAP + rightWidth : 0),
     ),
+  );
+  const visibleAccount = truncate(
+    account,
+    Math.max(0, ruleWidth - brandAndVersionWidth - HEADER_GAP),
   );
   // Vertical padding (4), the title, the rule and its margin (3), and the footer (1).
   const maxRows = Math.max(1, height - 8);
@@ -228,14 +241,21 @@ export function KeymapOverlay({
       justifyContent="center"
     >
       <box flexDirection="column" width={ruleWidth} flexShrink={0}>
-        <box flexDirection="row" gap={1}>
-          <text fg={theme.accent}>
-            <strong>SPOTUIFY</strong>
-          </text>
-          <text fg={theme.label}>
-            {account}
-            {product !== undefined ? `  ·  ${product}` : ""}
-          </text>
+        <box
+          flexDirection="row"
+          width={ruleWidth}
+          justifyContent="space-between"
+          overflow="hidden"
+        >
+          <box flexDirection="row" gap={1} flexShrink={0}>
+            <text fg={theme.accent}>
+              <strong>{BRAND}</strong>
+            </text>
+            <text fg={theme.muted}>{versionLabel}</text>
+          </box>
+          {visibleAccount.length > 0 ? (
+            <text fg={theme.label}>{visibleAccount}</text>
+          ) : null}
         </box>
 
         <box flexDirection="row" gap={1}>

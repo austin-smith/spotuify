@@ -5,6 +5,11 @@
 Spotuify is a Bun/TypeScript TUI built with React and OpenTUI. A Rust sidecar embeds librespot for
 terminal audio playback.
 
+## Versioning
+
+- `package.json` is the canonical product version. `native/Cargo.toml` duplicates it only because
+  Cargo cannot reference `package.json`; keep them identical and keep `publish = false`.
+
 ## Authentication
 
 There are two independent logins. Do not attempt to unify them.

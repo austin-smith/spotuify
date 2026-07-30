@@ -60,7 +60,7 @@ function Setup({ message }: { message: string }) {
   );
 }
 
-export function App() {
+export function App({ version }: { version: string }) {
   const renderer = useRenderer();
   const { width, height } = useTerminalDimensions();
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
@@ -643,8 +643,8 @@ export function App() {
         <KeymapOverlay
           width={width}
           height={height}
+          version={version}
           account={boot.me === null ? "web api quota exhausted" : (boot.me.display_name ?? boot.me.id)}
-          product={boot.me?.product}
           engine={engine}
           webAccountId={bootAccountId}
           canBrowse={boot.me !== null}
