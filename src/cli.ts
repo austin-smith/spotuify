@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { SpotifyClient } from "./api/client.ts";
 import { authenticate, tokenStore } from "./auth/flow.ts";
+import { resolveBootProfile, saveProfileBestEffort } from "./auth/profile.ts";
 import type { Me } from "./api/types.ts";
 import { REDIRECT_URI } from "./config.ts";
 import { LibrespotEngine, authenticateEngine } from "./engine/librespot.ts";
@@ -15,9 +16,10 @@ function describeAccount(me: Me): string {
 const USAGE = `spotuify — Spotify in the terminal
 
 Usage:
-  spotuify auth [--force]   Authorize with Spotify (run this first; opens a browser)
-  spotuify whoami           Show the authenticated account
-  spotuify                  Launch the TUI
+  spotuify auth [--force] [--force-engine]
+                             Authorize with Spotify (run this first; opens a browser)
+  spotuify whoami            Show the authenticated account
+  spotuify                   Launch the TUI
 
 Redirect URI to register in your Spotify app: ${REDIRECT_URI}
 `;
@@ -28,11 +30,18 @@ async function main(argv: string[]): Promise<number | null> {
   switch (command) {
     case "auth": {
       const token = await authenticate({ force: rest.includes("--force") });
-      const client = new SpotifyClient(await tokenStore());
-      const me = await client.get<Me>("/me");
-      console.log(`Authenticated as ${describeAccount(me)}`);
+      const tokens = await tokenStore();
+      const client = new SpotifyClient(tokens);
+      const { profile: me } = await resolveBootProfile(client, token.authorizationId);
+      if (me === null) {
+        console.warn(
+          "Web API authorization succeeded, but Spotify's quota is exhausted; account details are unavailable.",
+        );
+      } else {
+        console.log(`Authenticated as ${describeAccount(me)}`);
+      }
       // Only warn on a *known* non-premium account — an absent `product` is a scope gap, not free.
-      if (me.product !== undefined && me.product !== "premium") {
+      if (me?.product !== undefined && me.product !== "premium") {
         console.warn("\nWarning: playback control requires Spotify Premium.");
       }
       console.log(`Token expires ${new Date(token.expiresAt).toLocaleTimeString()}.`);
@@ -44,7 +53,7 @@ async function main(argv: string[]): Promise<number | null> {
             "Install it with `brew install librespot`, then re-run `spotuify auth`.\n" +
             "Without it, spotuify can only control other Spotify devices.",
         );
-      } else if (await authenticateEngine()) {
+      } else if (await authenticateEngine({ force: rest.includes("--force-engine") })) {
         console.log("Playback engine authorized. spotuify will appear as a Spotify device.");
       } else {
         console.warn("\nlibrespot sign-in did not complete; playback in the terminal is disabled.");
@@ -53,8 +62,10 @@ async function main(argv: string[]): Promise<number | null> {
     }
 
     case "whoami": {
-      const client = new SpotifyClient(await tokenStore());
+      const tokens = await tokenStore();
+      const client = new SpotifyClient(tokens);
       const me = await client.get<Me>("/me");
+      await saveProfileBestEffort(me, await tokens.authorizationId());
       console.log(describeAccount(me));
       return 0;
     }

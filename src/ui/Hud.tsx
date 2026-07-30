@@ -1,5 +1,4 @@
 import { artistLine, isTrack, type PlayableItem, type RepeatState } from "../api/types.ts";
-import { DEVICE_NAME } from "../config.ts";
 import { formatDuration, progressBar } from "../store/progress.ts";
 import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
@@ -23,6 +22,7 @@ interface HudProps {
   repeat: RepeatState;
   volumePercent: number | null;
   deviceName: string | null;
+  isLocalDevice: boolean;
   width: number;
   height: number;
 }
@@ -42,6 +42,7 @@ export function Hud({
   repeat,
   volumePercent,
   deviceName,
+  isLocalDevice,
   width,
   height,
 }: HudProps) {
@@ -53,7 +54,7 @@ export function Hud({
 
   // Spotify's own convention: name the device only when playback is somewhere else. Playing here is
   // the default, so printing this terminal's own device name every time is noise.
-  const elsewhere = deviceName !== null && deviceName !== DEVICE_NAME;
+  const elsewhere = deviceName !== null && !isLocalDevice;
   const meta = [
     elsewhere ? `PLAYING ON ${deviceName.toUpperCase()}` : isPlaying ? "PLAYING" : "PAUSED",
     shuffle ? "SHUFFLE" : null,

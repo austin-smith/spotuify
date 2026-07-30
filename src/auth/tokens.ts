@@ -1,6 +1,6 @@
-import { chmod, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import { TOKEN_PATH, TOKEN_URL } from "../config.ts";
+import { writePrivateFileAtomic } from "./private-file.ts";
 
 export interface StoredToken {
   accessToken: string;
@@ -9,6 +9,13 @@ export interface StoredToken {
   /** Epoch milliseconds. */
   expiresAt: number;
   scopes: string[];
+  /**
+   * Stable identity for one interactive authorization. It changes on reauthorization and survives
+   * access/refresh-token rotation, so account-derived caches cannot cross authorization boundaries.
+   */
+  authorizationId: string;
+  /** The Spotify application that issued this credential set. */
+  clientId: string;
 }
 
 /** Raised when the only way forward is a fresh interactive authorization. */
@@ -30,11 +37,17 @@ interface TokenResponse {
 /** Refresh this far before actual expiry so an in-flight request never races the deadline. */
 const REFRESH_MARGIN_MS = 60_000;
 
-function toStoredToken(res: TokenResponse, previous?: StoredToken): StoredToken {
+function toStoredToken(
+  res: TokenResponse,
+  clientId: string,
+  previous?: StoredToken,
+): StoredToken {
   const token: StoredToken = {
     accessToken: res.access_token,
     expiresAt: Date.now() + res.expires_in * 1000,
     scopes: res.scope ? res.scope.split(" ") : (previous?.scopes ?? []),
+    authorizationId: previous?.authorizationId ?? randomUUID(),
+    clientId,
   };
   // Spotify omits refresh_token on some refresh responses; keep the one we already hold.
   const refreshToken = res.refresh_token ?? previous?.refreshToken;
@@ -93,7 +106,38 @@ export async function exchangeCode(params: {
       client_id: params.clientId,
       code_verifier: params.verifier,
     }),
+    params.clientId,
   );
+}
+
+function parseStoredToken(value: unknown, clientId: string): StoredToken | null {
+  if (typeof value !== "object" || value === null) return null;
+  const candidate = value as Partial<StoredToken>;
+  if (
+    typeof candidate.accessToken !== "string" ||
+    typeof candidate.expiresAt !== "number" ||
+    !Number.isFinite(candidate.expiresAt) ||
+    !Array.isArray(candidate.scopes) ||
+    !candidate.scopes.every((scope) => typeof scope === "string") ||
+    (candidate.refreshToken !== undefined && typeof candidate.refreshToken !== "string")
+  ) {
+    return null;
+  }
+  if (candidate.clientId !== undefined && candidate.clientId !== clientId) return null;
+
+  return {
+    accessToken: candidate.accessToken,
+    ...(candidate.refreshToken !== undefined ? { refreshToken: candidate.refreshToken } : {}),
+    expiresAt: candidate.expiresAt,
+    scopes: candidate.scopes,
+    // Legacy token caches receive a new local identity. Legacy profiles are deliberately not
+    // migrated, so no account data can be associated with this identity until `/me` succeeds.
+    authorizationId:
+      typeof candidate.authorizationId === "string" && candidate.authorizationId.length > 0
+        ? candidate.authorizationId
+        : randomUUID(),
+    clientId,
+  };
 }
 
 /**
@@ -117,7 +161,18 @@ export class TokenStore {
     const file = Bun.file(this.path);
     if (await file.exists()) {
       try {
-        this.token = (await file.json()) as StoredToken;
+        const cached = (await file.json()) as unknown;
+        this.token = parseStoredToken(cached, this.clientId);
+        if (
+          this.token !== null &&
+          (typeof (cached as Partial<StoredToken>).authorizationId !== "string" ||
+            (cached as Partial<StoredToken>).authorizationId?.length === 0 ||
+            (cached as Partial<StoredToken>).clientId !== this.clientId)
+        ) {
+          // Migration metadata improves cache isolation, but a read-only or full filesystem must
+          // not invalidate a credential that was already parsed successfully.
+          await this.persist(this.token).catch(() => {});
+        }
       } catch {
         // A corrupt cache should send us through re-auth, not crash startup.
         this.token = null;
@@ -130,10 +185,18 @@ export class TokenStore {
   async save(token: StoredToken): Promise<void> {
     this.token = token;
     this.loaded = true;
-    await mkdir(dirname(this.path), { recursive: true });
-    await Bun.write(this.path, `${JSON.stringify(token, null, 2)}\n`);
-    // The refresh token is a long-lived credential; keep it owner-only.
-    await chmod(this.path, 0o600);
+    await this.persist(token);
+  }
+
+  private async persist(token: StoredToken): Promise<void> {
+    await writePrivateFileAtomic(this.path, `${JSON.stringify(token, null, 2)}\n`);
+  }
+
+  /** Identity of the current authorization, used to bind account-derived caches. */
+  async authorizationId(): Promise<string> {
+    const token = await this.load();
+    if (token === null) throw new ReauthRequiredError("Not authenticated.");
+    return token.authorizationId;
   }
 
   /** A valid access token, refreshing if it is expired or about to be. */
@@ -159,6 +222,7 @@ export class TokenStore {
           refresh_token: current.refreshToken,
           client_id: this.clientId,
         }),
+        this.clientId,
         current,
       );
       await this.save(refreshed);

@@ -137,14 +137,13 @@ describe("how long an error stays up", () => {
     }
   });
 
-  // The other half: it must not stick around forever either, or a single failure would sit on the
-  // HUD for the rest of the session.
-  test("a later poll clears it", async () => {
+  // The successful command reconciliation proves the app recovered, but the message remains
+  // readable for the full linger window and then clears without spending another API request.
+  test("successful reconciliation clears it when the linger window ends", async () => {
     await withFailure(new SpotifyApiError(404, "/me/player/next", "Device not found"));
     await usePlayback.getState().next();
 
     await Bun.sleep(ERROR_LINGER_MS + 100);
-    await usePlayback.getState().refresh();
     expect(usePlayback.getState().error).toBeNull();
   });
 });

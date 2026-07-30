@@ -18,7 +18,8 @@
 > **Warning**
 >
 > spotuify streams audio through [librespot](https://github.com/librespot-org/librespot) and
-> requires Spotify Premium. Install librespot before use:
+> requires Spotify Premium. Running from source requires Bun 1.3, the stable Rust toolchain, and
+> the standalone librespot CLI:
 >
 > - macOS: `brew install librespot`
 > - Most everything else: `cargo install librespot`
@@ -52,28 +53,33 @@ Opens a browser, so run it outside the TUI:
 bun run src/cli.ts auth
 ```
 
-The token pair is cached at `~/.config/spotuify/token.json` with mode `0600` and refreshed
-automatically. Spotify expires refresh tokens roughly six months after authorization; when that
-happens, `spotuify auth` re-runs the interactive flow.
+The Web API token pair is cached at `~/.config/spotuify/token.json` with mode `0600` and refreshed
+automatically. Spotify refresh tokens expire six months after authorization; when that happens,
+re-run `bun run src/cli.ts auth` to complete the interactive flow again.
+
+This authorizes both the Spotify Web API and terminal playback. Re-run it with `--force` to replace
+the Web API login or `--force-engine` to replace only the playback login.
+
+## Run
+
+```sh
+bun run dev
+```
 
 ## Development
 
 ```sh
-bun test           # unit tests
-bun run typecheck  # tsc --noEmit
-bun run dev        # TUI with hot reload
+bun test              # unit tests
+bun run typecheck     # TypeScript
+bun run engine:test   # native engine tests
 ```
 
 ## Architecture
 
-Auth is deliberately split in two:
+Spotuify uses two independent Spotify sessions:
 
-- **librespot** runs its own OAuth flow (`--enable-oauth`) for the audio session and caches
-  credentials under `~/.cache/spotuify/librespot`.
-- **spotuify** uses Authorization Code + PKCE against *your* registered app for every Web API call.
+- The Web API uses Authorization Code + PKCE with your registered Spotify app.
+- Terminal playback uses librespot's own login and a native Rust sidecar.
 
-The Web API access token is never passed to librespot — Spotify's login5 does not reliably accept a
-third-party app's token.
-
-Playback state is polled every 5 s and `progress_ms` is extrapolated locally between polls, which
-keeps a smooth progress bar at ~12 requests/minute.
+The Web API token is never passed to librespot. The TUI receives local playback events from the
+sidecar and uses the Web API to browse Spotify and control other devices.

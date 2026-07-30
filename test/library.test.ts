@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { SpotifyClient } from "../src/api/client.ts";
+import { SpotifyClient, SpotifyLimitError } from "../src/api/client.ts";
 import { fetchHome } from "../src/api/library.ts";
 import type { TokenStore } from "../src/auth/tokens.ts";
 import { toHomeRows } from "../src/store/rows.ts";
@@ -101,6 +101,45 @@ describe("fetchHome", () => {
     });
     const home = await fetchHome(new SpotifyClient(tokens));
     expect(home).toEqual({ recent: [], top: [], playlists: [] });
+  });
+
+  test("keeps a rate-limited home retryable instead of returning a cacheable empty result", async () => {
+    let now = 10_000;
+    let requests = 0;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      requests++;
+      if (requests === 1) {
+        return new Response(
+          JSON.stringify({ error: { message: "Too many requests" } }),
+          {
+            status: 429,
+            headers: {
+              "content-type": "application/json",
+              "retry-after": "1",
+            },
+          },
+        );
+      }
+
+      const path = new URL(String(url)).pathname.replace("/v1", "");
+      const body =
+        path === "/me/player/recently-played"
+          ? { items: [{ track: track("Recovered") }] }
+          : { items: [], next: null };
+      return Response.json(body);
+    }) as unknown as typeof fetch;
+
+    const client = new SpotifyClient(tokens, { now: () => now });
+    await expect(fetchHome(client, { meId: "me" })).rejects.toBeInstanceOf(
+      SpotifyLimitError,
+    );
+    // The first response opens the shared circuit; the other home groups are blocked locally.
+    expect(requests).toBe(1);
+
+    now += 1_000;
+    const recovered = await fetchHome(client, { meId: "me" });
+    expect(recovered.recent.map((item) => item.name)).toEqual(["Recovered"]);
+    expect(requests).toBe(4);
   });
 
   test("loads playlists without issuing one request per playlist", async () => {

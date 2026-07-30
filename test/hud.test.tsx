@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { Track } from "../src/api/types.ts";
 import { Hud, HUD_ROWS } from "../src/ui/Hud.tsx";
 import { KeyHints } from "../src/ui/KeyHints.tsx";
+import { barFor } from "../src/ui/keys.ts";
 
 const TRACK: Track = {
   id: "t1",
@@ -23,11 +24,13 @@ function Overlays({
   height,
   item = TRACK,
   deviceName = "spotuify",
+  isLocalDevice = true,
 }: {
   width: number;
   height: number;
   item?: Track;
   deviceName?: string;
+  isLocalDevice?: boolean;
 }) {
   return (
     <box flexGrow={1} position="relative">
@@ -38,8 +41,9 @@ function Overlays({
         isPlaying
         shuffle={false}
         repeat="off"
-        volumePercent={100}
-        deviceName={deviceName}
+      volumePercent={100}
+      deviceName={deviceName}
+      isLocalDevice={isLocalDevice}
         width={width}
         height={height - 1}
       />
@@ -62,10 +66,17 @@ async function render(
   height: number,
   item?: Track,
   deviceName?: string,
+  isLocalDevice?: boolean,
 ): Promise<string[]> {
   setup = await createTestRenderer({ width, height });
   createRoot(setup.renderer).render(
-    <Overlays width={width} height={height} item={item} deviceName={deviceName} />,
+    <Overlays
+      width={width}
+      height={height}
+      item={item}
+      deviceName={deviceName}
+      isLocalDevice={isLocalDevice}
+    />,
   );
   // The React reconciler commits asynchronously; without this the frame is blank.
   await Bun.sleep(20);
@@ -80,6 +91,14 @@ const SIZES: ReadonlyArray<readonly [number, number]> = [
   [80, 24],
   [60, 20],
 ];
+
+test("profile-less quota mode does not advertise account-bound actions", () => {
+  const hints = barFor({ playing: true, hasTrack: true, canBrowse: false });
+  expect(hints).not.toContainEqual({ key: "/", action: "search" });
+  expect(hints).not.toContainEqual({ key: "a", action: "go to" });
+  expect(hints).not.toContainEqual({ key: "d", action: "device" });
+  expect(hints).toContainEqual({ key: "r", action: "retry account" });
+});
 
 describe("hud", () => {
   test.each(SIZES)("identity sits on the first HUD row at %ix%i", async (w, h) => {
@@ -119,8 +138,13 @@ describe("hud", () => {
   });
 
   test("names the device when playing elsewhere", async () => {
-    const screen = (await render(100, 32, undefined, "Austin's mini M4")).join("\n");
+    const screen = (await render(100, 32, undefined, "Austin's mini M4", false)).join("\n");
     expect(screen).toContain("PLAYING ON AUSTIN'S MINI M4");
+  });
+
+  test("a same-named remote receiver is still shown as elsewhere", async () => {
+    const screen = (await render(100, 32, undefined, "spotuify", false)).join("\n");
+    expect(screen).toContain("PLAYING ON SPOTUIFY");
   });
 
   test("long titles are truncated, not wrapped", async () => {

@@ -1,5 +1,7 @@
 import { KEYMAP, type KeyGroup } from "./keys.ts";
 import { theme } from "./theme.ts";
+import type { EngineStatus } from "../engine/librespot.ts";
+import { truncate } from "./text.ts";
 
 /** Width of the key column, so actions line up within a column. */
 const KEY_WIDTH = 8;
@@ -13,6 +15,22 @@ const TWO_COLUMN_MIN = 46;
 
 /** Gap between the two columns. */
 const COLUMN_GAP = 6;
+
+export function keymapFor(canBrowse: boolean): KeyGroup[] {
+  if (canBrowse) return KEYMAP;
+  return KEYMAP.map((group) =>
+    group.label === "BROWSE"
+      ? {
+          ...group,
+          bindings: group.bindings
+            .filter(({ key }) => key !== "/" && key !== "a" && key !== "d")
+            .map((binding) =>
+              binding.key === "r" ? { ...binding, action: "retry account" } : binding,
+            ),
+        }
+      : group,
+  );
+}
 
 /**
  * Natural width of a column: the key column plus the longest action in it.
@@ -121,23 +139,51 @@ export function KeymapOverlay({
   height,
   account,
   product,
-  engineUp,
+  engine,
+  webAccountId,
+  canBrowse = true,
 }: {
   width: number;
   height: number;
   account: string;
   product: string | undefined;
-  engineUp: boolean;
+  engine: EngineStatus;
+  webAccountId: string | null;
+  canBrowse?: boolean;
 }) {
-  const inner = width - 8;
+  const inner = Math.max(0, width - 8);
   const twoColumn = inner >= TWO_COLUMN_MIN;
-  const [left, right] = twoColumn ? splitGroups(KEYMAP) : [KEYMAP, []];
+  const keymap = keymapFor(canBrowse);
+  const [left, right] = twoColumn ? splitGroups(keymap) : [keymap, []];
   const leftWidth = columnWidthFor(left);
   const rightWidth = right.length > 0 ? columnWidthFor(right) : 0;
   // The rule spans only the block, not the screen, so the overlay reads as one object.
+  const nativeAccountMatches =
+    engine.state === "ready" &&
+    webAccountId !== null &&
+    engine.accountId === webAccountId;
+  const rawEngineLabel =
+    engine.state === "ready"
+      ? webAccountId === null
+        ? "local playback waiting for account verification"
+        : engine.accountId !== webAccountId
+          ? "local playback account mismatch — run: spotuify auth --force-engine"
+          : "local playback ready"
+      : engine.state === "starting"
+        ? "local playback starting"
+        : engine.state === "missing"
+          ? "local playback engine missing — run: bun run engine:build"
+          : engine.state === "disabled"
+            ? "local playback disabled"
+            : `local playback failed — ${engine.reason}`;
+  const engineLabel = truncate(rawEngineLabel, Math.max(0, inner - 2));
+  const engineUp = nativeAccountMatches;
   const ruleWidth = Math.min(
     inner,
-    leftWidth + (rightWidth > 0 ? COLUMN_GAP + rightWidth : 0),
+    Math.max(
+      engineLabel.length + 2,
+      leftWidth + (rightWidth > 0 ? COLUMN_GAP + rightWidth : 0),
+    ),
   );
   // Vertical padding (4), the title, the rule and its margin (3), and the footer (1).
   const maxRows = Math.max(1, height - 8);
@@ -168,9 +214,7 @@ export function KeymapOverlay({
 
         <box flexDirection="row" gap={1}>
           <text fg={engineUp ? theme.accent : theme.error}>{engineUp ? "●" : "✗"}</text>
-          <text fg={theme.label}>
-            {engineUp ? "librespot running" : "librespot not running"}
-          </text>
+          <text fg={theme.label}>{engineLabel}</text>
         </box>
 
         <box marginTop={1}>

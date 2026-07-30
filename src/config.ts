@@ -10,6 +10,7 @@ export const CONFIG_DIR = join(xdgDir("XDG_CONFIG_HOME", ".config"), "spotuify")
 export const CACHE_DIR = join(xdgDir("XDG_CACHE_HOME", ".cache"), "spotuify");
 
 export const TOKEN_PATH = join(CONFIG_DIR, "token.json");
+export const PROFILE_PATH = join(CONFIG_DIR, "profile.json");
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 export const LIBRESPOT_CACHE_DIR = join(CACHE_DIR, "librespot");
 
@@ -24,7 +25,7 @@ export const AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 export const TOKEN_URL = "https://accounts.spotify.com/api/token";
 export const API_BASE = "https://api.spotify.com/v1";
 
-/** Name librespot advertises over Spotify Connect; how we find our own device. */
+/** Name the embedded librespot receiver advertises over Spotify Connect. */
 export const DEVICE_NAME = "spotuify";
 
 /**

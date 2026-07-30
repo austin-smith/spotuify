@@ -71,11 +71,16 @@ export const KEYMAP: KeyGroup[] = [
  * Deliberately short and state-dependent: an exhaustive bar is noise, and the full list is one
  * keystroke away behind `?`.
  */
-export function barFor(state: { playing: boolean; hasTrack: boolean }): Binding[] {
+export function barFor(state: {
+  playing: boolean;
+  hasTrack: boolean;
+  canBrowse: boolean;
+}): Binding[] {
   if (!state.hasTrack) {
     return [
-      { key: "/", action: "search" },
-      { key: "d", action: "device" },
+      ...(state.canBrowse ? [{ key: "/", action: "search" }] : []),
+      ...(state.canBrowse ? [{ key: "d", action: "device" }] : []),
+      ...(!state.canBrowse ? [{ key: "r", action: "retry account" }] : []),
       { key: "?", action: "keys" },
       { key: "q", action: "quit" },
     ];
@@ -83,11 +88,16 @@ export function barFor(state: { playing: boolean; hasTrack: boolean }): Binding[
 
   return [
     { key: "space", action: state.playing ? "pause" : "play" },
-    { key: "/", action: "search" },
-    { key: "a", action: "go to" },
+    ...(state.canBrowse
+      ? [
+          { key: "/", action: "search" },
+          { key: "a", action: "go to" },
+        ]
+      : []),
     { key: "l", action: "lyrics" },
     { key: "u", action: "queue" },
-    { key: "d", action: "device" },
+    ...(state.canBrowse ? [{ key: "d", action: "device" }] : []),
+    ...(!state.canBrowse ? [{ key: "r", action: "retry account" }] : []),
     { key: "?", action: "keys" },
   ];
 }

@@ -11,9 +11,14 @@ export class PlayerApi {
   constructor(private readonly client: SpotifyClient) {}
 
   /** Current playback, or `null` when Spotify reports no active session (204). */
-  async state(): Promise<PlaybackState | null> {
+  async state(
+    priority: "foreground" | "background" = "background",
+    signal?: AbortSignal,
+  ): Promise<PlaybackState | null> {
     return await this.client.request<PlaybackState>("/me/player", {
       query: { additional_types: "track,episode" },
+      priority,
+      ...(signal ? { signal } : {}),
     });
   }
 
@@ -23,11 +28,13 @@ export class PlayerApi {
    * `queue` is Spotify's own up-next list, which mixes explicitly queued items with whatever the
    * current context will play; it is read-only and cannot be reordered through the API.
    */
-  async queue(): Promise<{ currently_playing: PlayableItem | null; queue: PlayableItem[] }> {
+  async queue(
+    signal?: AbortSignal,
+  ): Promise<{ currently_playing: PlayableItem | null; queue: PlayableItem[] }> {
     const res = await this.client.request<{
       currently_playing: PlayableItem | null;
       queue: (PlayableItem | null)[] | null;
-    }>("/me/player/queue");
+    }>("/me/player/queue", signal ? { signal } : {});
 
     return {
       currently_playing: res?.currently_playing ?? null,
@@ -43,9 +50,11 @@ export class PlayerApi {
     });
   }
 
-  async devices(): Promise<Device[]> {
-    const res = await this.client.get<{ devices: Device[] }>("/me/player/devices");
-    return res.devices;
+  async devices(signal?: AbortSignal): Promise<Device[]> {
+    const res = await this.client.request<{ devices: Device[] }>("/me/player/devices", {
+      ...(signal ? { signal } : {}),
+    });
+    return res?.devices ?? [];
   }
 
   async play(options: { deviceId?: string; contextUri?: string; uris?: string[]; offset?: number } = {}): Promise<void> {

@@ -7,7 +7,10 @@
     "spotuify": "src/cli.ts"
   },
   "scripts": {
-    "dev": "bun run --watch src/index.tsx",
+    "dev": "bun run engine:build && SPOTUIFY_ENGINE_PATH=native/target/debug/spotuify-engine bun run --watch src/index.tsx",
+    "engine:build": "cargo build --manifest-path native/Cargo.toml",
+    "engine:build:release": "cargo build --release --manifest-path native/Cargo.toml",
+    "engine:test": "cargo test --manifest-path native/Cargo.toml",
     "spotuify": "bun run src/cli.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"

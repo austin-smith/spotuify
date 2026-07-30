@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import type { PlayerApi } from "../api/player.ts";
 import type { Device } from "../api/types.ts";
+import { DEVICE_NAME } from "../config.ts";
+import { LibrespotEngine } from "../engine/librespot.ts";
+import { usePlayback } from "./playback.ts";
+
+/** Reopening the picker should not spend another request for a list that just succeeded. */
+export const DEVICE_CACHE_TTL_MS = 15_000;
 
 export interface DeviceSlice {
   open: boolean;
@@ -9,7 +15,11 @@ export interface DeviceSlice {
   loading: boolean;
   error: string | null;
 
-  configure: (player: PlayerApi) => void;
+  configure: (
+    player: PlayerApi,
+    engine?: LibrespotEngine | null,
+    accountId?: string | null,
+  ) => void;
   openPicker: () => void;
   closePicker: () => void;
   move: (delta: number) => void;
@@ -19,7 +29,41 @@ export interface DeviceSlice {
 }
 
 let player: PlayerApi | null = null;
+let native: LibrespotEngine | null = null;
+let webAccountId: string | null = null;
 let inFlight: AbortController | null = null;
+let cachedRemoteDevices: Device[] | null = null;
+let cachedAt = 0;
+
+function localDevice(): Device | null {
+  const status = native?.getStatus();
+  if (
+    webAccountId === null ||
+    status?.state !== "ready" ||
+    status.accountId !== webAccountId
+  ) {
+    return null;
+  }
+  const playback = usePlayback.getState();
+  return {
+    id: status.deviceId,
+    name: DEVICE_NAME,
+    type: "Computer",
+    is_active: (native?.isActive?.() ?? false) && playback.deviceId === status.deviceId,
+    is_restricted: false,
+    volume_percent: playback.volumePercent,
+    supports_volume: true,
+  };
+}
+
+function withLocalDevice(devices: Device[]): Device[] {
+  const local = localDevice();
+  if (local === null) return devices;
+  return [
+    local,
+    ...devices.filter((device) => device.id !== local.id),
+  ];
+}
 
 /**
  * Index of the device to highlight on open.
@@ -40,13 +84,37 @@ export const useDevices = create<DeviceSlice>((set, get) => ({
   loading: false,
   error: null,
 
-  configure(nextPlayer) {
+  configure(nextPlayer, engine, accountId = null) {
+    const playerChanged = player !== nextPlayer;
+    const accountChanged = webAccountId !== accountId;
+    if (playerChanged || accountChanged) {
+      inFlight?.abort();
+      inFlight = null;
+      cachedRemoteDevices = null;
+      cachedAt = 0;
+      set({ open: false, devices: [], selected: -1, loading: false, error: null });
+    }
+    if (engine !== undefined) {
+      native = engine;
+    } else if (playerChanged) {
+      native = null;
+    }
     player = nextPlayer;
+    webAccountId = accountId;
   },
 
   openPicker() {
-    set({ open: true, loading: true, error: null });
-    if (player === null) return;
+    const cacheIsFresh =
+      cachedRemoteDevices !== null && Date.now() - cachedAt < DEVICE_CACHE_TTL_MS;
+    const initial = withLocalDevice(cacheIsFresh ? cachedRemoteDevices! : []);
+    set({
+      open: true,
+      devices: initial,
+      selected: initialIndex(initial),
+      loading: !cacheIsFresh,
+      error: null,
+    });
+    if (player === null || cacheIsFresh) return;
 
     inFlight?.abort();
     const controller = new AbortController();
@@ -54,12 +122,22 @@ export const useDevices = create<DeviceSlice>((set, get) => ({
 
     void (async () => {
       try {
-        const devices = await player!.devices();
+        const remoteDevices = await player!.devices(controller.signal);
         if (controller.signal.aborted) return;
+        cachedRemoteDevices = remoteDevices;
+        cachedAt = Date.now();
+        const devices = withLocalDevice(remoteDevices);
         set({ devices, selected: initialIndex(devices), loading: false });
       } catch (err) {
         if (controller.signal.aborted) return;
-        set({ loading: false, error: err instanceof Error ? err.message : String(err) });
+        const devices = withLocalDevice([]);
+        set({
+          devices,
+          selected: initialIndex(devices),
+          loading: false,
+          // The native receiver remains usable even if Spotify's optional remote-device read fails.
+          error: devices.length > 0 ? null : err instanceof Error ? err.message : String(err),
+        });
       } finally {
         if (inFlight === controller) inFlight = null;
       }
@@ -93,8 +171,22 @@ export const useDevices = create<DeviceSlice>((set, get) => ({
 
     set({ loading: true, error: null });
     try {
-      // Keep whatever the playback state was; transferring should not start music by itself.
-      await player.transfer(device.id, false);
+      const nativeStatus = native?.getStatus();
+      if (
+        webAccountId !== null &&
+        nativeStatus?.state === "ready" &&
+        nativeStatus.accountId === webAccountId &&
+        device.id === nativeStatus.deviceId
+      ) {
+        await native!.transfer();
+      } else {
+        // Keep whatever the playback state was; transferring should not start music by itself.
+        await player.transfer(device.id, false);
+        usePlayback.getState().confirmDeviceTransfer(device.id, device.name);
+      }
+      // Active flags changed. Do not show a stale cached list on the next open.
+      cachedRemoteDevices = null;
+      cachedAt = 0;
       set({ open: false, devices: [], selected: -1, loading: false });
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });

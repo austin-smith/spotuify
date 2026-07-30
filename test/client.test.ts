@@ -4,6 +4,7 @@ import {
   PremiumRequiredError,
   SpotifyApiError,
   SpotifyClient,
+  SpotifyLimitError,
 } from "../src/api/client.ts";
 import { PlayerApi } from "../src/api/player.ts";
 import type { TokenStore } from "../src/auth/tokens.ts";
@@ -123,5 +124,433 @@ describe("SpotifyApiError", () => {
     expect(err.detail).toBe("Device not found");
     expect(err.message).toContain("404");
     expect(err.message).toContain("/me/player/next");
+  });
+});
+
+describe("shared request coordination", () => {
+  test("coalesces identical GETs before they reach the network", async () => {
+    let requests = 0;
+    let release: (() => void) | undefined;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    globalThis.fetch = (async () => {
+      requests++;
+      await waiting;
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    const first = spotify.request<{ ok: boolean }>("/me/player");
+    const second = spotify.request<{ ok: boolean }>("/me/player");
+    release?.();
+
+    expect(await first).toEqual({ ok: true });
+    expect(await second).toEqual({ ok: true });
+    expect(requests).toBe(1);
+    expect(spotify.getMetrics().coalescedRequests).toBe(1);
+  });
+
+  test("serializes unrelated requests", async () => {
+    let active = 0;
+    let mostActive = 0;
+    globalThis.fetch = (async () => {
+      active++;
+      mostActive = Math.max(mostActive, active);
+      await Bun.sleep(5);
+      active--;
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    await Promise.all([spotify.request("/me"), spotify.request("/me/player")]);
+    expect(mostActive).toBe(1);
+  });
+
+  test("foreground work goes before queued background polling", async () => {
+    const order: string[] = [];
+    let release: (() => void) | undefined;
+    const firstBlocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      order.push(path);
+      if (path.endsWith("/first")) await firstBlocked;
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    const first = spotify.request("/first", { priority: "background" });
+    await Bun.sleep(1);
+    const background = spotify.request("/background", { priority: "background" });
+    const foreground = spotify.request("/foreground");
+    release?.();
+    await Promise.all([first, background, foreground]);
+
+    expect(order).toEqual(["/v1/first", "/v1/foreground", "/v1/background"]);
+  });
+
+  test("a slow background read cannot head-of-line block interactive work", async () => {
+    let release: (() => void) | undefined;
+    const backgroundBlocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let foregroundFinished = false;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/library")) await backgroundBlocked;
+      if (path.endsWith("/search")) foregroundFinished = true;
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    const background = spotify.request("/library", { priority: "background" });
+    await Bun.sleep(1);
+    const foreground = spotify.request("/search");
+    await foreground;
+
+    expect(foregroundFinished).toBeTrue();
+    release?.();
+    await background;
+  });
+});
+
+describe("429 handling", () => {
+  const quotaBody = JSON.stringify({
+    error: { status: 429, message: "Too many requests", reason: "QUOTA_EXCEEDED" },
+  });
+
+  test("parses quota exhaustion before returning and does not retry", async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Response(quotaBody, {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "21600" },
+      });
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    try {
+      await spotify.request("/me/player");
+      throw new Error("should have rejected");
+    } catch (err) {
+      expect(err).toBeInstanceOf(SpotifyLimitError);
+      expect((err as SpotifyLimitError).quotaExceeded).toBeTrue();
+      expect((err as SpotifyLimitError).retryAt).not.toBeNull();
+    }
+    expect(requests).toBe(1);
+  });
+
+  test("one 429 blocks every later endpoint without another network request", async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Response(quotaBody, {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "21600" },
+      });
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    await expect(spotify.request("/me/player")).rejects.toBeInstanceOf(SpotifyLimitError);
+    await expect(spotify.request("/search", { query: { q: "test" } })).rejects.toBeInstanceOf(
+      SpotifyLimitError,
+    );
+    await expect(
+      spotify.request("/me/player/next", { method: "POST" }),
+    ).rejects.toBeInstanceOf(SpotifyLimitError);
+
+    expect(requests).toBe(1);
+    expect(spotify.getMetrics().blockedRequests).toBe(2);
+  });
+
+  test("an empty 429 body still opens the shared circuit", async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Response(null, {
+        status: 429,
+        headers: { "content-length": "0", "retry-after": "60" },
+      });
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    await expect(spotify.request("/me/player")).rejects.toBeInstanceOf(SpotifyLimitError);
+    await expect(spotify.request("/search")).rejects.toBeInstanceOf(SpotifyLimitError);
+    expect(requests).toBe(1);
+  });
+
+  test("a lane waiting on credentials rechecks a cooldown before reaching Spotify", async () => {
+    let tokenReads = 0;
+    let releaseForeground: (() => void) | undefined;
+    const foregroundToken = new Promise<void>((resolve) => {
+      releaseForeground = resolve;
+    });
+    const gatedTokens = {
+      accessToken: async () => {
+        tokenReads++;
+        if (tokenReads === 2) await foregroundToken;
+        return "token";
+      },
+    } as unknown as TokenStore;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Response(quotaBody, {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "60" },
+      });
+    }) as unknown as typeof fetch;
+
+    const spotify = new SpotifyClient(gatedTokens);
+    const background = spotify.request("/poll", { priority: "background" });
+    const backgroundAssertion = expect(background).rejects.toBeInstanceOf(SpotifyLimitError);
+    await Bun.sleep(1);
+    const foreground = spotify.request("/search");
+    await backgroundAssertion;
+    releaseForeground?.();
+    await expect(foreground).rejects.toBeInstanceOf(SpotifyLimitError);
+
+    expect(requests).toBe(1);
+  });
+
+  test("allows requests again only after Spotify's Retry-After time", async () => {
+    let now = 10_000;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      if (requests === 1) {
+        return new Response(quotaBody, {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "10" },
+        });
+      }
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const spotify = new SpotifyClient(tokens, {
+      now: () => now,
+    });
+    await expect(spotify.request("/me/player")).rejects.toBeInstanceOf(SpotifyLimitError);
+
+    now += 9_999;
+    await expect(spotify.request("/me")).rejects.toBeInstanceOf(SpotifyLimitError);
+    expect(requests).toBe(1);
+
+    now++;
+    expect(await spotify.request<{ ok: boolean }>("/me")).toEqual({ ok: true });
+    expect(requests).toBe(2);
+    expect(spotify.getCooldown()).toBeNull();
+  });
+
+  test("an elapsed HTTP-date Retry-After is immediately retryable", async () => {
+    const now = Date.UTC(2026, 6, 29, 12, 0, 0, 750);
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      if (requests === 1) {
+        return new Response(quotaBody, {
+          status: 429,
+          headers: {
+            "content-type": "application/json",
+            // HTTP dates have only second precision, so this valid deadline is already 750ms behind
+            // the client's current clock by the time the response is handled.
+            "retry-after": new Date(now).toUTCString(),
+          },
+        });
+      }
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const spotify = new SpotifyClient(tokens, { now: () => now });
+    await expect(spotify.request("/me/player")).rejects.toMatchObject({
+      retryAt: now,
+    });
+    expect(await spotify.request<{ ok: boolean }>("/me")).toEqual({ ok: true });
+    expect(requests).toBe(2);
+  });
+
+  test("an unusable Retry-After fails closed instead of guessing a retry cadence", async () => {
+    globalThis.fetch = (async () =>
+      new Response(quotaBody, {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "not-a-time" },
+      })) as unknown as typeof fetch;
+
+    const spotify = client();
+    await expect(spotify.request("/me/player")).rejects.toBeInstanceOf(SpotifyLimitError);
+    expect(spotify.getCooldown()).toEqual({
+      kind: "quota",
+      retryAt: null,
+      detail: "Too many requests",
+    });
+  });
+
+  test("an explicit probe can recover an indefinite cooldown without opening other traffic", async () => {
+    let requests = 0;
+    let releaseProbe: ((response: Response) => void) | undefined;
+    const probeResponse = new Promise<Response>((resolve) => {
+      releaseProbe = resolve;
+    });
+    globalThis.fetch = (async () => {
+      requests++;
+      if (requests === 1) {
+        return new Response(quotaBody, {
+          status: 429,
+          headers: {
+            "content-type": "application/json",
+            "retry-after": "not-a-time",
+          },
+        });
+      }
+      return await probeResponse;
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    await expect(spotify.request("/me")).rejects.toBeInstanceOf(SpotifyLimitError);
+    const probe = spotify.retryAfterIndefiniteCooldown<{ id: string }>("/me");
+    await Bun.sleep(1);
+    await expect(
+      spotify.request("/poll", { priority: "background" }),
+    ).rejects.toBeInstanceOf(SpotifyLimitError);
+    expect(requests).toBe(2);
+
+    releaseProbe?.(Response.json({ id: "user" }));
+    expect(await probe).toEqual({ id: "user" });
+    expect(spotify.getCooldown()).toBeNull();
+  });
+
+  test("an explicit probe never bypasses a finite Spotify deadline", async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Response(quotaBody, {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "60" },
+      });
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    await expect(spotify.request("/me")).rejects.toBeInstanceOf(SpotifyLimitError);
+    await expect(
+      spotify.retryAfterIndefiniteCooldown("/me"),
+    ).rejects.toBeInstanceOf(SpotifyLimitError);
+    expect(requests).toBe(1);
+  });
+
+  test("a probe 429 replaces the indefinite cooldown with its new finite deadline", async () => {
+    let now = 10_000;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Response(quotaBody, {
+        status: 429,
+        headers: {
+          "content-type": "application/json",
+          "retry-after": requests === 1 ? "invalid" : "30",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const spotify = new SpotifyClient(tokens, { now: () => now });
+    await expect(spotify.request("/me")).rejects.toBeInstanceOf(SpotifyLimitError);
+    await expect(
+      spotify.retryAfterIndefiniteCooldown("/me"),
+    ).rejects.toMatchObject({ retryAt: now + 30_000 });
+    expect(spotify.getCooldown()?.retryAt).toBe(now + 30_000);
+    expect(requests).toBe(2);
+  });
+
+  test("a shorter concurrent 429 cannot weaken an existing quota cooldown", async () => {
+    let releaseQuota: ((response: Response) => void) | undefined;
+    let releaseRateLimit: ((response: Response) => void) | undefined;
+    const quotaResponse = new Promise<Response>((resolve) => {
+      releaseQuota = resolve;
+    });
+    const rateLimitResponse = new Promise<Response>((resolve) => {
+      releaseRateLimit = resolve;
+    });
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const path = new URL(String(input)).pathname;
+      return await (path.endsWith("/poll") ? quotaResponse : rateLimitResponse);
+    }) as unknown as typeof fetch;
+
+    const now = 10_000;
+    const spotify = new SpotifyClient(tokens, { now: () => now });
+    const background = spotify.request("/poll", { priority: "background" });
+    const foreground = spotify.request("/search", { priority: "foreground" });
+
+    releaseQuota?.(
+      new Response(quotaBody, {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "21600" },
+      }),
+    );
+    await expect(background).rejects.toBeInstanceOf(SpotifyLimitError);
+
+    releaseRateLimit?.(
+      new Response(JSON.stringify({ error: { status: 429, message: "Slow down" } }), {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "30" },
+      }),
+    );
+    let foregroundError: unknown;
+    try {
+      await foreground;
+    } catch (error) {
+      foregroundError = error;
+    }
+    expect(foregroundError).toBeInstanceOf(SpotifyLimitError);
+    expect((foregroundError as SpotifyLimitError).quotaExceeded).toBeTrue();
+    expect((foregroundError as SpotifyLimitError).retryAt).toBe(now + 21_600_000);
+
+    expect(spotify.getCooldown()).toEqual({
+      kind: "quota",
+      retryAt: now + 21_600_000,
+      detail: "Too many requests",
+    });
+  });
+
+  test("a finite concurrent 429 cannot replace an unknown fail-closed deadline", async () => {
+    let releaseUnknown: ((response: Response) => void) | undefined;
+    let releaseFinite: ((response: Response) => void) | undefined;
+    const unknownResponse = new Promise<Response>((resolve) => {
+      releaseUnknown = resolve;
+    });
+    const finiteResponse = new Promise<Response>((resolve) => {
+      releaseFinite = resolve;
+    });
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const path = new URL(String(input)).pathname;
+      return await (path.endsWith("/poll") ? unknownResponse : finiteResponse);
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    const background = spotify.request("/poll", { priority: "background" });
+    const foreground = spotify.request("/search", { priority: "foreground" });
+
+    releaseUnknown?.(
+      new Response(quotaBody, {
+        status: 429,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await expect(background).rejects.toBeInstanceOf(SpotifyLimitError);
+
+    releaseFinite?.(
+      new Response(JSON.stringify({ error: { status: 429, message: "Slow down" } }), {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "30" },
+      }),
+    );
+    await expect(foreground).rejects.toBeInstanceOf(SpotifyLimitError);
+
+    expect(spotify.getCooldown()).toEqual({
+      kind: "quota",
+      retryAt: null,
+      detail: "Too many requests",
+    });
   });
 });

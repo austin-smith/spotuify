@@ -1,10 +1,16 @@
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
-import { useEffect, useState } from "react";
-import { SpotifyClient } from "../api/client.ts";
+import { useEffect, useRef, useState } from "react";
+import { SpotifyApiError, SpotifyClient } from "../api/client.ts";
 import { PlayerApi } from "../api/player.ts";
 import { isTrack, type Me } from "../api/types.ts";
 import { tokenStore } from "../auth/flow.ts";
-import { DEVICE_NAME, MissingClientIdError, REDIRECT_URI } from "../config.ts";
+import {
+  recoverBootProfile,
+  resolveBootProfile,
+  retryBootProfile,
+} from "../auth/profile.ts";
+import { ReauthRequiredError } from "../auth/tokens.ts";
+import { MissingClientIdError, REDIRECT_URI } from "../config.ts";
 import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
 import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
@@ -22,18 +28,21 @@ import { KeyHints } from "./KeyHints.tsx";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
 import { overlayListHeight } from "./Overlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
+import { PlaybackEmptyState } from "./PlaybackEmptyState.tsx";
 import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
 type Boot =
   | { phase: "loading" }
   | { phase: "needs-setup"; message: string }
-  | { phase: "ready"; me: Me; player: PlayerApi };
-
-/** How often to look for librespot in the device list while it starts up. */
-const ENGINE_POLL_MS = 400;
-/** How long to keep looking before giving up on it registering. */
-const ENGINE_REGISTER_TIMEOUT_MS = 15_000;
+  | {
+      phase: "ready";
+      me: Me | null;
+      player: PlayerApi;
+      client: SpotifyClient;
+      authorizationId: string;
+      profileRetryAt: number | null;
+    };
 
 function Setup({ message }: { message: string }) {
   return (
@@ -54,9 +63,10 @@ export function App() {
   const { width, height } = useTerminalDimensions();
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [engine, setEngine] = useState<EngineStatus>({ state: "starting" });
-  // The process being up is not the same as Spotify being able to reach it, and only the second
-  // one means playback will work here.
-  const [registered, setRegistered] = useState(false);
+  const [engineClient, setEngineClient] = useState<LibrespotEngine | null>(null);
+  const [profileRecoveryRequest, setProfileRecoveryRequest] = useState(0);
+  const profileRecoveryController = useRef<AbortController | null>(null);
+  const activatedDevice = useRef<string | null>(null);
 
   const item = usePlayback((s) => s.item);
   const isPlaying = usePlayback((s) => s.isPlaying);
@@ -65,7 +75,9 @@ export function App() {
   const shuffle = usePlayback((s) => s.shuffle);
   const repeat = usePlayback((s) => s.repeat);
   const volumePercent = usePlayback((s) => s.volumePercent);
+  const deviceId = usePlayback((s) => s.deviceId);
   const deviceName = usePlayback((s) => s.deviceName);
+  const sessionPresence = usePlayback((s) => s.sessionPresence);
   const ready = usePlayback((s) => s.ready);
   const error = usePlayback((s) => s.error);
   // Must sit with the other hooks: below the `boot.phase` early returns the hook count would
@@ -78,20 +90,38 @@ export function App() {
   const [keysOpen, setKeysOpen] = useState(false);
   const overlayOpen =
     paletteOpen || devicesOpen || queueOpen || actionsOpen || lyricsOpen || keysOpen;
+  const bootPlayer = boot.phase === "ready" ? boot.player : null;
+  const bootClient = boot.phase === "ready" ? boot.client : null;
+  const bootAuthorizationId = boot.phase === "ready" ? boot.authorizationId : null;
+  const bootProfile = boot.phase === "ready" ? boot.me : null;
+  const bootAccountId = bootProfile?.id ?? null;
+  const bootProfileRetryAt = boot.phase === "ready" ? boot.profileRetryAt : null;
 
   useEffect(() => {
     let cancelled = false;
 
     void (async () => {
       try {
-        const client = new SpotifyClient(await tokenStore());
-        const me = await client.get<Me>("/me");
+        const tokens = await tokenStore();
+        const authorizationId = await tokens.authorizationId();
+        const client = new SpotifyClient(tokens);
+        // A quota lockout is not an authentication/setup failure. A verified cached identity, or a
+        // restricted profile-less mode, keeps the independent local receiver available.
+        const profileResolution = await resolveBootProfile(client, authorizationId);
+        const me = profileResolution.profile;
         if (cancelled) return;
         const player = new PlayerApi(client);
-        useSearch.getState().configure(client, me.country, me.id);
-        useDevices.getState().configure(player);
+        if (me !== null) useSearch.getState().configure(client, me.country, me.id);
+        useDevices.getState().configure(player, undefined, me?.id ?? null);
         useQueue.getState().configure(player);
-        setBoot({ phase: "ready", me, player });
+        setBoot({
+          phase: "ready",
+          me,
+          player,
+          client,
+          authorizationId,
+          profileRetryAt: profileResolution.retryAt,
+        });
       } catch (err) {
         if (cancelled) return;
         setBoot({
@@ -112,9 +142,158 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (boot.phase !== "ready") return;
-    return usePlayback.getState().start(boot.player);
-  }, [boot]);
+    if (bootPlayer === null) return;
+
+    const supervisor = new LibrespotEngine();
+    let cancelled = false;
+    const unsubscribe = supervisor.onStatus(setEngine);
+    setEngineClient(supervisor);
+    void supervisor.start().catch((err) => {
+      // The supervisor owns normal launch failures. This is a final boundary for unexpected setup
+      // errors so a rejected promise can never leave the UI stuck at "starting".
+      if (!cancelled) {
+        setEngine({
+          state: "failed",
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      supervisor.stop();
+      setEngineClient(null);
+    };
+  }, [bootPlayer]);
+
+  useEffect(() => {
+    if (bootPlayer === null || engineClient === null) return;
+    useDevices.getState().configure(bootPlayer, engineClient, bootAccountId);
+    if (bootAccountId === null) {
+      // `/me` is the single recovery probe. Starting playback here would schedule `/me/player` at
+      // the same Retry-After deadline and make the two lanes compete for scarce quota.
+      usePlayback.setState({
+        item: null,
+        isPlaying: false,
+        shuffle: false,
+        repeat: "off",
+        volumePercent: null,
+        deviceId: null,
+        deviceName: null,
+        sessionPresence: "unknown",
+        progressMs: 0,
+        durationMs: 0,
+        error: null,
+        ready: true,
+      });
+      return;
+    }
+    return usePlayback.getState().start(bootPlayer, engineClient, bootAccountId);
+  }, [bootPlayer, engineClient, bootAccountId]);
+
+  useEffect(() => {
+    const retryingCachedProfile =
+      profileRecoveryRequest > 0 &&
+      bootProfile !== null &&
+      bootClient?.getCooldown()?.retryAt === null;
+    if (
+      bootClient === null ||
+      bootAuthorizationId === null ||
+      (bootProfile !== null && !retryingCachedProfile)
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    profileRecoveryController.current = controller;
+    const recovery =
+      profileRecoveryRequest > 0
+        ? retryBootProfile(bootClient, bootAuthorizationId, controller.signal)
+        : recoverBootProfile(
+            bootClient,
+            bootAuthorizationId,
+            controller.signal,
+            bootProfileRetryAt,
+          );
+    void recovery
+      .then((profile) => {
+        if (controller.signal.aborted || profile === null) return;
+        useSearch.getState().configure(bootClient, profile.country, profile.id);
+        usePlayback.setState({ error: null });
+        setBoot((current) =>
+          current.phase === "ready" &&
+          current.client === bootClient &&
+          current.authorizationId === bootAuthorizationId
+            ? { ...current, me: profile, profileRetryAt: null }
+            : current,
+        );
+        // A cached profile already started the playback store. Now that the explicit `/me` probe
+        // reopened the shared circuit, reconcile that existing store once; a profile-less boot
+        // starts the store itself when `boot.me` changes and must not issue a duplicate read.
+        if (retryingCachedProfile) void usePlayback.getState().refresh("foreground");
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          err instanceof ReauthRequiredError ||
+          (err instanceof SpotifyApiError &&
+            (err.status === 400 || err.status === 401 || err.status === 403))
+        ) {
+          setBoot((current) =>
+            current.phase === "ready" &&
+            current.client === bootClient &&
+            current.authorizationId === bootAuthorizationId
+              ? { phase: "needs-setup", message }
+              : current,
+          );
+        } else {
+          usePlayback.setState({
+            error: `${message} — press r to retry account verification`,
+          });
+        }
+      })
+      .finally(() => {
+        if (profileRecoveryController.current === controller) {
+          profileRecoveryController.current = null;
+        }
+      });
+    return () => controller.abort();
+  }, [
+    bootClient,
+    bootAuthorizationId,
+    bootProfile,
+    bootProfileRetryAt,
+    profileRecoveryRequest,
+  ]);
+
+  // Auto-adopt only when a successful 204 proved there is no playback session. A returned playback
+  // object may have a null item or device id and still belong to another active receiver.
+  useEffect(() => {
+    if (
+      engine.state !== "ready" ||
+      bootAccountId === null ||
+      engine.accountId !== bootAccountId
+    ) {
+      activatedDevice.current = null;
+      return;
+    }
+    if (
+      engineClient === null ||
+      !ready ||
+      sessionPresence !== "absent" ||
+      error !== null ||
+      activatedDevice.current === engine.deviceId
+    ) {
+      return;
+    }
+    activatedDevice.current = engine.deviceId;
+    void engineClient.activate().catch((err) => {
+      activatedDevice.current = null;
+      usePlayback.setState({ error: err instanceof Error ? err.message : String(err) });
+    });
+  }, [engine, engineClient, bootAccountId, ready, sessionPresence, error]);
 
   // Lyrics follow the music: leaving the overlay open through a track change loads the new song
   // rather than leaving the previous one's words on screen. Keyed on the track, not the object —
@@ -123,58 +302,6 @@ export function App() {
   useEffect(() => {
     useLyrics.getState().follow(item);
   }, [trackKey]);
-
-  useEffect(() => {
-    if (boot.phase !== "ready") return;
-
-    const supervisor = new LibrespotEngine();
-    const unsubscribe = supervisor.onStatus(setEngine);
-    void supervisor.start();
-
-    return () => {
-      unsubscribe();
-      supervisor.stop();
-    };
-  }, [boot]);
-
-  // Once librespot registers with Spotify, adopt it — unless another device is already active.
-  useEffect(() => {
-    if (boot.phase !== "ready" || engine.state !== "running") return;
-
-    let cancelled = false;
-    setRegistered(false);
-
-    void (async () => {
-      // Spawning librespot and it being reachable are different events: the process is up
-      // immediately, but registering with Spotify took ~1.5s when measured. Waiting a fixed 1.5s
-      // and looking once was a coin flip, and losing it meant never adopting the device at all.
-      for (let waited = 0; waited < ENGINE_REGISTER_TIMEOUT_MS; waited += ENGINE_POLL_MS) {
-        await Bun.sleep(ENGINE_POLL_MS);
-        if (cancelled) return;
-
-        try {
-          const devices = await boot.player.devices();
-          const mine = devices.find((d) => d.name === DEVICE_NAME);
-          if (mine === undefined) continue;
-
-          setRegistered(true);
-          const active = devices.find((d) => d.is_active);
-          if (mine.id != null && active === undefined) {
-            await boot.player.transfer(mine.id, false);
-            await usePlayback.getState().refresh();
-          }
-          return;
-        } catch {
-          // Keep waiting: a transient failure here is not worth reporting, and the device picker
-          // makes the state explicit on demand.
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [boot, engine.state]);
 
   useKeyboard((key) => {
     const palette = useSearch.getState();
@@ -227,10 +354,7 @@ export function App() {
       else if (key.name === "up" || (key.ctrl && key.name === "p")) picker.move(-1);
       else if (key.name === "down" || (key.ctrl && key.name === "n")) picker.move(1);
       else if (key.name === "return") {
-        void (async () => {
-          await picker.activate();
-          await usePlayback.getState().refresh();
-        })();
+        void picker.activate();
       }
       return;
     }
@@ -268,22 +392,8 @@ export function App() {
           return;
         }
 
-        const deviceId = usePlayback.getState().deviceId;
         void (async () => {
-          try {
-            await boot.player.play({
-              ...row.play,
-              ...(deviceId !== null ? { deviceId } : {}),
-            });
-            await Bun.sleep(300);
-            await usePlayback.getState().refresh();
-          } catch (err) {
-            // Actually surface it. Swallowing this meant a failed play looked like nothing
-            // happening at all, with no way to find out why.
-            usePlayback.setState({
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
+          await usePlayback.getState().playSelection(row.play);
         })();
         palette.closePalette();
       }
@@ -297,11 +407,16 @@ export function App() {
     if (boot.phase !== "ready") return;
 
     if (key.name === "/") {
+      // Without a verified profile, ownership-sensitive library/search setup is intentionally
+      // unavailable. Native and device control also stay disabled until both logins can be bound
+      // to the same Spotify account.
+      if (boot.me === null) return;
       palette.openPalette();
       return;
     }
 
     if (key.name === "d") {
+      if (boot.me === null) return;
       picker.openPicker();
       return;
     }
@@ -312,8 +427,47 @@ export function App() {
     }
 
     if (key.name === "a") {
-      const playing = usePlayback.getState().item;
-      if (playing !== null) actions.openActions(playing);
+      // Album and artist actions drill through the Web API-backed palette, which is deliberately
+      // unconfigured during profile-less quota mode.
+      if (boot.me === null) return;
+      const playback = usePlayback.getState();
+      const playing = playback.item;
+      if (playing === null) return;
+
+      const nativeStatus = engineClient?.getStatus();
+      const needsAlbum =
+        isTrack(playing) &&
+        playing.is_local !== true &&
+        playing.album.id === "" &&
+        nativeStatus?.state === "ready" &&
+        bootAccountId !== null &&
+        nativeStatus.accountId === bootAccountId &&
+        playback.deviceId === nativeStatus.deviceId;
+      if (!needsAlbum || engineClient === null || !isTrack(playing)) {
+        actions.openActions(playing);
+        return;
+      }
+
+      // AudioItem already carries artist ids, but librespot omits the album id from its player
+      // event. Resolve that one missing relationship only when the user asks for actions.
+      void (async () => {
+        let resolved = playing;
+        try {
+          const metadata = await engineClient.resolveTrack(playing.uri);
+          resolved = {
+            ...playing,
+            album: {
+              ...playing.album,
+              ...metadata.album,
+            },
+          };
+        } catch {
+          // Artist actions remain useful when optional album enrichment is unavailable.
+        }
+        if (usePlayback.getState().item?.uri === playing.uri) {
+          actions.openActions(resolved);
+        }
+      })();
       return;
     }
 
@@ -339,7 +493,17 @@ export function App() {
         void store.previous();
         break;
       case "r":
-        void store.refresh();
+        if (
+          boot.me === null ||
+          boot.client.getCooldown()?.retryAt === null
+        ) {
+          if (profileRecoveryController.current === null) {
+            usePlayback.setState({ error: null });
+            setProfileRecoveryRequest((request) => request + 1);
+          }
+        } else {
+          void store.refresh("foreground");
+        }
         break;
       case "s":
         void store.toggleShuffle();
@@ -405,15 +569,21 @@ export function App() {
           repeat={repeat}
           volumePercent={volumePercent}
           deviceName={deviceName}
+          isLocalDevice={
+            engine.state === "ready" &&
+            bootAccountId !== null &&
+            engine.accountId === bootAccountId &&
+            deviceId === engine.deviceId
+          }
           width={width}
           height={height - 1}
         />
       ) : overlayOpen ? null : (
-        <box position="absolute" left={2} top={Math.floor(height / 2)} zIndex={2}>
-          <text fg={theme.muted}>
-            {ready ? "NOTHING PLAYING — press / to find something" : "LOADING…"}
-          </text>
-        </box>
+        <PlaybackEmptyState
+          ready={ready}
+          canSearch={boot.me !== null}
+          height={height}
+        />
       )}
 
       {error !== null && !overlayOpen ? (
@@ -426,7 +596,12 @@ export function App() {
 
       {overlayOpen ? null : (
         <box position="absolute" left={0} top={height - 1} width={width} zIndex={2}>
-          <KeyHints width={width} playing={isPlaying} hasTrack={item !== null} />
+          <KeyHints
+            width={width}
+            playing={isPlaying}
+            hasTrack={item !== null}
+            canBrowse={boot.me !== null}
+          />
         </box>
       )}
 
@@ -441,9 +616,11 @@ export function App() {
         <KeymapOverlay
           width={width}
           height={height}
-          account={boot.me.display_name ?? boot.me.id}
-          product={boot.me.product}
-          engineUp={engine.state === "running" && registered}
+          account={boot.me === null ? "web api quota exhausted" : (boot.me.display_name ?? boot.me.id)}
+          product={boot.me?.product}
+          engine={engine}
+          webAccountId={bootAccountId}
+          canBrowse={boot.me !== null}
         />
       ) : null}
     </box>

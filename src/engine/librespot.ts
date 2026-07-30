@@ -1,31 +1,72 @@
-import { chmod, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, unlink } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { DEVICE_NAME, LIBRESPOT_CACHE_DIR } from "../config.ts";
 
 /** librespot writes its cached session credentials here. */
 const CREDENTIALS_PATH = join(LIBRESPOT_CACHE_DIR, "credentials.json");
+const COMMAND_TIMEOUT_MS = 10_000;
+const ENGINE_READINESS_TIMEOUT_MS = 30_000;
+const STABLE_ENGINE_UPTIME_MS = 30_000;
+const ENGINE_SHUTDOWN_GRACE_MS = 3_000;
+const ENGINE_RESTART_DELAYS_MS = [1_000, 2_500, 5_000] as const;
+
+/** A bounded reconnect policy: `null` means this run has exhausted its restart budget. */
+export function engineRestartDelay(
+  attempt: number,
+  delays: readonly number[] = ENGINE_RESTART_DELAYS_MS,
+): number | null {
+  return delays[attempt] ?? null;
+}
 
 export async function hasEngineCredentials(): Promise<boolean> {
   return await Bun.file(CREDENTIALS_PATH).exists();
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Locate the standalone librespot CLI used only for its interactive OAuth bootstrap. */
+async function locateLibrespotCli(): Promise<string | null> {
+  const which = Bun.spawn(["which", "librespot"], { stdout: "pipe", stderr: "ignore" });
+  const out = (await new Response(which.stdout).text()).trim();
+  return (await which.exited) === 0 && out.length > 0 ? out : null;
+}
+
 /**
  * Run librespot's own interactive OAuth once so it caches credentials.
  *
- * librespot has no login-and-exit mode: it authenticates and then runs as a device. So we let it
- * start with inherited stdio, wait for the credentials file to appear, then stop it. Requires a
- * TTY — call this from the CLI, never from inside the TUI.
+ * The Web API token is never passed to librespot. Authentication runs before the renderer owns the
+ * terminal; the native sidecar later opens this same credential cache without invoking a browser.
  */
-export async function authenticateEngine(timeoutMs = 180_000): Promise<boolean> {
-  const binary = await LibrespotEngine.locate();
+export async function authenticateEngine(
+  options: { force?: boolean } = {},
+  timeoutMs = 180_000,
+): Promise<boolean> {
+  const binary = await locateLibrespotCli();
   if (binary === null) return false;
+  if (options.force === true) {
+    try {
+      await unlink(CREDENTIALS_PATH);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+  }
   if (await hasEngineCredentials()) return true;
 
   await mkdir(LIBRESPOT_CACHE_DIR, { recursive: true });
   console.log("\nlibrespot needs to sign in once to enable playback in the terminal.");
 
   const proc = Bun.spawn(
-    [binary, "--name", DEVICE_NAME, "--cache", LIBRESPOT_CACHE_DIR, "--enable-oauth", "--disable-discovery"],
+    [
+      binary,
+      "--name",
+      DEVICE_NAME,
+      "--cache",
+      LIBRESPOT_CACHE_DIR,
+      "--enable-oauth",
+      "--disable-discovery",
+    ],
     { stdin: "inherit", stdout: "inherit", stderr: "inherit" },
   );
 
@@ -33,11 +74,9 @@ export async function authenticateEngine(timeoutMs = 180_000): Promise<boolean> 
   try {
     while (Date.now() < deadline) {
       if (await hasEngineCredentials()) {
-        // librespot writes this 0644, but it is a reusable credential — restrict it to the owner.
         await chmod(CREDENTIALS_PATH, 0o600);
         return true;
       }
-      // The process dying before credentials appear means the flow failed.
       if (proc.exitCode !== null) return false;
       await Bun.sleep(500);
     }
@@ -51,116 +90,883 @@ export type EngineStatus =
   | { state: "disabled" }
   | { state: "missing" }
   | { state: "starting" }
-  | { state: "running"; pid: number }
+  | { state: "ready"; pid: number; deviceId: string; accountId: string }
   | { state: "failed"; reason: string };
 
-/** Restart backoff, capped so a persistently broken engine doesn't spin. */
-const BACKOFF_MS = [500, 1_000, 2_000, 5_000, 10_000];
+export interface NativeArtist {
+  id: string;
+  name: string;
+  uri: string;
+}
+
+export type EngineEvent =
+  | {
+      name: "track_changed";
+      media_type: "track" | "episode" | "local";
+      id?: string;
+      uri: string;
+      title: string;
+      duration_ms: number;
+      artists: NativeArtist[];
+      album?: string;
+      show?: string;
+      covers: string[];
+    }
+  | {
+      name: "playing" | "paused" | "seeked" | "position_changed";
+      uri: string;
+      position_ms: number;
+    }
+  | { name: "stopped" | "end_of_track"; uri: string }
+  | { name: "volume_changed"; percent: number }
+  | { name: "session_connected" | "session_disconnected" }
+  | { name: "shuffle_changed"; enabled: boolean }
+  | { name: "repeat_changed"; context: boolean; track: boolean };
+
+export interface ResolvedTrackMetadata {
+  kind: "track_metadata";
+  album: {
+    id: string;
+    name: string;
+    uri: string;
+  };
+}
+
+interface PlayUnavailable {
+  kind: "play_unavailable";
+  reason: string;
+}
+
+type EngineResponseData = ResolvedTrackMetadata | PlayUnavailable;
+
+export class NativePlaybackUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NativePlaybackUnavailableError";
+  }
+}
+
+export type EngineMessage =
+  | {
+      type: "status";
+      state: "ready" | "failed" | "protocol_error";
+      device_id?: string;
+      account_id?: string;
+      reason?: string;
+    }
+  | {
+      type: "response";
+      id: number;
+      ok: boolean;
+      error?: string;
+      data?: EngineResponseData;
+    }
+  | { type: "event"; event: EngineEvent };
+
+type EngineCommand =
+  | { command: "activate" }
+  | { command: "transfer" }
+  | { command: "play" }
+  | { command: "pause" }
+  | { command: "next" }
+  | { command: "previous" }
+  | { command: "seek"; position_ms: number }
+  | { command: "volume"; percent: number }
+  | { command: "shuffle"; enabled: boolean }
+  | { command: "repeat"; mode: "off" | "context" | "track" }
+  | { command: "resolve_track"; uri: string }
+  | {
+      command: "load";
+      context_uri?: string;
+      uris?: string[];
+      offset?: number;
+      shuffle: boolean;
+      repeat: "off" | "context" | "track";
+    }
+  | { command: "shutdown" };
+
+interface PendingCommand {
+  resolve: (data: EngineResponseData | undefined) => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
+interface LibrespotEngineOptions {
+  /** Explicit process path used by integration tests and packaged launchers. */
+  sidecarPath?: string;
+  /** Dependency seam for verifying lifecycle behavior without a user's credential cache. */
+  credentialsAvailable?: () => Promise<boolean>;
+  restartDelaysMs?: readonly number[];
+  stableUptimeMs?: number;
+  readinessTimeoutMs?: number;
+}
 
 /**
- * Supervises a `librespot` child process that registers as a Spotify Connect device.
+ * Supervises Spotuify's structured librespot sidecar.
  *
- * librespot handles its own OAuth (`--enable-oauth`) and caches credentials, so the Web API token
- * is never passed to it — Spotify's login5 does not reliably accept a third-party app's token.
- * The first run therefore needs a TTY, which is why `spotuify auth` sets it up before the TUI
- * takes the alternate screen.
+ * Stdout is a JSON-lines protocol for readiness, command acknowledgements and player events.
+ * Librespot credentials remain in its own cache and never cross this boundary.
  */
 export class LibrespotEngine {
-  private proc: Bun.Subprocess | null = null;
-  private restarts = 0;
+  private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null;
   private stopped = false;
+  private lifecycle = 0;
+  private reachedReady = false;
+  private active = false;
+  private restartAttempt = 0;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private readinessTimer: ReturnType<typeof setTimeout> | null = null;
+  private stableTimer: ReturnType<typeof setTimeout> | null = null;
   private status: EngineStatus = { state: "starting" };
-  private listeners = new Set<(status: EngineStatus) => void>();
+  private nextCommandId = 1;
+  private readonly pending = new Map<number, PendingCommand>();
+  /** Stateful Spirc commands are sent one at a time; metadata commands remain independently concurrent. */
+  private orderedCommandTail: Promise<void> = Promise.resolve();
+  private readonly resolvedTracks = new Map<string, Promise<ResolvedTrackMetadata>>();
+  private readonly statusListeners = new Set<(status: EngineStatus) => void>();
+  private readonly eventListeners = new Set<(event: EngineEvent) => void>();
+  /** Events cannot be trusted by account-bound consumers until ready publishes canonical identity. */
+  private readonly eventBacklog: EngineEvent[] = [];
 
-  constructor(private readonly deviceName: string = DEVICE_NAME) {}
+  constructor(
+    private readonly deviceName: string = DEVICE_NAME,
+    private readonly options: LibrespotEngineOptions = {},
+  ) {}
 
-  /** Absolute path to the librespot binary, or null when it isn't installed. */
+  /** Absolute path to the standalone librespot CLI used by `spotuify auth`. */
   static async locate(): Promise<string | null> {
-    const which = Bun.spawn(["which", "librespot"], { stdout: "pipe", stderr: "ignore" });
-    const out = (await new Response(which.stdout).text()).trim();
-    return (await which.exited) === 0 && out.length > 0 ? out : null;
+    return await locateLibrespotCli();
+  }
+
+  /** Absolute path to the native sidecar built from `native/Cargo.toml`. */
+  static async locateSidecar(): Promise<string | null> {
+    const configured = process.env["SPOTUIFY_ENGINE_PATH"];
+    const candidates = [
+      ...(configured && configured.length > 0 ? [resolve(configured)] : []),
+      resolve(import.meta.dir, "../../native/target/release/spotuify-engine"),
+      resolve(import.meta.dir, "../../native/target/debug/spotuify-engine"),
+    ];
+    for (const candidate of candidates) {
+      if (await Bun.file(candidate).exists()) return candidate;
+    }
+    return null;
   }
 
   getStatus(): EngineStatus {
     return this.status;
   }
 
+  /** Whether librespot has authoritatively joined the active Spotify Connect session. */
+  isActive(): boolean {
+    return this.status.state === "ready" && this.active;
+  }
+
   onStatus(listener: (status: EngineStatus) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  }
+
+  onEvent(listener: (event: EngineEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    this.flushEventBacklog();
+    return () => this.eventListeners.delete(listener);
   }
 
   private setStatus(status: EngineStatus): void {
+    // Leaving `ready` invalidates an active Connect session. Publish that loss while the last
+    // verified account and device identity are still available, so account-bound consumers can
+    // authenticate and apply the disconnect. The process-exit fallback sees `active === false` and
+    // therefore cannot emit a duplicate.
+    if (this.status.state === "ready" && status.state !== "ready" && this.active) {
+      this.active = false;
+      this.emitEvent({ name: "session_disconnected" });
+    }
     this.status = status;
-    for (const listener of this.listeners) listener(status);
+    for (const listener of this.statusListeners) listener(status);
   }
 
-  /**
-   * Start librespot and keep it alive. Resolves once the process is spawned; restarts happen in
-   * the background. Safe to call when librespot isn't installed — the status becomes "missing".
-   */
   async start(): Promise<void> {
-    const binary = await LibrespotEngine.locate();
-    if (binary === null) {
-      this.setStatus({ state: "missing" });
+    const lifecycle = ++this.lifecycle;
+    this.stopped = false;
+    this.reachedReady = false;
+    this.active = false;
+    this.restartAttempt = 0;
+    this.clearLifecycleTimers();
+
+    try {
+      const binary =
+        this.options.sidecarPath !== undefined
+          ? resolve(this.options.sidecarPath)
+          : await LibrespotEngine.locateSidecar();
+      if (!this.isCurrent(lifecycle)) return;
+      if (binary === null) {
+        this.setStatus({ state: "missing" });
+        return;
+      }
+      const credentialsAvailable = this.options.credentialsAvailable ?? hasEngineCredentials;
+      if (!(await credentialsAvailable())) {
+        if (!this.isCurrent(lifecycle)) return;
+        this.setStatus({
+          state: "failed",
+          reason: "no cached librespot credentials — run: spotuify auth",
+        });
+        return;
+      }
+
+      await mkdir(LIBRESPOT_CACHE_DIR, { recursive: true });
+      if (!this.isCurrent(lifecycle)) return;
+      this.spawn(binary, lifecycle);
+    } catch (error) {
+      if (!this.isCurrent(lifecycle)) return;
+      this.setStatus({
+        state: "failed",
+        reason: `playback engine setup failed: ${errorMessage(error)}`,
+      });
+    }
+  }
+
+  async transfer(): Promise<void> {
+    await this.command({ command: "transfer" });
+  }
+
+  async activate(): Promise<void> {
+    await this.command({ command: "activate" });
+  }
+
+  async play(): Promise<void> {
+    const data = await this.command({ command: "play" });
+    if (data?.kind === "play_unavailable") {
+      throw new NativePlaybackUnavailableError(data.reason);
+    }
+  }
+
+  async pause(): Promise<void> {
+    await this.command({ command: "pause" });
+  }
+
+  async next(): Promise<void> {
+    await this.command({ command: "next" });
+  }
+
+  async previous(): Promise<void> {
+    await this.command({ command: "previous" });
+  }
+
+  async seek(positionMs: number): Promise<void> {
+    await this.command({ command: "seek", position_ms: Math.max(0, Math.round(positionMs)) });
+  }
+
+  async setVolume(percent: number): Promise<void> {
+    await this.command({
+      command: "volume",
+      percent: Math.min(100, Math.max(0, Math.round(percent))),
+    });
+  }
+
+  async setShuffle(enabled: boolean): Promise<void> {
+    await this.command({ command: "shuffle", enabled });
+  }
+
+  async setRepeat(mode: "off" | "context" | "track"): Promise<void> {
+    await this.command({ command: "repeat", mode });
+  }
+
+  /** Resolve metadata that librespot's playback event intentionally omits, cached by track URI. */
+  async resolveTrack(uri: string): Promise<ResolvedTrackMetadata> {
+    const existing = this.resolvedTracks.get(uri);
+    if (existing !== undefined) return await existing;
+
+    const pending = (async () => {
+      const data = await this.command({ command: "resolve_track", uri });
+      if (data?.kind !== "track_metadata") {
+        throw new Error("playback engine returned no track metadata");
+      }
+      return data;
+    })();
+    this.resolvedTracks.set(uri, pending);
+    try {
+      return await pending;
+    } catch (error) {
+      if (this.resolvedTracks.get(uri) === pending) this.resolvedTracks.delete(uri);
+      throw error;
+    }
+  }
+
+  async load(options: {
+    contextUri?: string;
+    uris?: string[];
+    offset?: number;
+    shuffle: boolean;
+    repeat: "off" | "context" | "track";
+  }): Promise<void> {
+    await this.command({
+      command: "load",
+      ...(options.contextUri !== undefined ? { context_uri: options.contextUri } : {}),
+      ...(options.uris !== undefined ? { uris: options.uris } : {}),
+      ...(options.offset !== undefined ? { offset: options.offset } : {}),
+      shuffle: options.shuffle,
+      repeat: options.repeat,
+    });
+  }
+
+  private spawn(binary: string, lifecycle: number): void {
+    if (!this.isCurrent(lifecycle)) return;
+    this.setStatus({ state: "starting" });
+    this.active = false;
+    this.eventBacklog.length = 0;
+
+    let proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null;
+    try {
+      proc = Bun.spawn([binary], { stdout: "pipe", stderr: "pipe", stdin: "pipe" });
+      this.proc = proc;
+      proc.stdin.write(
+        `${JSON.stringify({ cacheDir: LIBRESPOT_CACHE_DIR, deviceName: this.deviceName })}\n`,
+      );
+      proc.stdin.flush();
+    } catch (error) {
+      if (proc !== null) {
+        if (this.proc === proc) this.proc = null;
+        proc.kill();
+      }
+      this.handleLaunchFailure(binary, lifecycle, error);
       return;
     }
 
-    await mkdir(LIBRESPOT_CACHE_DIR, { recursive: true });
-    this.stopped = false;
-    this.spawn(binary);
-  }
-
-  private spawn(binary: string): void {
-    if (this.stopped) return;
-    this.setStatus({ state: "starting" });
-
-    // Credentials come from the cache written by the interactive `spotuify auth` run, so no OAuth
-    // prompt can appear here and fight the renderer for the terminal.
-    const proc = Bun.spawn(
-      [
-        binary,
-        "--name", this.deviceName,
-        "--device-type", "computer",
-        "--bitrate", "320",
-        "--cache", LIBRESPOT_CACHE_DIR,
-        "--disable-discovery",
-        "--autoplay", "on",
-      ],
-      { stdout: "ignore", stderr: "pipe", stdin: "ignore" },
-    );
-
-    this.proc = proc;
-    this.setStatus({ state: "running", pid: proc.pid });
-
-    // Keep the last stderr line so a crash can be reported instead of silently restarting.
     let lastError = "";
-    void (async () => {
-      const text = await new Response(proc.stderr).text();
-      const lines = text.trim().split("\n").filter((l) => l.length > 0);
-      lastError = lines.at(-1) ?? "";
-    })();
+    let readinessTimedOut = false;
+    if (this.readinessTimer !== null) clearTimeout(this.readinessTimer);
+    this.readinessTimer = setTimeout(() => {
+      if (!this.isCurrent(lifecycle) || this.proc !== proc || this.status.state !== "starting") {
+        return;
+      }
+      readinessTimedOut = true;
+      this.readinessTimer = null;
+      this.setStatus({
+        state: "failed",
+        reason: "playback engine timed out while connecting to Spotify",
+      });
+      proc.kill();
+    }, this.options.readinessTimeoutMs ?? ENGINE_READINESS_TIMEOUT_MS);
+
+    void consumeLines(proc.stderr, (line) => {
+      // Keep bounded, credential-free failure context. The sidecar reserves stdout for protocol
+      // data and emits no token contents.
+      if (line.length > 0) lastError = line;
+    });
+    void consumeLines(proc.stdout, (line) => this.receive(line, proc, lifecycle));
 
     void (async () => {
       const code = await proc.exited;
-      if (this.stopped) return;
+      if (this.proc === proc) this.proc = null;
+      this.rejectPending(new Error(`playback engine exited with code ${code}`));
+      if (!this.isCurrent(lifecycle)) return;
+      if (this.stableTimer !== null) clearTimeout(this.stableTimer);
+      if (this.readinessTimer !== null) clearTimeout(this.readinessTimer);
+      this.stableTimer = null;
+      this.readinessTimer = null;
 
-      const delay = BACKOFF_MS[Math.min(this.restarts, BACKOFF_MS.length - 1)] ?? 10_000;
-      this.restarts++;
-      this.setStatus({
-        state: "failed",
-        reason: lastError.length > 0 ? lastError : `librespot exited with code ${code}`,
-      });
+      // A vanished active receiver is an authoritative disconnect even if the child died before it
+      // could serialize librespot's final event. Do not emit this for an idle/available receiver,
+      // because that would erase playback belonging to another device.
+      if (this.active) {
+        this.active = false;
+        this.emitEvent({ name: "session_disconnected" });
+      }
 
-      await Bun.sleep(delay);
-      this.spawn(binary);
+      const reason =
+        this.status.state === "failed"
+          ? this.status.reason
+          : lastError.length > 0
+            ? lastError
+            : `playback engine exited with code ${code}`;
+      this.scheduleRestart(binary, lifecycle, reason, readinessTimedOut);
     })();
   }
 
-  /** Stop supervising and kill the child. Must run before the process exits, or librespot leaks. */
-  stop(): void {
-    this.stopped = true;
-    this.proc?.kill();
-    this.proc = null;
+  private handleLaunchFailure(binary: string, lifecycle: number, error: unknown): void {
+    if (!this.isCurrent(lifecycle)) return;
+    const reason = `could not launch playback engine: ${errorMessage(error)}`;
+    if (this.reachedReady) {
+      this.scheduleRestart(binary, lifecycle, reason);
+    } else {
+      this.setStatus({ state: "failed", reason });
+    }
   }
+
+  private receive(line: string, proc: Bun.Subprocess, lifecycle: number): void {
+    if (!this.isCurrent(lifecycle) || this.proc !== proc) return;
+    const message = parseEngineMessage(line);
+    if (message === null) {
+      this.setStatus({ state: "failed", reason: "playback engine sent invalid protocol data" });
+      proc.kill();
+      return;
+    }
+
+    switch (message.type) {
+      case "status":
+        if (message.state === "ready" && this.status.state !== "starting") {
+          // A child that answered after its readiness deadline is already being terminated. Never
+          // resurrect it briefly or flush events from a lifecycle the supervisor has rejected.
+          proc.kill();
+          break;
+        }
+        if (
+          message.state === "ready" &&
+          message.device_id !== undefined &&
+          message.account_id !== undefined
+        ) {
+          if (this.readinessTimer !== null) clearTimeout(this.readinessTimer);
+          this.readinessTimer = null;
+          this.reachedReady = true;
+          this.setStatus({
+            state: "ready",
+            pid: proc.pid,
+            deviceId: message.device_id,
+            accountId: message.account_id,
+          });
+          this.flushEventBacklog();
+          if (this.stableTimer !== null) clearTimeout(this.stableTimer);
+          this.stableTimer = setTimeout(() => {
+            if (this.isCurrent(lifecycle) && this.proc === proc && this.status.state === "ready") {
+              this.restartAttempt = 0;
+            }
+          }, this.options.stableUptimeMs ?? STABLE_ENGINE_UPTIME_MS);
+        } else {
+          if (this.readinessTimer !== null) clearTimeout(this.readinessTimer);
+          this.readinessTimer = null;
+          this.setStatus({
+            state: "failed",
+            reason:
+              message.reason ??
+              (message.state === "protocol_error"
+                ? "playback engine protocol failed"
+                : "Spotify Connect session failed"),
+          });
+          proc.kill();
+        }
+        break;
+      case "response": {
+        const pending = this.pending.get(message.id);
+        if (pending === undefined) return;
+        this.pending.delete(message.id);
+        clearTimeout(pending.timeout);
+        if (message.ok) pending.resolve(message.data);
+        else pending.reject(new Error(message.error ?? "playback engine command failed"));
+        break;
+      }
+      case "event":
+        if (message.event.name === "session_connected") this.active = true;
+        else if (message.event.name === "session_disconnected") this.active = false;
+        if (this.status.state === "ready" && this.eventListeners.size > 0) {
+          this.emitEvent(message.event);
+        } else {
+          this.bufferEvent(message.event);
+        }
+        break;
+    }
+  }
+
+  private emitEvent(event: EngineEvent): void {
+    for (const listener of this.eventListeners) listener(event);
+  }
+
+  private flushEventBacklog(): void {
+    if (this.status.state !== "ready" || this.eventListeners.size === 0) return;
+    const events = this.eventBacklog.splice(0);
+    for (const event of events) this.emitEvent(event);
+  }
+
+  /** Retain a bounded latest-state replay rather than accumulating one position event per second. */
+  private bufferEvent(event: EngineEvent): void {
+    const isPlayback = (candidate: EngineEvent): boolean =>
+      candidate.name === "playing" ||
+      candidate.name === "paused" ||
+      candidate.name === "stopped" ||
+      candidate.name === "end_of_track";
+    const isPosition = (candidate: EngineEvent): boolean =>
+      candidate.name === "seeked" || candidate.name === "position_changed";
+    const removeWhere = (predicate: (candidate: EngineEvent) => boolean): void => {
+      for (let index = this.eventBacklog.length - 1; index >= 0; index--) {
+        const candidate = this.eventBacklog[index];
+        if (candidate !== undefined && predicate(candidate)) this.eventBacklog.splice(index, 1);
+      }
+    };
+
+    switch (event.name) {
+      case "session_disconnected":
+        removeWhere(
+          (candidate) =>
+            candidate.name === "session_connected" ||
+            candidate.name === "session_disconnected" ||
+            candidate.name === "track_changed" ||
+            isPlayback(candidate) ||
+            isPosition(candidate),
+        );
+        break;
+      case "session_connected":
+        removeWhere(
+          (candidate) =>
+            candidate.name === "session_connected" || candidate.name === "session_disconnected",
+        );
+        break;
+      case "track_changed":
+        removeWhere(
+          (candidate) =>
+            candidate.name === "track_changed" ||
+            isPlayback(candidate) ||
+            isPosition(candidate),
+        );
+        break;
+      case "playing":
+      case "paused":
+      case "end_of_track":
+        removeWhere(isPlayback);
+        break;
+      case "stopped":
+        removeWhere((candidate) => isPlayback(candidate) || isPosition(candidate));
+        break;
+      case "seeked":
+      case "position_changed":
+        removeWhere(isPosition);
+        break;
+      case "volume_changed":
+      case "shuffle_changed":
+      case "repeat_changed":
+        removeWhere((candidate) => candidate.name === event.name);
+        break;
+    }
+    this.eventBacklog.push(event);
+  }
+
+  private scheduleRestart(
+    binary: string,
+    lifecycle: number,
+    reason: string,
+    allowColdRestart = false,
+  ): void {
+    const delay = this.reachedReady || allowColdRestart
+      ? engineRestartDelay(this.restartAttempt, this.options.restartDelaysMs)
+      : null;
+    if (delay === null) {
+      this.setStatus({ state: "failed", reason });
+      return;
+    }
+
+    this.restartAttempt++;
+    this.setStatus({
+      state: "failed",
+      reason: `${reason} — reconnecting in ${(delay / 1_000).toLocaleString()}s`,
+    });
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      this.spawn(binary, lifecycle);
+    }, delay);
+  }
+
+  private clearLifecycleTimers(): void {
+    if (this.restartTimer !== null) clearTimeout(this.restartTimer);
+    if (this.readinessTimer !== null) clearTimeout(this.readinessTimer);
+    if (this.stableTimer !== null) clearTimeout(this.stableTimer);
+    this.restartTimer = null;
+    this.readinessTimer = null;
+    this.stableTimer = null;
+  }
+
+  private isCurrent(lifecycle: number): boolean {
+    return !this.stopped && lifecycle === this.lifecycle;
+  }
+
+  private command(command: EngineCommand): Promise<EngineResponseData | undefined> {
+    const proc = this.proc;
+    if (proc === null || this.status.state !== "ready") {
+      return Promise.reject(new Error("playback engine is not ready"));
+    }
+
+    const send = () => this.sendCommand(command, proc);
+    if (command.command === "resolve_track") return send();
+
+    const result = this.orderedCommandTail.then(send);
+    this.orderedCommandTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private sendCommand(
+    command: EngineCommand,
+    expectedProc: Bun.Subprocess<"pipe", "pipe", "pipe">,
+  ): Promise<EngineResponseData | undefined> {
+    if (this.proc !== expectedProc || this.status.state !== "ready") {
+      return Promise.reject(new Error("playback engine changed before command dispatch"));
+    }
+
+    const id = this.nextCommandId++;
+    return new Promise<EngineResponseData | undefined>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`playback engine did not acknowledge ${command.command}`));
+      }, COMMAND_TIMEOUT_MS);
+      this.pending.set(id, { resolve, reject, timeout });
+      try {
+        expectedProc.stdin.write(`${JSON.stringify({ id, ...command })}\n`);
+        expectedProc.stdin.flush();
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  stop(): void {
+    this.lifecycle++;
+    this.stopped = true;
+    this.clearLifecycleTimers();
+    const proc = this.proc;
+    this.proc = null;
+    this.active = false;
+    this.rejectPending(new Error("playback engine stopped"));
+    if (proc === null) return;
+
+    // Best-effort graceful shutdown, followed by a bounded local-process kill. No network work is
+    // performed by this timeout.
+    const id = this.nextCommandId++;
+    try {
+      proc.stdin.write(`${JSON.stringify({ id, command: "shutdown" })}\n`);
+      proc.stdin.flush();
+    } finally {
+      const forceKillTimer = setTimeout(() => {
+        if (proc.exitCode === null) proc.kill();
+      }, ENGINE_SHUTDOWN_GRACE_MS);
+      // A clean sidecar exit must not leave the parent alive for the full forced-kill window.
+      void proc.exited.finally(() => clearTimeout(forceKillTimer));
+    }
+  }
+}
+
+/** Parse and validate the sidecar trust boundary instead of casting arbitrary JSON. */
+export function parseEngineMessage(line: string): EngineMessage | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!isRecord(value) || typeof value["type"] !== "string") return null;
+
+  switch (value["type"]) {
+    case "status": {
+      const state = value["state"];
+      if (state !== "ready" && state !== "failed" && state !== "protocol_error") return null;
+      if (
+        !optionalString(value["device_id"]) ||
+        !optionalString(value["account_id"]) ||
+        !optionalString(value["reason"])
+      ) {
+        return null;
+      }
+      if (
+        state === "ready" &&
+        (typeof value["device_id"] !== "string" || typeof value["account_id"] !== "string")
+      ) {
+        return null;
+      }
+      return {
+        type: "status",
+        state,
+        ...(typeof value["device_id"] === "string"
+          ? { device_id: value["device_id"] }
+          : {}),
+        ...(typeof value["account_id"] === "string"
+          ? { account_id: value["account_id"] }
+          : {}),
+        ...(typeof value["reason"] === "string" ? { reason: value["reason"] } : {}),
+      };
+    }
+    case "response": {
+      const data =
+        value["data"] === undefined ? undefined : parseEngineResponseData(value["data"]);
+      if (
+        !isUnsignedInteger(value["id"]) ||
+        typeof value["ok"] !== "boolean" ||
+        !optionalString(value["error"]) ||
+        (value["data"] !== undefined && data === null)
+      ) {
+        return null;
+      }
+      return {
+        type: "response",
+        id: value["id"],
+        ok: value["ok"],
+        ...(typeof value["error"] === "string" ? { error: value["error"] } : {}),
+        ...(data !== undefined && data !== null ? { data } : {}),
+      };
+    }
+    case "event": {
+      const event = parseEngineEvent(value["event"]);
+      return event === null ? null : { type: "event", event };
+    }
+    default:
+      return null;
+  }
+}
+
+function parseEngineEvent(value: unknown): EngineEvent | null {
+  if (!isRecord(value) || typeof value["name"] !== "string") return null;
+  switch (value["name"]) {
+    case "track_changed": {
+      const mediaType = value["media_type"];
+      if (
+        (mediaType !== "track" && mediaType !== "episode" && mediaType !== "local") ||
+        !optionalString(value["id"]) ||
+        typeof value["uri"] !== "string" ||
+        typeof value["title"] !== "string" ||
+        !isUnsignedInteger(value["duration_ms"]) ||
+        !isNativeArtistArray(value["artists"]) ||
+        !isStringArray(value["covers"]) ||
+        (value["album"] !== undefined &&
+          value["album"] !== null &&
+          typeof value["album"] !== "string") ||
+        (value["show"] !== undefined &&
+          value["show"] !== null &&
+          typeof value["show"] !== "string")
+      ) {
+        return null;
+      }
+      return {
+        name: "track_changed",
+        media_type: mediaType,
+        ...(typeof value["id"] === "string" ? { id: value["id"] } : {}),
+        uri: value["uri"],
+        title: value["title"],
+        duration_ms: value["duration_ms"],
+        artists: value["artists"],
+        covers: value["covers"],
+        ...(typeof value["album"] === "string" ? { album: value["album"] } : {}),
+        ...(typeof value["show"] === "string" ? { show: value["show"] } : {}),
+      };
+    }
+    case "playing":
+    case "paused":
+    case "seeked":
+    case "position_changed":
+      return typeof value["uri"] === "string" && isUnsignedInteger(value["position_ms"])
+        ? { name: value["name"], uri: value["uri"], position_ms: value["position_ms"] }
+        : null;
+    case "stopped":
+    case "end_of_track":
+      return typeof value["uri"] === "string"
+        ? { name: value["name"], uri: value["uri"] }
+        : null;
+    case "volume_changed":
+      return isUnsignedInteger(value["percent"]) && value["percent"] <= 100
+        ? { name: "volume_changed", percent: value["percent"] }
+        : null;
+    case "session_connected":
+    case "session_disconnected":
+      return { name: value["name"] };
+    case "shuffle_changed":
+      return typeof value["enabled"] === "boolean"
+        ? { name: "shuffle_changed", enabled: value["enabled"] }
+        : null;
+    case "repeat_changed":
+      return typeof value["context"] === "boolean" && typeof value["track"] === "boolean"
+        ? {
+            name: "repeat_changed",
+            context: value["context"],
+            track: value["track"],
+          }
+        : null;
+    default:
+      return null;
+  }
+}
+
+function parseEngineResponseData(value: unknown): EngineResponseData | null {
+  if (!isRecord(value)) return null;
+  if (value["kind"] === "play_unavailable") {
+    return typeof value["reason"] === "string"
+      ? { kind: "play_unavailable", reason: value["reason"] }
+      : null;
+  }
+  if (value["kind"] !== "track_metadata") return null;
+  const album = value["album"];
+  if (
+    !isRecord(album) ||
+    typeof album["id"] !== "string" ||
+    typeof album["name"] !== "string" ||
+    typeof album["uri"] !== "string"
+  ) {
+    return null;
+  }
+  return {
+    kind: "track_metadata",
+    album: {
+      id: album["id"],
+      name: album["name"],
+      uri: album["uri"],
+    },
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUnsignedInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function isNativeArtistArray(value: unknown): value is NativeArtist[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        isRecord(entry) &&
+        typeof entry["id"] === "string" &&
+        typeof entry["name"] === "string" &&
+        typeof entry["uri"] === "string",
+    )
+  );
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+async function consumeLines(
+  stream: ReadableStream<Uint8Array>,
+  receive: (line: string) => void,
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+    let newline = buffered.indexOf("\n");
+    while (newline >= 0) {
+      const line = buffered.slice(0, newline).trim();
+      buffered = buffered.slice(newline + 1);
+      if (line.length > 0) receive(line);
+      newline = buffered.indexOf("\n");
+    }
+  }
+  buffered += decoder.decode();
+  const tail = buffered.trim();
+  if (tail.length > 0) receive(tail);
 }
