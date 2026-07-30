@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://bun.sh"><img alt="Bun 1.3" src="https://img.shields.io/badge/Bun%201.3-000000?logo=bun&logoColor=white"></a>
+  <a href="https://www.rust-lang.org"><img alt="Rust" src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white"></a>
   <a href="https://react.dev"><img alt="React 19" src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black"></a>
   <a href="https://opentui.com"><img alt="OpenTUI 0.4" src="https://img.shields.io/badge/OpenTUI%200.4-6E56CF"></a>
   <a href="https://github.com/librespot-org/librespot"><img alt="librespot 0.8" src="https://img.shields.io/badge/librespot%200.8-000000?logo=rust&logoColor=white"></a>
@@ -18,15 +19,16 @@
 Running from source requires [Bun](https://bun.sh) and the stable
 [Rust toolchain](https://rustup.rs/).
 
-On Linux, the Rust build also needs `pkg-config` and the ALSA development
-package (`libasound2-dev` on Debian/Ubuntu or `alsa-lib-devel` on Fedora).
+On Linux, install the native build dependencies:
+
+- Debian/Ubuntu: `sudo apt install build-essential pkg-config libasound2-dev`
+- Arch: `sudo pacman -S --needed base-devel alsa-lib`
 
 Playback requires Spotify Premium.
 
 ### 1. Register a Spotify app
 
-Create one at <https://developer.spotify.com/dashboard> and add exactly this
-redirect URI — it must match byte-for-byte, including the trailing path:
+Create one at <https://developer.spotify.com/dashboard> and add this redirect URI:
 
 ```
 http://127.0.0.1:8989/callback
@@ -45,8 +47,6 @@ echo '{"clientId":"<your client id>"}' > ~/.config/spotuify/config.json
 ```
 
 ### 3. Authorize
-
-Opens a browser, so run it outside the TUI:
 
 ```bash
 bun run auth
