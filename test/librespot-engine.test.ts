@@ -394,6 +394,56 @@ setInterval(() => {}, 1000);
     }
   });
 
+  test("retries a reported startup failure before first readiness", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "spotuify-engine-test-"));
+    const sidecar = join(directory, "fake-sidecar");
+    const attempts = join(directory, "attempts");
+    let engine: LibrespotEngine | null = null;
+    const source = `#!/usr/bin/env bun
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+const attemptsPath = ${JSON.stringify(attempts)};
+const attempt = existsSync(attemptsPath) ? Number(readFileSync(attemptsPath, "utf8")) + 1 : 1;
+writeFileSync(attemptsPath, String(attempt));
+if (attempt === 1) {
+  console.log(JSON.stringify({ type: "status", state: "failed", reason: "temporary connection failure" }));
+  process.exit(1);
+}
+console.log(JSON.stringify({ type: "status", state: "ready", device_id: "receiver", account_id: "account" }));
+let buffered = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffered += chunk;
+  for (;;) {
+    const newline = buffered.indexOf("\\n");
+    if (newline < 0) break;
+    const line = buffered.slice(0, newline);
+    buffered = buffered.slice(newline + 1);
+    const message = JSON.parse(line);
+    if (message.command === "shutdown") process.exit(0);
+  }
+});
+`;
+
+    try {
+      await Bun.write(sidecar, source);
+      await chmod(sidecar, 0o700);
+      engine = new LibrespotEngine("spotuify-test", {
+        sidecarPath: sidecar,
+        restartDelaysMs: [10],
+      });
+
+      await engine.start();
+      await eventually(() => engine?.getStatus().state === "ready");
+
+      expect(await Bun.file(attempts).text()).toBe("2");
+      expect(engine.getStatus().state).toBe("ready");
+    } finally {
+      engine?.stop();
+      await Bun.sleep(20);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("turns a typed no-op play response into a caller-visible rejection", async () => {
     const directory = await mkdtemp(join(tmpdir(), "spotuify-engine-test-"));
     const sidecar = join(directory, "fake-sidecar");

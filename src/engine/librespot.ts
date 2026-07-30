@@ -210,6 +210,8 @@ export class LibrespotEngine {
   private reachedReady = false;
   private active = false;
   private restartAttempt = 0;
+  /** The current child reported a structured startup failure that may recover on a fresh session. */
+  private coldRestartEligible = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private readinessTimer: ReturnType<typeof setTimeout> | null = null;
   private stableTimer: ReturnType<typeof setTimeout> | null = null;
@@ -276,6 +278,7 @@ export class LibrespotEngine {
     this.reachedReady = false;
     this.active = false;
     this.restartAttempt = 0;
+    this.coldRestartEligible = false;
     this.clearLifecycleTimers();
 
     try {
@@ -386,6 +389,7 @@ export class LibrespotEngine {
     if (!this.isCurrent(lifecycle)) return;
     this.setStatus({ state: "starting" });
     this.active = false;
+    this.coldRestartEligible = false;
     this.eventBacklog.length = 0;
 
     let proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null;
@@ -452,7 +456,12 @@ export class LibrespotEngine {
           : lastError.length > 0
             ? lastError
             : `playback engine exited with code ${code}`;
-      this.scheduleRestart(binary, lifecycle, reason, readinessTimedOut);
+      this.scheduleRestart(
+        binary,
+        lifecycle,
+        reason,
+        readinessTimedOut || this.coldRestartEligible,
+      );
     })();
   }
 
@@ -507,6 +516,12 @@ export class LibrespotEngine {
         } else {
           if (this.readinessTimer !== null) clearTimeout(this.readinessTimer);
           this.readinessTimer = null;
+          // A well-formed failure from a launched sidecar can be a transient Spotify/network
+          // connection failure. Give it the same bounded cold-start budget as a readiness timeout.
+          // Launch failures and invalid protocol data remain terminal before first readiness.
+          if (!this.reachedReady && message.state === "failed") {
+            this.coldRestartEligible = true;
+          }
           this.setStatus({
             state: "failed",
             reason:
