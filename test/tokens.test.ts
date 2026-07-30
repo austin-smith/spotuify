@@ -28,6 +28,8 @@ const token = (over: Partial<StoredToken> = {}): StoredToken => ({
   refreshToken: "refresh-1",
   expiresAt: Date.now() + 3_600_000,
   scopes: ["user-library-read"],
+  authorizationId: "authorization-1",
+  clientId: "client-id",
   ...over,
 });
 
@@ -90,6 +92,8 @@ describe("TokenStore", () => {
     const s = store();
     await s.accessToken();
     expect((await s.load())?.refreshToken).toBe("refresh-1");
+    expect((await s.load())?.authorizationId).toBe("authorization-1");
+    expect((await s.load())?.clientId).toBe("client-id");
   });
 
   test("adopts a rotated refresh token", async () => {
@@ -140,5 +144,52 @@ describe("TokenStore", () => {
 
   test("requires re-auth when nothing is cached", async () => {
     expect(store().accessToken()).rejects.toThrow(ReauthRequiredError);
+  });
+
+  test("does not reuse a credential set issued to another Spotify application", async () => {
+    await store().save(token());
+    expect(await new TokenStore("different-client", tokenPath).load()).toBeNull();
+  });
+
+  test("migrates a legacy token without binding the legacy profile to it", async () => {
+    await Bun.write(
+      tokenPath,
+      JSON.stringify({
+        accessToken: "legacy-access",
+        refreshToken: "legacy-refresh",
+        expiresAt: Date.now() + 3_600_000,
+        scopes: [],
+      }),
+    );
+
+    const migrated = await store().load();
+    expect(migrated?.authorizationId).toBeString();
+    expect(migrated?.authorizationId.length).toBeGreaterThan(0);
+    expect(migrated?.clientId).toBe("client-id");
+    expect((await Bun.file(tokenPath).json()).authorizationId).toBe(migrated?.authorizationId);
+  });
+
+  test("keeps a valid legacy token when best-effort migration cannot be written", async () => {
+    await Bun.write(
+      tokenPath,
+      JSON.stringify({
+        accessToken: "legacy-access",
+        refreshToken: "legacy-refresh",
+        expiresAt: Date.now() + 3_600_000,
+        scopes: [],
+      }),
+    );
+    let writeAttempts = 0;
+    const failedMigrationStore = new TokenStore("client-id", tokenPath, async () => {
+      writeAttempts++;
+      throw new Error("simulated migration write failure");
+    });
+
+    const migrated = await failedMigrationStore.load();
+    expect(writeAttempts).toBe(1);
+    expect(migrated?.accessToken).toBe("legacy-access");
+    expect(migrated?.refreshToken).toBe("legacy-refresh");
+    expect(migrated?.authorizationId).toBeString();
+    expect((await Bun.file(tokenPath).json()).authorizationId).toBeUndefined();
   });
 });

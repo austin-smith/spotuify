@@ -1,4 +1,4 @@
-import type { SpotifyClient } from "./client.ts";
+import { SpotifyLimitError, type SpotifyClient } from "./client.ts";
 import { myPlaylists, type Playlist } from "./playlists.ts";
 import type { Page, Track } from "./types.ts";
 
@@ -41,7 +41,10 @@ export async function fetchHome(
   options: { market?: string; meId?: string; signal?: AbortSignal } = {},
 ): Promise<HomeData> {
   const query = { limit: PER_GROUP, market: options.market };
-  const opts = options.signal ? { signal: options.signal } : {};
+  const opts = {
+    priority: "background" as const,
+    ...(options.signal ? { signal: options.signal } : {}),
+  };
 
   const [recent, top, playlists] = await Promise.allSettled([
     client.request<Page<{ track: Track | null }>>("/me/player/recently-played", {
@@ -55,6 +58,15 @@ export async function fetchHome(
       ? Promise.resolve([])
       : myPlaylists(client, options.meId, opts),
   ]);
+
+  // Endpoint-specific restrictions only cost their own section, but a 429 opens the client's
+  // shared circuit and makes the whole batch incomplete. Preserve that typed failure so callers
+  // do not cache an empty/partial home as if it were a successful library snapshot.
+  for (const result of [recent, top, playlists]) {
+    if (result.status === "rejected" && result.reason instanceof SpotifyLimitError) {
+      throw result.reason;
+    }
+  }
 
   return {
     recent:

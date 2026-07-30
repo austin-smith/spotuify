@@ -44,5 +44,5 @@ There are two independent logins. Do not attempt to unify them.
 bun run dev              # run the TUI
 bun test
 bun run typecheck
-bun run src/cli.ts auth  # sign in; needs a TTY and a browser
+bun run auth             # build the native engine and sign in; needs a TTY and a browser
 ```

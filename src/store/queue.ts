@@ -55,7 +55,7 @@ export const useQueue = create<QueueSlice>((set, get) => ({
 
     set({ loading: true, error: null });
     try {
-      const { currently_playing, queue } = await player.queue();
+      const { currently_playing, queue } = await player.queue(controller.signal);
       if (controller.signal.aborted) return;
       set({ nowPlaying: currently_playing, upNext: queue, loading: false });
     } catch (err) {

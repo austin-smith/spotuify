@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://bun.sh"><img alt="Bun 1.3" src="https://img.shields.io/badge/Bun%201.3-000000?logo=bun&logoColor=white"></a>
+  <a href="https://www.rust-lang.org"><img alt="Rust" src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white"></a>
   <a href="https://react.dev"><img alt="React 19" src="https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black"></a>
   <a href="https://opentui.com"><img alt="OpenTUI 0.4" src="https://img.shields.io/badge/OpenTUI%200.4-6E56CF"></a>
   <a href="https://github.com/librespot-org/librespot"><img alt="librespot 0.8" src="https://img.shields.io/badge/librespot%200.8-000000?logo=rust&logoColor=white"></a>
@@ -15,18 +16,19 @@
 
 ## Setup
 
-> **Warning**
->
-> spotuify streams audio through [librespot](https://github.com/librespot-org/librespot) and
-> requires Spotify Premium. Install librespot before use:
->
-> - macOS: `brew install librespot`
-> - Most everything else: `cargo install librespot`
+Running from source requires [Bun](https://bun.sh) and the stable
+[Rust toolchain](https://rustup.rs/).
+
+On Linux, install the native build dependencies:
+
+- Debian/Ubuntu: `sudo apt install build-essential pkg-config libasound2-dev`
+- Arch: `sudo pacman -S --needed base-devel alsa-lib`
+
+Playback requires Spotify Premium.
 
 ### 1. Register a Spotify app
 
-Create one at <https://developer.spotify.com/dashboard> and add exactly this redirect URI — it must
-match byte-for-byte, including the trailing path:
+Create one at <https://developer.spotify.com/dashboard> and add this redirect URI:
 
 ```
 http://127.0.0.1:8989/callback
@@ -46,34 +48,33 @@ echo '{"clientId":"<your client id>"}' > ~/.config/spotuify/config.json
 
 ### 3. Authorize
 
-Opens a browser, so run it outside the TUI:
-
 ```bash
-bun run src/cli.ts auth
+bun run auth
 ```
 
-The token pair is cached at `~/.config/spotuify/token.json` with mode `0600` and refreshed
-automatically. Spotify expires refresh tokens roughly six months after authorization; when that
-happens, `spotuify auth` re-runs the interactive flow.
+The Web API token pair is cached at `~/.config/spotuify/token.json` with mode `0600` and refreshed
+automatically. Spotify refresh tokens expire six months after authorization; when that happens,
+re-run `bun run auth` to complete the interactive flow again.
+
+This authorizes both the Spotify Web API and terminal playback. Re-run it with `--force` to replace
+the Web API login or `--force-engine` to replace only the playback login.
 
 ## Development
 
 ```sh
-bun test           # unit tests
-bun run typecheck  # tsc --noEmit
-bun run dev        # TUI with hot reload
+bun run dev           # run the TUI
+bun test              # unit tests
+bun run typecheck     # TypeScript
+bun run engine:test   # native engine tests
 ```
 
 ## Architecture
 
-Auth is deliberately split in two:
+Spotuify uses two independent Spotify sessions:
 
-- **librespot** runs its own OAuth flow (`--enable-oauth`) for the audio session and caches
-  credentials under `~/.cache/spotuify/librespot`.
-- **spotuify** uses Authorization Code + PKCE against *your* registered app for every Web API call.
+- The Web API uses Authorization Code + PKCE with your registered Spotify app.
+- Terminal playback uses librespot's own login and a native Rust sidecar.
 
-The Web API access token is never passed to librespot — Spotify's login5 does not reliably accept a
-third-party app's token.
-
-Playback state is polled every 5 s and `progress_ms` is extrapolated locally between polls, which
-keeps a smooth progress bar at ~12 requests/minute.
+The Web API token is never passed to librespot. For terminal playback, the TUI sends commands to
+the sidecar and treats its local player events as authoritative. It uses the Web API for browsing,
+remote-device control, and periodic playback-state reconciliation.

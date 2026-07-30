@@ -97,9 +97,12 @@ function toPlaylist(raw: RawPlaylist, meId: string): Playlist {
 export async function myPlaylists(
   client: SpotifyClient,
   meId: string,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; priority?: "foreground" | "background" } = {},
 ): Promise<Playlist[]> {
-  const opts = options.signal ? { signal: options.signal } : {};
+  const opts = {
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.priority ? { priority: options.priority } : {}),
+  };
   const playlists: Playlist[] = [];
 
   for (let offset = 0; ; offset += PLAYLIST_PAGE) {

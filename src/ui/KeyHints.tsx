@@ -29,14 +29,16 @@ export function KeyHints({
   width,
   playing,
   hasTrack,
+  canBrowse = true,
 }: {
   width: number;
   playing: boolean;
   hasTrack: boolean;
+  canBrowse?: boolean;
 }) {
   return (
     <box flexDirection="row" paddingX={1} gap={GAP} flexShrink={0}>
-      {fitHints(barFor({ playing, hasTrack }), width).map(({ key, action }) => (
+      {fitHints(barFor({ playing, hasTrack, canBrowse }), width).map(({ key, action }) => (
         <text key={key}>
           <span fg={theme.text}>{key}</span>
           <span fg={theme.label}> {action}</span>
