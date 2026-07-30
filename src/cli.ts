@@ -14,7 +14,7 @@ function describeAccount(me: Me): string {
   return details.length > 0 ? `${name} (${details.join(", ")})` : name;
 }
 
-const USAGE = `spotuify — Spotify in the terminal
+const USAGE = `spotuify — spotify in ur terminal
 
 Usage:
   spotuify auth [--force] [--force-engine]
