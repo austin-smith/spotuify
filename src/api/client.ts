@@ -132,8 +132,8 @@ interface ScheduledRequest {
   priority: "foreground" | "background";
   path: string;
   signal: AbortSignal | undefined;
-  /** This one user-initiated request may probe an otherwise indefinite cooldown. */
-  probeIndefiniteCooldown: boolean;
+  /** Exact indefinite cooldown revision this user-initiated request may probe. */
+  allowedIndefiniteCooldownRevision: number | null;
   operation: () => Promise<unknown>;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
@@ -197,6 +197,9 @@ export class SpotifyClient {
     }
 
     const method = (options.method ?? "GET").toUpperCase();
+    const cooldown = probeIndefiniteCooldown ? this.getCooldown() : null;
+    const allowedIndefiniteCooldownRevision =
+      cooldown?.retryAt === null ? this.cooldownRevision : null;
     // A caller-owned AbortSignal cannot safely be shared: aborting one consumer would cancel every
     // consumer. The state and device reads that matter for coalescing do not carry signals.
     const dedupeKey =
@@ -215,8 +218,15 @@ export class SpotifyClient {
       path,
       options.signal,
       options.priority ?? "foreground",
-      probeIndefiniteCooldown,
-      () => this.execute<T>(path, url, method, options, probeIndefiniteCooldown),
+      allowedIndefiniteCooldownRevision,
+      () =>
+        this.execute<T>(
+          path,
+          url,
+          method,
+          options,
+          allowedIndefiniteCooldownRevision,
+        ),
     );
     if (dedupeKey !== null) {
       this.inFlightGets.set(dedupeKey, pending);
@@ -262,7 +272,7 @@ export class SpotifyClient {
     path: string,
     signal: AbortSignal | undefined,
     priority: "foreground" | "background",
-    probeIndefiniteCooldown: boolean,
+    allowedIndefiniteCooldownRevision: number | null,
     operation: () => Promise<T>,
   ): Promise<T> {
     const scheduled = new Promise<T>((resolve, reject) => {
@@ -270,7 +280,7 @@ export class SpotifyClient {
         priority,
         path,
         signal,
-        probeIndefiniteCooldown,
+        allowedIndefiniteCooldownRevision,
         operation,
         resolve: resolve as (value: unknown) => void,
         reject,
@@ -304,7 +314,7 @@ export class SpotifyClient {
 
   private async run(request: ScheduledRequest): Promise<void> {
     try {
-      this.throwIfBlocked(request.path, request.probeIndefiniteCooldown);
+      this.throwIfBlocked(request.path, request.allowedIndefiniteCooldownRevision);
       throwIfAborted(request.signal);
       request.resolve(await request.operation());
     } catch (error) {
@@ -312,10 +322,19 @@ export class SpotifyClient {
     }
   }
 
-  private throwIfBlocked(path: string, probeIndefiniteCooldown = false): void {
+  private throwIfBlocked(
+    path: string,
+    allowedIndefiniteCooldownRevision: number | null = null,
+  ): void {
     const cooldown = this.getCooldown();
     if (cooldown === null) return;
-    if (probeIndefiniteCooldown && cooldown.retryAt === null) return;
+    if (
+      allowedIndefiniteCooldownRevision !== null &&
+      this.cooldownRevision === allowedIndefiniteCooldownRevision &&
+      cooldown.retryAt === null
+    ) {
+      return;
+    }
     this.blockedRequests++;
     throw new SpotifyLimitError(
       path,
@@ -330,21 +349,17 @@ export class SpotifyClient {
     url: URL,
     method: string,
     options: RequestOptions,
-    probeIndefiniteCooldown: boolean,
+    allowedIndefiniteCooldownRevision: number | null,
   ): Promise<T | null> {
     let refreshed = false;
 
     while (true) {
       // The other lane may have established a cooldown after this operation was admitted.
-      this.throwIfBlocked(path, probeIndefiniteCooldown);
+      this.throwIfBlocked(path, allowedIndefiniteCooldownRevision);
       const accessToken = await this.tokens.accessToken();
       // Token retrieval can itself wait on a refresh, so check again at the last safe point before
       // reaching Spotify.
-      this.throwIfBlocked(path, probeIndefiniteCooldown);
-      const probedCooldownRevision =
-        probeIndefiniteCooldown && this.cooldown?.retryAt === null
-          ? this.cooldownRevision
-          : null;
+      this.throwIfBlocked(path, allowedIndefiniteCooldownRevision);
       const headers: Record<string, string> = { authorization: `Bearer ${accessToken}` };
       if (options.body !== undefined) headers["content-type"] = "application/json";
 
@@ -362,8 +377,8 @@ export class SpotifyClient {
       // other request lane while the probe was in flight.
       if (
         res.status !== 429 &&
-        probedCooldownRevision !== null &&
-        this.cooldownRevision === probedCooldownRevision &&
+        allowedIndefiniteCooldownRevision !== null &&
+        this.cooldownRevision === allowedIndefiniteCooldownRevision &&
         this.cooldown?.retryAt === null
       ) {
         this.cooldown = null;
@@ -402,8 +417,8 @@ export class SpotifyClient {
         // The response to an explicit probe supersedes the exact indefinite cooldown that allowed
         // it through. A concurrently established cooldown still merges conservatively.
         const previous =
-          probedCooldownRevision !== null &&
-          this.cooldownRevision === probedCooldownRevision
+          allowedIndefiniteCooldownRevision !== null &&
+          this.cooldownRevision === allowedIndefiniteCooldownRevision
             ? null
             : this.getCooldown();
         const cooldown = mergeCooldown(previous, {

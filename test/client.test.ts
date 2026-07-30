@@ -463,6 +463,73 @@ describe("429 handling", () => {
     expect(requests).toBe(2);
   });
 
+  test("a queued probe cannot bypass a newer indefinite cooldown", async () => {
+    let releaseRenewedCooldown: ((response: Response) => void) | undefined;
+    const renewedCooldownResponse = new Promise<Response>((resolve) => {
+      releaseRenewedCooldown = resolve;
+    });
+    let announceProbeToken: (() => void) | undefined;
+    const probeTokenRequested = new Promise<void>((resolve) => {
+      announceProbeToken = resolve;
+    });
+    let releaseProbeToken: ((token: string) => void) | undefined;
+    const probeToken = new Promise<string>((resolve) => {
+      releaseProbeToken = resolve;
+    });
+    let tokenRequests = 0;
+    const gatedTokens = {
+      accessToken: () => {
+        tokenRequests++;
+        if (tokenRequests !== 3) return Promise.resolve("test-token");
+        announceProbeToken?.();
+        return probeToken;
+      },
+      refresh: async () => {
+        throw new Error("unexpected refresh");
+      },
+    } as unknown as TokenStore;
+    let announceBackgroundRequest: (() => void) | undefined;
+    const backgroundRequestStarted = new Promise<void>((resolve) => {
+      announceBackgroundRequest = resolve;
+    });
+    let requests = 0;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      requests++;
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/poll")) {
+        announceBackgroundRequest?.();
+        return await renewedCooldownResponse;
+      }
+      if (path.endsWith("/seed")) {
+        return new Response(quotaBody, {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return Response.json({ id: "unexpected-probe" });
+    }) as unknown as typeof fetch;
+
+    const spotify = new SpotifyClient(gatedTokens);
+    const background = spotify.request("/poll", { priority: "background" });
+    await backgroundRequestStarted;
+    await expect(spotify.request("/seed")).rejects.toBeInstanceOf(SpotifyLimitError);
+
+    const probe = spotify.retryAfterIndefiniteCooldown("/me");
+    await probeTokenRequested;
+    releaseRenewedCooldown?.(
+      new Response(JSON.stringify({ error: { status: 429, message: "Still limited" } }), {
+        status: 429,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await expect(background).rejects.toBeInstanceOf(SpotifyLimitError);
+    releaseProbeToken?.("test-token");
+
+    await expect(probe).rejects.toBeInstanceOf(SpotifyLimitError);
+    expect(requests).toBe(2);
+    expect(spotify.getMetrics().blockedRequests).toBe(1);
+  });
+
   test("a shorter concurrent 429 cannot weaken an existing quota cooldown", async () => {
     let releaseQuota: ((response: Response) => void) | undefined;
     let releaseRateLimit: ((response: Response) => void) | undefined;
