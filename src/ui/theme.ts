@@ -25,6 +25,8 @@ export const theme = {
   faint: "#3a3a42",
   /** Opaque field background, so the caret occupies a whole cell instead of half of one. */
   inputBackground: "#15151a",
+  /** Opaque backing for transient feedback, preventing lower-layer glyphs showing through spaces. */
+  feedbackBackground: "#15151a",
   error: "#ff5c4d",
   ok: ACCENT,
   /** Text sitting on the darkened band of the cover — lifted so it survives a busy image. */

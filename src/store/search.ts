@@ -17,6 +17,7 @@ import {
   type Drill,
   type Row,
 } from "./rows.ts";
+import { usePlaylistCatalog } from "./playlists.ts";
 
 /** Wait this long after the last keystroke before querying. */
 const DEBOUNCE_MS = 180;
@@ -170,7 +171,7 @@ async function rowsFor(
       return toArtistRows(await artistAlbums(client, target.id, options));
     case "album":
       return toAlbumRows(
-        { name: target.name, uri: target.uri },
+        { id: target.id, name: target.name, uri: target.uri },
         await albumTracks(client, target.id, options),
       );
     case "playlist":
@@ -196,6 +197,7 @@ export const useSearch = create<SearchSlice>((set, get) => ({
   showingHome: true,
 
   configure(nextClient, nextMarket, nextMeId) {
+    usePlaylistCatalog.getState().configure(nextClient, nextMeId);
     if (client !== nextClient || market !== nextMarket || meId !== nextMeId) {
       // The cache belongs to one authenticated client and market. Reconfiguration is rare, but
       // retaining another account's library would be both stale and a privacy bug.
@@ -235,7 +237,12 @@ export const useSearch = create<SearchSlice>((set, get) => ({
 
     void (async () => {
       try {
-        const data = await fetchHome(client, { market, meId, signal: controller.signal });
+        const data = await fetchHome(client, {
+          market,
+          meId,
+          signal: controller.signal,
+          loadPlaylists: () => usePlaylistCatalog.getState().load("background"),
+        });
         if (controller.signal.aborted) return;
         home = data;
         const { frames, query } = get();

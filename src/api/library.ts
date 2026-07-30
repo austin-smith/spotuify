@@ -2,6 +2,9 @@ import { SpotifyLimitError, type SpotifyClient } from "./client.ts";
 import { myPlaylists, type Playlist } from "./playlists.ts";
 import type { Page, Track } from "./types.ts";
 
+/** Spotify accepts at most 40 URIs on each current library endpoint. */
+const LIBRARY_BATCH_SIZE = 40;
+
 export interface HomeData {
   recent: Track[];
   top: Track[];
@@ -29,6 +32,73 @@ function dedupe(tracks: Track[]): Track[] {
   });
 }
 
+function batches<T>(items: readonly T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let start = 0; start < items.length; start += size) {
+    result.push(items.slice(start, start + size));
+  }
+  return result;
+}
+
+/**
+ * Check whether Spotify URIs are in the signed-in user's library.
+ *
+ * Uses the current URI-based endpoint rather than the deprecated, type-specific `/me/tracks`
+ * family. The response is validated at the API boundary so a malformed or partial boolean array
+ * can never be mistaken for "not saved".
+ */
+export async function libraryContains(
+  client: SpotifyClient,
+  uris: readonly string[],
+): Promise<boolean[]> {
+  const result: boolean[] = [];
+
+  for (const batch of batches(uris, LIBRARY_BATCH_SIZE)) {
+    const response = await client.get<unknown>("/me/library/contains", {
+      uris: batch.join(","),
+    });
+    if (
+      !Array.isArray(response) ||
+      response.length !== batch.length ||
+      response.some((value) => typeof value !== "boolean")
+    ) {
+      throw new Error("spotify returned an invalid library membership response");
+    }
+    result.push(...response);
+  }
+
+  return result;
+}
+
+async function mutateLibrary(
+  client: SpotifyClient,
+  method: "PUT" | "DELETE",
+  uris: readonly string[],
+): Promise<void> {
+  for (const batch of batches(uris, LIBRARY_BATCH_SIZE)) {
+    await client.request("/me/library", {
+      method,
+      query: { uris: batch.join(",") },
+    });
+  }
+}
+
+/** Save one or more Spotify URIs to the signed-in user's library. */
+export async function saveLibraryItems(
+  client: SpotifyClient,
+  uris: readonly string[],
+): Promise<void> {
+  await mutateLibrary(client, "PUT", uris);
+}
+
+/** Remove one or more Spotify URIs from the signed-in user's library. */
+export async function removeLibraryItems(
+  client: SpotifyClient,
+  uris: readonly string[],
+): Promise<void> {
+  await mutateLibrary(client, "DELETE", uris);
+}
+
 /**
  * What the palette shows before anything is typed.
  *
@@ -38,7 +108,18 @@ function dedupe(tracks: Track[]): Track[] {
  */
 export async function fetchHome(
   client: SpotifyClient,
-  options: { market?: string; meId?: string; signal?: AbortSignal } = {},
+  options: {
+    market?: string;
+    meId?: string;
+    signal?: AbortSignal;
+    /**
+     * Optional shared playlist catalog.
+     *
+     * Search and the add-to-playlist picker both need `/me/playlists`. Supplying the session
+     * catalog here prevents those features from independently paging through the same collection.
+     */
+    loadPlaylists?: () => Promise<Playlist[]>;
+  } = {},
 ): Promise<HomeData> {
   const query = { limit: PER_GROUP, market: options.market };
   const opts = {
@@ -56,7 +137,7 @@ export async function fetchHome(
     // worse than none — so skip the request entirely rather than show rows that all refuse to open.
     options.meId === undefined
       ? Promise.resolve([])
-      : myPlaylists(client, options.meId, opts),
+      : options.loadPlaylists?.() ?? myPlaylists(client, options.meId, opts),
   ]);
 
   // Endpoint-specific restrictions only cost their own section, but a 429 opens the client's

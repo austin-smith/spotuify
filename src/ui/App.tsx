@@ -23,15 +23,16 @@ import { useSearch } from "../store/search.ts";
 import { ActionsMenu } from "./ActionsMenu.tsx";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { DevicePicker } from "./DevicePicker.tsx";
+import { FeedbackBanner, feedbackTopAboveHud } from "./FeedbackBanner.tsx";
 import { LyricsView } from "./LyricsView.tsx";
 import { QueueView } from "./QueueView.tsx";
-import { Hud, HUD_ROWS } from "./Hud.tsx";
-import { KeyHints } from "./KeyHints.tsx";
+import { Hud, HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
+import { KeyHints, KEY_HINT_ROWS } from "./KeyHints.tsx";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
-import { overlayListHeight } from "./Overlay.tsx";
+import { OVERLAY_PADDING_X, overlayListHeight } from "./Overlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
+import { PlaylistPicker, PLAYLIST_PROMPT_ROW } from "./PlaylistPicker.tsx";
 import { PlaybackEmptyState } from "./PlaybackEmptyState.tsx";
-import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
 type Boot =
@@ -89,6 +90,8 @@ export function App({ version }: { version: string }) {
   const devicesOpen = useDevices((s) => s.open);
   const queueOpen = useQueue((s) => s.open);
   const actionsOpen = useActions((s) => s.open);
+  const actionMode = useActions((s) => s.mode);
+  const actionNotice = useActions((s) => s.notice);
   const lyricsOpen = useLyrics((s) => s.open);
   const [keysOpen, setKeysOpen] = useState(false);
   const overlayOpen =
@@ -114,7 +117,10 @@ export function App({ version }: { version: string }) {
         const me = profileResolution.profile;
         if (canceled) return;
         const player = new PlayerApi(client);
-        if (me !== null) useSearch.getState().configure(client, me.country, me.id);
+        if (me !== null) {
+          useSearch.getState().configure(client, me.country, me.id);
+          useActions.getState().configure(client, me.id);
+        }
         useDevices.getState().configure(player, undefined, me?.id ?? null);
         useQueue.getState().configure(player);
         setBoot({
@@ -237,6 +243,7 @@ export function App({ version }: { version: string }) {
         setProfileRecoveryFailed(false);
         setProfileRecoveryRequest(0);
         useSearch.getState().configure(bootClient, profile.country, profile.id);
+        useActions.getState().configure(bootClient, profile.id);
         usePlayback.setState({ error: null });
         setBoot((current) =>
           current.phase === "ready" &&
@@ -364,15 +371,31 @@ export function App({ version }: { version: string }) {
     }
 
     if (actions.open) {
-      if (key.name === "escape" || key.name === "a") actions.closeActions();
-      else if (key.name === "up" || (key.ctrl && key.name === "p")) actions.move(-1);
-      else if (key.name === "down" || (key.ctrl && key.name === "n")) actions.move(1);
-      else if (key.name === "return") {
-        const entry = actions.current();
+      if (key.name === "a" && key.repeated) return;
+      // Spotify playlist and library writes are not safely cancelable. Keep the exact workflow
+      // that initiated the mutation on screen until its result is bound back to that workflow.
+      if (actions.busy) return;
+      if (actions.mode === "playlists") {
+        // The focused input owns printable characters; global handling is limited to list
+        // navigation, confirmation and returning to the action list.
+        if (key.name === "escape") actions.back();
+        else if (key.name === "up" || (key.ctrl && key.name === "p")) actions.move(-1);
+        else if (key.name === "down" || (key.ctrl && key.name === "n")) actions.move(1);
+        else if (key.name === "return" || key.name === "enter") void actions.activate();
+      } else if (key.name === "escape" || key.name === "a") {
         actions.closeActions();
-        // Hands off to the palette, so the album or artist lands in the same list you would have
-        // reached by searching for it — and escape walks back out the same way.
-        if (entry !== null) palette.openAt(entry.drill);
+      } else if (key.name === "up" || (key.ctrl && key.name === "p")) {
+        actions.move(-1);
+      } else if (key.name === "down" || (key.ctrl && key.name === "n")) {
+        actions.move(1);
+      } else if (key.name === "return" || key.name === "enter") {
+        void actions.activate().then((result) => {
+          if (result?.kind !== "drill") return;
+          // Selected-item actions return to the existing palette stack; playing-item actions open
+          // a fresh stack. Both routes then inherit the palette's normal Back behavior.
+          if (result.origin === "palette") palette.drillInto(result.drill);
+          else palette.openAt(result.drill);
+        });
       }
       return;
     }
@@ -392,7 +415,10 @@ export function App({ version }: { version: string }) {
     if (palette.open) {
       // Standard combobox keys: the field always holds the caret, arrows move the list highlight,
       // Enter accepts the highlighted row, escape closes. Left/Right stay text editing.
-      if (key.name === "escape") {
+      if (key.ctrl && key.name === "space") {
+        const row = palette.current();
+        if (row?.actionItem !== undefined) actions.openActions(row.actionItem, "palette");
+      } else if (key.name === "escape") {
         if (!palette.back()) palette.closePalette();
       } else if (key.name === "up" || (key.ctrl && key.name === "p")) {
         palette.move(-1);
@@ -455,6 +481,7 @@ export function App({ version }: { version: string }) {
     }
 
     if (key.name === "a") {
+      if (key.repeated) return;
       // Album and artist actions drill through the Web API-backed palette, which is deliberately
       // unconfigured during profile-less quota mode.
       if (boot.me === null) return;
@@ -472,7 +499,7 @@ export function App({ version }: { version: string }) {
         nativeStatus.accountId === bootAccountId &&
         playback.deviceId === nativeStatus.deviceId;
       if (!needsAlbum || engineClient === null || !isTrack(playing)) {
-        actions.openActions(playing);
+        actions.openActions(playing, "playback");
         return;
       }
 
@@ -493,9 +520,17 @@ export function App({ version }: { version: string }) {
           // Artist actions remain useful when optional album enrichment is unavailable.
         }
         if (usePlayback.getState().item?.uri === playing.uri) {
-          actions.openActions(resolved);
+          actions.openActions(resolved, "playback");
         }
       })();
+      return;
+    }
+
+    if (key.name === "f") {
+      if (key.repeated) return;
+      if (boot.me === null) return;
+      const playing = usePlayback.getState().item;
+      if (playing !== null) void actions.toggleSaved(playing);
       return;
     }
 
@@ -568,7 +603,12 @@ export function App({ version }: { version: string }) {
 
   // Row the HUD's darkened band starts at. The keybind strip draws over the cover on the final row,
   // so the scrim has to reach the very bottom.
-  const hudTop = height - HUD_ROWS;
+  const contentHeight = Math.max(0, height - KEY_HINT_ROWS);
+  const hudTop = hudTopForHeight(contentHeight);
+  const feedbackTop = feedbackTopAboveHud(hudTop);
+  const feedback =
+    actionNotice ??
+    (error !== null ? { kind: "error" as const, message: error } : null);
 
   return (
     <box flexGrow={1} position="relative">
@@ -580,9 +620,15 @@ export function App({ version }: { version: string }) {
           // strip left an empty band whenever that strip was not drawn; the strip is an overlay and
           // sits on top of the cover instead.
           height={height}
-          scrimFromRow={hudTop - 1}
+          scrimFromRow={feedbackTop}
           dim={overlayOpen}
-          solidRow={paletteOpen ? PROMPT_ROW : null}
+          solidRow={
+            paletteOpen && !actionsOpen
+              ? PROMPT_ROW
+              : actionsOpen && actionMode === "playlists"
+                ? PLAYLIST_PROMPT_ROW
+                : null
+          }
         />
       ) : null}
 
@@ -603,7 +649,7 @@ export function App({ version }: { version: string }) {
             deviceId === engine.deviceId
           }
           width={width}
-          height={height - 1}
+          height={contentHeight}
         />
       ) : overlayOpen ? null : (
         <PlaybackEmptyState
@@ -613,16 +659,23 @@ export function App({ version }: { version: string }) {
         />
       )}
 
-      {error !== null && !overlayOpen ? (
-        // Above the HUD, not on it: at `height - 2` this landed on the state row and drew over
-        // "PLAYING · VOL 100%".
-        <box position="absolute" left={2} top={hudTop - 1} zIndex={3}>
-          <text fg={theme.error}>{truncate(error, Math.max(0, width - 4))}</text>
-        </box>
+      {feedback !== null &&
+      !actionsOpen &&
+      // Existing playback faults stay behind overlays; action confirmations must remain visible
+      // when a selected-item action returns to the palette that launched it.
+      (actionNotice !== null || !overlayOpen) ? (
+        <FeedbackBanner
+          message={feedback.message}
+          kind={feedback.kind}
+          width={width}
+          // One clear row above the HUD; inside the bottom padding while another overlay is open.
+          top={overlayOpen ? Math.max(0, height - 2) : feedbackTop}
+          textLeft={overlayOpen ? OVERLAY_PADDING_X : HUD_LEFT}
+        />
       ) : null}
 
       {overlayOpen ? null : (
-        <box position="absolute" left={0} top={height - 1} width={width} zIndex={2}>
+        <box position="absolute" left={0} top={contentHeight} width={width} zIndex={2}>
           <KeyHints
             width={width}
             playing={isPlaying}
@@ -632,11 +685,14 @@ export function App({ version }: { version: string }) {
         </box>
       )}
 
-      {paletteOpen ? <Palette width={width} height={height} /> : null}
+      {paletteOpen && !actionsOpen ? <Palette width={width} height={height} /> : null}
       {devicesOpen ? <DevicePicker width={width} height={height} /> : null}
       {queueOpen ? <QueueView width={width} height={height} /> : null}
-      {actionsOpen && item !== null ? (
-        <ActionsMenu width={width} height={height} item={item} />
+      {actionsOpen && actionMode === "actions" ? (
+        <ActionsMenu width={width} height={height} />
+      ) : null}
+      {actionsOpen && actionMode === "playlists" ? (
+        <PlaylistPicker width={width} height={height} />
       ) : null}
       {lyricsOpen ? <LyricsView width={width} height={height} item={item} /> : null}
       {keysOpen ? (

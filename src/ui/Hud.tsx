@@ -11,6 +11,14 @@ import { theme } from "./theme.ts";
  */
 export const HUD_ROWS = 7;
 
+/** Screen column where the HUD's text begins. */
+export const HUD_LEFT = 2;
+
+/** First HUD row within the height its caller makes available. */
+export function hudTopForHeight(height: number): number {
+  return Math.max(0, height - HUD_ROWS);
+}
+
 const REPEAT_LABEL: Record<RepeatState, string> = { off: "OFF", track: "TRACK", context: "ALL" };
 
 interface HudProps {
@@ -46,7 +54,7 @@ export function Hud({
   width,
   height,
 }: HudProps) {
-  const inner = width - 4;
+  const inner = width - HUD_LEFT * 2;
   const barWidth = Math.max(8, inner - 16);
   const ratio = durationMs > 0 ? Math.min(1, Math.max(0, progressMs / durationMs)) : 0;
   const filled = Math.round(ratio * barWidth);
@@ -67,8 +75,8 @@ export function Hud({
   return (
     <box
       position="absolute"
-      left={2}
-      top={height - HUD_ROWS}
+      left={HUD_LEFT}
+      top={hudTopForHeight(height)}
       width={inner}
       zIndex={2}
       flexDirection="column"

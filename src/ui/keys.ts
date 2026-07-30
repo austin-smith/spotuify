@@ -31,7 +31,8 @@ export const KEYMAP: KeyGroup[] = [
     label: "BROWSE",
     bindings: [
       { key: "/", action: "search" },
-      { key: "a", action: "go to" },
+      { key: "a", action: "actions" },
+      { key: "f", action: "save / unsave" },
       { key: "l", action: "lyrics" },
       { key: "u", action: "queue" },
       { key: "d", action: "device" },
@@ -44,6 +45,7 @@ export const KEYMAP: KeyGroup[] = [
       { key: "↑/↓", action: "move" },
       { key: "↵", action: "play / open" },
       { key: "ctrl+↵", action: "queue it" },
+      { key: "ctrl+space", action: "actions" },
       { key: "esc", action: "back / close" },
     ],
   },
@@ -91,7 +93,7 @@ export function barFor(state: {
     ...(state.canBrowse
       ? [
           { key: "/", action: "search" },
-          { key: "a", action: "go to" },
+          { key: "a", action: "actions" },
         ]
       : []),
     { key: "l", action: "lyrics" },

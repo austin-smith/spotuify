@@ -28,7 +28,10 @@ export function keymapFor(canBrowse: boolean): KeyGroup[] {
       ? {
           ...group,
           bindings: group.bindings
-            .filter(({ key }) => key !== "/" && key !== "a" && key !== "d")
+            .filter(
+              ({ key }) =>
+                key !== "/" && key !== "a" && key !== "f" && key !== "d" && key !== "ctrl+space",
+            )
             .map((binding) =>
               binding.key === "r" ? { ...binding, action: "retry account" } : binding,
             ),

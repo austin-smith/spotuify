@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type { SearchResults } from "../src/api/search.ts";
 import { EMPTY_RESULTS } from "../src/api/search.ts";
-import { firstSelectable, moveSelection, toRows, windowStart, type Row } from "../src/store/rows.ts";
+import {
+  firstSelectable,
+  moveSelection,
+  toAlbumRows,
+  toPlaylistRows,
+  toRows,
+  windowStart,
+  type Row,
+} from "../src/store/rows.ts";
 
 const track = (name: string, ms = 200_000) => ({
   id: name,
@@ -55,6 +63,16 @@ describe("toRows", () => {
     });
   });
 
+  test("track rows retain the full item for contextual write actions", () => {
+    const rows = toRows(results({ tracks: [track("T")] }));
+    const row = rows[1];
+    expect(row?.kind === "result" && row.actionItem).toMatchObject({
+      name: "T",
+      uri: "spotify:track:T",
+      album: { id: "al" },
+    });
+  });
+
   test("shows track duration as the trailing column", () => {
     const rows = toRows(results({ tracks: [track("T", 206_000)] }));
     expect(rows[1]?.kind === "result" && rows[1].trailing).toBe("3:26");
@@ -88,6 +106,41 @@ describe("toRows", () => {
       }),
     );
     expect(rows[1]?.kind === "result" && rows[1].detail).toBe("2020 · 14 tracks");
+  });
+});
+
+describe("action targets in drilled track lists", () => {
+  test("playlist rows retain their full track", () => {
+    const item = track("P");
+    const [row] = toPlaylistRows(
+      { name: "List", uri: "spotify:playlist:list" },
+      [{ position: 3, track: item, isLocal: false }],
+    );
+    expect(row?.kind === "result" && row.actionItem).toBe(item);
+  });
+
+  test("album rows reconstruct the parent album relationship", () => {
+    const [row] = toAlbumRows(
+      { id: "parent", name: "Parent", uri: "spotify:album:parent" },
+      [
+        {
+          id: "track",
+          name: "Song",
+          uri: "spotify:track:track",
+          duration_ms: 100,
+          track_number: 1,
+          artists: [{ id: "artist", name: "Artist", uri: "spotify:artist:artist" }],
+        },
+      ],
+    );
+    expect(row?.kind === "result" && row.actionItem).toMatchObject({
+      uri: "spotify:track:track",
+      album: {
+        id: "parent",
+        name: "Parent",
+        uri: "spotify:album:parent",
+      },
+    });
   });
 });
 

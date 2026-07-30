@@ -71,6 +71,10 @@ interface RawPage<T> {
   next?: string | null;
 }
 
+interface PlaylistMutation {
+  snapshot_id?: unknown;
+}
+
 function toPlaylist(raw: RawPlaylist, meId: string): Playlist {
   const ownerId = raw.owner?.id ?? "";
   return {
@@ -163,6 +167,32 @@ export async function playlistItems(
   }
 
   return entries;
+}
+
+/**
+ * Append items to an owned playlist.
+ *
+ * The body form avoids request-URI limits and is the documented shape for up to 100 track or
+ * episode URIs. Callers intentionally do not preflight for duplicates: Spotify playlists permit
+ * duplicates, and scanning the destination first would spend quota while changing normal playlist
+ * semantics.
+ */
+export async function addPlaylistItems(
+  client: SpotifyClient,
+  playlistId: string,
+  uris: readonly string[],
+): Promise<string> {
+  if (uris.length === 0) throw new Error("at least one playlist item is required");
+  if (uris.length > 100) throw new Error("spotify accepts at most 100 playlist items per request");
+
+  const response = await client.request<PlaylistMutation>(`/playlists/${playlistId}/items`, {
+    method: "POST",
+    body: { uris: [...uris] },
+  });
+  if (typeof response?.snapshot_id !== "string" || response.snapshot_id.length === 0) {
+    throw new Error("spotify did not confirm the playlist update");
+  }
+  return response.snapshot_id;
 }
 
 /**
