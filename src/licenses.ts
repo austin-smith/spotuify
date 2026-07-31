@@ -1,6 +1,21 @@
 declare const SPOTUIFY_LICENSE_TEXT: string | undefined;
 declare const SPOTUIFY_THIRD_PARTY_NOTICES_TEXT: string | undefined;
 
+export function formatSoftwareLicenses(
+  spotuifyLicense: string,
+  thirdPartyNotices: string,
+): string {
+  const normalizedLicense = spotuifyLicense.replaceAll("\r\n", "\n").trim();
+  const normalizedNotices = thirdPartyNotices.replaceAll("\r\n", "\n").trim();
+  return [
+    "spotuify license",
+    "",
+    normalizedLicense,
+    "",
+    normalizedNotices,
+  ].join("\n");
+}
+
 export async function softwareLicenses(): Promise<string> {
   const [spotuifyLicense, thirdPartyNotices] = await Promise.all([
     typeof SPOTUIFY_LICENSE_TEXT === "string"
@@ -11,11 +26,5 @@ export async function softwareLicenses(): Promise<string> {
       : Bun.file(new URL("../THIRD_PARTY_NOTICES.txt", import.meta.url)).text(),
   ]);
 
-  return [
-    "spotuify license",
-    "",
-    spotuifyLicense.trim(),
-    "",
-    thirdPartyNotices.trim(),
-  ].join("\n");
+  return formatSoftwareLicenses(spotuifyLicense, thirdPartyNotices);
 }

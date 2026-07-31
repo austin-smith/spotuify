@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "bun:test";
-import { softwareLicenses } from "../src/licenses.ts";
+import { formatSoftwareLicenses, softwareLicenses } from "../src/licenses.ts";
 
 let directory: string | undefined;
 
@@ -69,4 +69,12 @@ test("licenses prints embedded legal notices without side effects", async () => 
   expect(stdout).toBe(`${await softwareLicenses()}\n`);
   expect(stderr).toBe("");
   expect(await readdir(directory)).toEqual([]);
+});
+
+test("software licenses are independent of checkout line endings", () => {
+  const unix = formatSoftwareLicenses("license\ntext\n", "notice\ntext\n");
+  const windows = formatSoftwareLicenses("license\r\ntext\r\n", "notice\r\ntext\r\n");
+
+  expect(windows).toBe(unix);
+  expect(windows).not.toContain("\r");
 });
