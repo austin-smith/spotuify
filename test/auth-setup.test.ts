@@ -95,6 +95,34 @@ describe("Spotify app setup", () => {
     expect(prompted).toBe(false);
   });
 
+  test("reset refuses to override an environment Client ID", async () => {
+    let prompted = false;
+    let saved = false;
+
+    await expect(
+      prepareClientId(
+        { reset: true },
+        {
+          resolve: async () => ({ clientId: "environment-client-id", source: "environment" }),
+          question: async () => {
+            prompted = true;
+            return "replacement-client-id";
+          },
+          save: async () => {
+            saved = true;
+          },
+          log: () => {},
+        },
+      ),
+    ).rejects.toThrow(
+      "Cannot reset Client ID while the SPOTUIFY_CLIENT_ID environment variable is set. " +
+        "Update it and run `spotuify auth`, or unset it and run `spotuify auth --reset`.",
+    );
+
+    expect(prompted).toBe(false);
+    expect(saved).toBe(false);
+  });
+
   test("keeps a missing Client ID pending until authorization succeeds", async () => {
     const messages: string[] = [];
     const prompts: string[] = [];

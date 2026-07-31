@@ -61,23 +61,32 @@ export async function prepareClientId(
     log = console.log,
   }: SetupDependencies = {},
 ): Promise<ClientIdSetup> {
-  if (options.reset !== true) {
-    try {
-      const resolved = await resolve();
-      // An environment variable is an explicit non-interactive choice. A config-file value is
-      // trusted only after Spotify has issued a credential for that same application.
-      if (
-        resolved.source === "environment" ||
-        (await hasAuthorization(resolved.clientId))
-      ) {
-        return {
-          clientId: resolved.clientId,
-          requiresAuthorization: false,
-          commit: async () => {},
-        };
-      }
-    } catch (error) {
-      if (!(error instanceof MissingClientIdError)) throw error;
+  let resolved: ResolvedClientId | undefined;
+  try {
+    resolved = await resolve();
+  } catch (error) {
+    if (!(error instanceof MissingClientIdError)) throw error;
+  }
+
+  if (options.reset === true && resolved?.source === "environment") {
+    throw new Error(
+      "Cannot reset Client ID while the SPOTUIFY_CLIENT_ID environment variable is set. " +
+        "Update it and run `spotuify auth`, or unset it and run `spotuify auth --reset`.",
+    );
+  }
+
+  if (options.reset !== true && resolved !== undefined) {
+    // An environment variable is an explicit non-interactive choice. A config-file value is
+    // trusted only after Spotify has issued a credential for that same application.
+    if (
+      resolved.source === "environment" ||
+      (await hasAuthorization(resolved.clientId))
+    ) {
+      return {
+        clientId: resolved.clientId,
+        requiresAuthorization: false,
+        commit: async () => {},
+      };
     }
   }
 
