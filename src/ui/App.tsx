@@ -12,12 +12,8 @@ import {
   shouldRetryBootProfile,
 } from "../auth/profile.ts";
 import { ReauthRequiredError } from "../auth/tokens.ts";
-import { MissingClientIdError, REDIRECT_URI } from "../config.ts";
-import {
-  engineSetupCommand,
-  LibrespotEngine,
-  type EngineStatus,
-} from "../engine/librespot.ts";
+import { MissingClientIdError } from "../config.ts";
+import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
 import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
 import { useLyrics } from "../store/lyrics.ts";
@@ -35,6 +31,7 @@ import { DevicePicker } from "./DevicePicker.tsx";
 import { FeedbackBanner, feedbackTopAboveHud } from "./FeedbackBanner.tsx";
 import { LyricsView } from "./LyricsView.tsx";
 import { QueueView } from "./QueueView.tsx";
+import { SetupScreen } from "./SetupScreen.tsx";
 import { Hud, HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
 import { KeyHints, KEY_HINT_ROWS } from "./KeyHints.tsx";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
@@ -64,31 +61,6 @@ export function updateNoticeIsVisible(
   return (
     bootPhase === "needs-setup" ||
     (bootPhase === "ready" && !hasCompetingFeedback && !overlayOpen)
-  );
-}
-
-function Setup({
-  message,
-  update,
-}: {
-  message: string;
-  update: AvailableUpdate | null;
-}) {
-  return (
-    <box flexDirection="column" padding={2} gap={1}>
-      <text fg={theme.accent}>
-        <strong>SPOTUIFY</strong>
-      </text>
-      <text fg={theme.error}>{message}</text>
-      <text fg={theme.label}>Redirect URI to register: {REDIRECT_URI}</text>
-      <text fg={theme.label}>Then run: {engineSetupCommand()}</text>
-      {update === null ? null : (
-        <text fg={theme.accent}>
-          v{update.latestVersion} is available — run: spotuify update
-        </text>
-      )}
-      <text fg={theme.label}>Q to quit.</text>
-    </box>
   );
 }
 
@@ -669,9 +641,11 @@ export function App({ version }: { version: string }) {
   }
   if (boot.phase === "needs-setup") {
     return (
-      <Setup
+      <SetupScreen
         message={boot.message}
-        update={showUpdateNotice ? availableUpdate : null}
+        updateAvailable={showUpdateNotice && availableUpdate !== null}
+        width={width}
+        height={height}
       />
     );
   }
