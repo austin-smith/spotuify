@@ -170,12 +170,14 @@ canary jobs; do not configure a second publisher.
    ```
 
 5. Commit the version and generated changes through the normal review process.
-6. Create a signed version tag and push only that tag:
+6. Merge the version change, update the local `main` branch, and create the release:
 
    ```sh
-   git tag -s vX.Y.Z -m "vX.Y.Z"
-   git push origin vX.Y.Z
+   bun run release
    ```
+
+   The command reads the version from `package.json`, requires a clean `main` exactly matching
+   `origin/main`, creates an annotated `vX.Y.Z` tag, and pushes only that tag.
 
 7. Confirm that all four archives, `SHA256SUMS`, and `spotuify.rb` are attached before the draft is
    published.

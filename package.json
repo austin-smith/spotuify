@@ -22,6 +22,7 @@
     "engine:test": "cargo test --manifest-path native/Cargo.toml",
     "licenses:check": "scripts/licenses.sh check",
     "licenses:generate": "scripts/licenses.sh generate",
+    "release": "bun run scripts/create-release.ts",
     "release:build": "bun run scripts/build-release.ts",
     "release:canary-version": "bun run scripts/canary-version.ts",
     "release:checksums": "bun run scripts/checksums.ts",
