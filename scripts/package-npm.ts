@@ -1,10 +1,10 @@
 import { chmod, copyFile, mkdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { $ } from "bun";
 import {
   artifactName,
   buildVersion,
   releaseTarget,
-  run,
   STAGE_DIR,
   type ReleaseTarget,
 } from "./release-config.ts";
@@ -45,22 +45,14 @@ async function createPackage(
   }
 
   await mkdir(NPM_DIST_DIR, { recursive: true });
-  await run(
-    [
-      "npm",
-      "pack",
-      "--ignore-scripts",
-      "--pack-destination",
-      NPM_DIST_DIR,
-    ],
-    {
-      cwd: stage,
-      env: {
-        NPM_CONFIG_CACHE: resolve(NPM_DIST_DIR, "cache"),
-        NPM_CONFIG_UPDATE_NOTIFIER: "false",
-      },
-    },
-  );
+  console.log(`$ npm pack --ignore-scripts --pack-destination ${NPM_DIST_DIR}`);
+  await $`npm pack --ignore-scripts --pack-destination ${NPM_DIST_DIR}`
+    .cwd(stage)
+    .env({
+      ...Bun.env,
+      NPM_CONFIG_CACHE: resolve(NPM_DIST_DIR, "cache"),
+      NPM_CONFIG_UPDATE_NOTIFIER: "false",
+    });
 
   const metadata = await stat(tarball);
   if (!metadata.isFile() || metadata.size === 0) {
