@@ -55,7 +55,7 @@ describe("npm release packages", () => {
     });
   });
 
-  test("uses npm platform selectors and Windows executable names", () => {
+  test("uses npm platform selectors and Windows release settings", () => {
     const windows = RELEASE_TARGETS["windows-x64"];
     const linux = RELEASE_TARGETS["linux-x64"];
 
@@ -74,6 +74,7 @@ describe("npm release packages", () => {
       "spotuify.exe",
       "spotuify-engine.exe",
     ]);
+    expect(windows.bunTarget).toBe("bun-windows-x64");
     expect(archiveName("1.2.3", windows)).toBe("spotuify-v1.2.3-windows-x64.zip");
   });
 

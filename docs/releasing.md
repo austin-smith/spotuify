@@ -25,7 +25,7 @@ The tag `vX.Y.Z` produces:
 | `spotuify-vX.Y.Z-darwin-arm64.tar.gz` | `macos-26` | Apple silicon, macOS 13+ |
 | `spotuify-vX.Y.Z-linux-arm64.tar.gz` | `ubuntu-22.04-arm` | arm64, glibc 2.35+ |
 | `spotuify-vX.Y.Z-linux-x64.tar.gz` | `ubuntu-22.04` | x86-64 baseline, glibc 2.35+ |
-| `spotuify-vX.Y.Z-windows-x64.zip` | `windows-2025` | Windows 11, x86-64 |
+| `spotuify-vX.Y.Z-windows-x64.zip` | `windows-2025` | Windows 11, x86-64 with AVX2 |
 | `SHA256SUMS` | release publisher | All archive checksums |
 | `spotuify.rb` | release publisher | Formula ready for `homebrew-tap` |
 

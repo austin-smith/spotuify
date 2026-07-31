@@ -14,7 +14,7 @@ export interface ReleaseTarget {
     | "bun-darwin-arm64"
     | "bun-linux-arm64"
     | "bun-linux-x64-baseline"
-    | "bun-windows-x64-baseline";
+    | "bun-windows-x64";
   readonly archiveExtension: "tar.gz" | "zip";
 }
 
@@ -44,7 +44,7 @@ export const RELEASE_TARGETS = {
     id: "windows-x64",
     platform: "win32",
     arch: "x64",
-    bunTarget: "bun-windows-x64-baseline",
+    bunTarget: "bun-windows-x64",
     archiveExtension: "zip",
   },
 } as const satisfies Record<string, ReleaseTarget>;
