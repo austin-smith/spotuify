@@ -2,7 +2,7 @@
 import { SpotifyClient } from "./api/client.ts";
 import { authenticate, tokenStore } from "./auth/flow.ts";
 import { resolveBootProfile, saveProfileBestEffort } from "./auth/profile.ts";
-import { ensureClientId } from "./auth/setup.ts";
+import { prepareClientId } from "./auth/setup.ts";
 import type { Me } from "./api/types.ts";
 import { REDIRECT_URI } from "./config.ts";
 import { authenticateEngine, missingEngineMessage } from "./engine/librespot.ts";
@@ -19,8 +19,9 @@ function describeAccount(me: Me): string {
 const USAGE = `spotuify — spotify in ur terminal
 
 Usage:
-  spotuify auth [--force] [--force-engine]
-                             Authorize with Spotify (run this first; opens a browser)
+  spotuify auth [--force] [--force-engine] [--reset]
+                             Authorize with Spotify
+                             --reset  Reset Client ID and authorize
   spotuify whoami            Show the authenticated account
   spotuify licenses          Show software licenses and third-party notices
   spotuify update [--check]  Install an available update (--check only reports it)
@@ -35,9 +36,23 @@ async function main(argv: string[]): Promise<number | null> {
 
   switch (command) {
     case "auth": {
-      await ensureClientId();
-      const token = await authenticate({ force: rest.includes("--force") });
-      const tokens = await tokenStore();
+      const allowedArguments = new Set(["--force", "--force-engine", "--reset"]);
+      if (
+        rest.some((argument) => !allowedArguments.has(argument)) ||
+        new Set(rest).size !== rest.length
+      ) {
+        console.error("Usage: spotuify auth [--force] [--force-engine] [--reset]");
+        return 2;
+      }
+
+      const setup = await prepareClientId({ reset: rest.includes("--reset") });
+      const token = await authenticate({
+        clientId: setup.clientId,
+        force: setup.requiresAuthorization || rest.includes("--force"),
+      });
+      await setup.commit();
+
+      const tokens = await tokenStore(setup.clientId);
       const client = new SpotifyClient(tokens);
       const { profile: me } = await resolveBootProfile(client, token.authorizationId);
       if (me === null) {

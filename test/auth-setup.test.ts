@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
-import { ensureClientId } from "../src/auth/setup.ts";
+import { prepareClientId } from "../src/auth/setup.ts";
 import { MissingClientIdError, REDIRECT_URI, saveClientId } from "../src/config.ts";
 
 let directory: string | undefined;
@@ -18,45 +18,136 @@ describe("Spotify app setup", () => {
     let saved = false;
     const messages: string[] = [];
 
-    const clientId = await ensureClientId({
-      resolve: async () => "configured-client-id",
-      question: async () => {
-        prompted = true;
-        return "unused";
+    const setup = await prepareClientId(
+      {},
+      {
+        resolve: async () => ({ clientId: "configured-client-id", source: "config" }),
+        hasAuthorization: async () => true,
+        question: async () => {
+          prompted = true;
+          return "unused";
+        },
+        save: async () => {
+          saved = true;
+        },
+        log: (message) => messages.push(message),
       },
-      save: async () => {
-        saved = true;
-      },
-      log: (message) => messages.push(message),
-    });
+    );
+    await setup.commit();
 
-    expect(clientId).toBe("configured-client-id");
+    expect(setup.clientId).toBe("configured-client-id");
+    expect(setup.requiresAuthorization).toBe(false);
     expect(prompted).toBe(false);
     expect(saved).toBe(false);
     expect(messages).toEqual([]);
   });
 
-  test("guides the user and saves a missing Client ID", async () => {
+  test("prompts again when saved setup never completed authorization", async () => {
+    let savedClientId: string | undefined;
+
+    const setup = await prepareClientId(
+      {},
+      {
+        resolve: async () => ({ clientId: "unverified-client-id", source: "config" }),
+        hasAuthorization: async (clientId) => {
+          expect(clientId).toBe("unverified-client-id");
+          return false;
+        },
+        question: async () => "corrected-client-id",
+        save: async (clientId) => {
+          savedClientId = clientId;
+        },
+        log: () => {},
+      },
+    );
+
+    expect(setup.clientId).toBe("corrected-client-id");
+    expect(setup.requiresAuthorization).toBe(true);
+    expect(savedClientId).toBeUndefined();
+
+    await setup.commit();
+    expect(savedClientId).toBe("corrected-client-id");
+  });
+
+  test("does not replace an explicit environment Client ID", async () => {
+    let checkedAuthorization = false;
+    let prompted = false;
+
+    const setup = await prepareClientId(
+      {},
+      {
+        resolve: async () => ({ clientId: "environment-client-id", source: "environment" }),
+        hasAuthorization: async () => {
+          checkedAuthorization = true;
+          return false;
+        },
+        question: async () => {
+          prompted = true;
+          return "unused";
+        },
+        log: () => {},
+      },
+    );
+
+    expect(setup.clientId).toBe("environment-client-id");
+    expect(setup.requiresAuthorization).toBe(false);
+    expect(checkedAuthorization).toBe(false);
+    expect(prompted).toBe(false);
+  });
+
+  test("reset refuses to override an environment Client ID", async () => {
+    let prompted = false;
+    let saved = false;
+
+    await expect(
+      prepareClientId(
+        { reset: true },
+        {
+          resolve: async () => ({ clientId: "environment-client-id", source: "environment" }),
+          question: async () => {
+            prompted = true;
+            return "replacement-client-id";
+          },
+          save: async () => {
+            saved = true;
+          },
+          log: () => {},
+        },
+      ),
+    ).rejects.toThrow(
+      "Cannot reset Client ID while the SPOTUIFY_CLIENT_ID environment variable is set. " +
+        "Update it and run `spotuify auth`, or unset it and run `spotuify auth --reset`.",
+    );
+
+    expect(prompted).toBe(false);
+    expect(saved).toBe(false);
+  });
+
+  test("keeps a missing Client ID pending until authorization succeeds", async () => {
     const messages: string[] = [];
     const prompts: string[] = [];
     let savedClientId: string | undefined;
 
-    const clientId = await ensureClientId({
-      resolve: async () => {
-        throw new MissingClientIdError();
+    const setup = await prepareClientId(
+      {},
+      {
+        resolve: async () => {
+          throw new MissingClientIdError();
+        },
+        question: async (prompt) => {
+          prompts.push(prompt);
+          return "  pasted-client-id  ";
+        },
+        save: async (value) => {
+          savedClientId = value;
+        },
+        log: (message) => messages.push(message),
       },
-      question: async (prompt) => {
-        prompts.push(prompt);
-        return "  pasted-client-id  ";
-      },
-      save: async (value) => {
-        savedClientId = value;
-      },
-      log: (message) => messages.push(message),
-    });
+    );
 
-    expect(clientId).toBe("pasted-client-id");
-    expect(savedClientId).toBe("pasted-client-id");
+    expect(setup.clientId).toBe("pasted-client-id");
+    expect(setup.requiresAuthorization).toBe(true);
+    expect(savedClientId).toBeUndefined();
     expect(prompts).toEqual(["Client ID: "]);
     expect(messages).toEqual([
       [
@@ -67,24 +158,55 @@ describe("Spotify app setup", () => {
         "3. Paste the app’s Client ID below.",
         "",
       ].join("\n"),
-      "\nSaved for future use.\n",
     ]);
+
+    await setup.commit();
+    await setup.commit();
+
+    expect(savedClientId).toBe("pasted-client-id");
+    expect(messages.at(-1)).toBe("\nSaved for future use.\n");
+  });
+
+  test("reset collects a replacement without changing working configuration", async () => {
+    let savedClientId: string | undefined;
+
+    const setup = await prepareClientId(
+      { reset: true },
+      {
+        resolve: async () => ({ clientId: "working-client-id", source: "config" }),
+        question: async () => "replacement-client-id",
+        save: async (value) => {
+          savedClientId = value;
+        },
+        log: () => {},
+      },
+    );
+
+    expect(setup.clientId).toBe("replacement-client-id");
+    expect(setup.requiresAuthorization).toBe(true);
+    expect(savedClientId).toBeUndefined();
+
+    await setup.commit();
+    expect(savedClientId).toBe("replacement-client-id");
   });
 
   test("does not save an empty Client ID", async () => {
     let saved = false;
 
     await expect(
-      ensureClientId({
-        resolve: async () => {
-          throw new MissingClientIdError();
+      prepareClientId(
+        {},
+        {
+          resolve: async () => {
+            throw new MissingClientIdError();
+          },
+          question: async () => "   ",
+          save: async () => {
+            saved = true;
+          },
+          log: () => {},
         },
-        question: async () => "   ",
-        save: async () => {
-          saved = true;
-        },
-        log: () => {},
-      }),
+      ),
     ).rejects.toThrow("Client ID cannot be empty.");
     expect(saved).toBe(false);
   });
