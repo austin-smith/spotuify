@@ -12,24 +12,27 @@ import {
   shouldRetryBootProfile,
 } from "../auth/profile.ts";
 import { ReauthRequiredError } from "../auth/tokens.ts";
-import { MissingClientIdError, REDIRECT_URI } from "../config.ts";
-import {
-  engineSetupCommand,
-  LibrespotEngine,
-  type EngineStatus,
-} from "../engine/librespot.ts";
+import { MissingClientIdError } from "../config.ts";
+import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
 import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
 import { useLyrics } from "../store/lyrics.ts";
 import { usePlayback } from "../store/playback.ts";
 import { useQueue } from "../store/queue.ts";
 import { useSearch } from "../store/search.ts";
+import {
+  checkForUpdate,
+  markUpdateNotified,
+  type AvailableUpdate,
+} from "../update.ts";
 import { ActionsMenu } from "./ActionsMenu.tsx";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { DevicePicker } from "./DevicePicker.tsx";
 import { FeedbackBanner, feedbackTopAboveHud } from "./FeedbackBanner.tsx";
 import { LyricsView } from "./LyricsView.tsx";
 import { QueueView } from "./QueueView.tsx";
+import { SetupScreen } from "./SetupScreen.tsx";
+import { StartupErrorScreen } from "./StartupErrorScreen.tsx";
 import { Hud, HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
 import { KeyHints, KEY_HINT_ROWS } from "./KeyHints.tsx";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
@@ -41,7 +44,8 @@ import { theme } from "./theme.ts";
 
 type Boot =
   | { phase: "loading" }
-  | { phase: "needs-setup"; message: string }
+  | { phase: "needs-setup" }
+  | { phase: "failed"; message: string }
   | {
       phase: "ready";
       me: Me | null;
@@ -51,17 +55,36 @@ type Boot =
       profileRetryAt: number | null;
     };
 
-function Setup({ message }: { message: string }) {
+type BootFailure = Extract<Boot, { phase: "needs-setup" | "failed" }>;
+
+function isSetupFailure(error: unknown): boolean {
   return (
-    <box flexDirection="column" padding={2} gap={1}>
-      <text fg={theme.accent}>
-        <strong>SPOTUIFY</strong>
-      </text>
-      <text fg={theme.error}>{message}</text>
-      <text fg={theme.label}>Redirect URI to register: {REDIRECT_URI}</text>
-      <text fg={theme.label}>Then run: {engineSetupCommand()}</text>
-      <text fg={theme.label}>Q to quit.</text>
-    </box>
+    error instanceof MissingClientIdError ||
+    error instanceof ReauthRequiredError ||
+    (error instanceof SpotifyApiError &&
+      (error.status === 400 || error.status === 401 || error.status === 403))
+  );
+}
+
+export function bootFailureFor(error: unknown): BootFailure {
+  if (isSetupFailure(error)) {
+    return { phase: "needs-setup" };
+  }
+
+  return {
+    phase: "failed",
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+export function updateNoticeIsVisible(
+  bootPhase: Boot["phase"],
+  hasCompetingFeedback: boolean,
+  overlayOpen: boolean,
+): boolean {
+  return (
+    bootPhase === "needs-setup" ||
+    (bootPhase === "ready" && !hasCompetingFeedback && !overlayOpen)
   );
 }
 
@@ -73,6 +96,9 @@ export function App({ version }: { version: string }) {
   const [engineClient, setEngineClient] = useState<LibrespotEngine | null>(null);
   const [profileRecoveryRequest, setProfileRecoveryRequest] = useState(0);
   const [profileRecoveryFailed, setProfileRecoveryFailed] = useState(false);
+  const [bootAttempt, setBootAttempt] = useState(0);
+  const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
+  const [showUpdateNotice, setShowUpdateNotice] = useState(false);
   const profileRecoveryController = useRef<AbortController | null>(null);
   const activatedDevice = useRef<string | null>(null);
 
@@ -106,6 +132,43 @@ export function App({ version }: { version: string }) {
   const bootProfile = boot.phase === "ready" ? boot.me : null;
   const bootAccountId = bootProfile?.id ?? null;
   const bootProfileRetryAt = boot.phase === "ready" ? boot.profileRetryAt : null;
+  const updateNoticeVisible = updateNoticeIsVisible(
+    boot.phase,
+    actionNotice !== null || error !== null,
+    overlayOpen,
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void checkForUpdate({ currentVersion: version, signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        if (result.status !== "available") {
+          setAvailableUpdate(null);
+          setShowUpdateNotice(false);
+          return;
+        }
+        setAvailableUpdate(result);
+        setShowUpdateNotice(result.shouldNotify);
+      })
+      // A passive check must never destabilize the renderer, including if a future checker
+      // implementation rejects instead of returning an unavailable result.
+      .catch(() => {});
+    return () => controller.abort();
+  }, [version]);
+
+  useEffect(() => {
+    if (
+      availableUpdate === null ||
+      !showUpdateNotice ||
+      !updateNoticeVisible
+    ) {
+      return;
+    }
+    // Effects run after paint, so a version is marked only after a screen capable of displaying
+    // the notice has actually rendered. Quitting during boot must not consume the notification.
+    void markUpdateNotified(availableUpdate);
+  }, [availableUpdate, showUpdateNotice, updateNoticeVisible]);
 
   useEffect(() => {
     let canceled = false;
@@ -135,24 +198,16 @@ export function App({ version }: { version: string }) {
           authorizationId,
           profileRetryAt: profileResolution.retryAt,
         });
-      } catch (err) {
+      } catch (error) {
         if (canceled) return;
-        setBoot({
-          phase: "needs-setup",
-          message:
-            err instanceof MissingClientIdError
-              ? "No client ID configured. Set SPOTUIFY_CLIENT_ID."
-              : err instanceof Error
-                ? err.message
-                : String(err),
-        });
+        setBoot(bootFailureFor(error));
       }
     })();
 
     return () => {
       canceled = true;
     };
-  }, []);
+  }, [bootAttempt]);
 
   useEffect(() => {
     if (bootPlayer === null) return;
@@ -271,16 +326,12 @@ export function App({ version }: { version: string }) {
             : err instanceof Error
               ? err.message
               : String(err);
-        if (
-          err instanceof ReauthRequiredError ||
-          (err instanceof SpotifyApiError &&
-            (err.status === 400 || err.status === 401 || err.status === 403))
-        ) {
+        if (isSetupFailure(err)) {
           setBoot((current) =>
             current.phase === "ready" &&
             current.client === bootClient &&
             current.authorizationId === bootAuthorizationId
-              ? { phase: "needs-setup", message }
+              ? { phase: "needs-setup" }
               : current,
           );
         } else {
@@ -462,6 +513,11 @@ export function App({ version }: { version: string }) {
       renderer.destroy();
       return;
     }
+    if (boot.phase === "failed" && key.name === "r") {
+      setBoot({ phase: "loading" });
+      setBootAttempt((attempt) => attempt + 1);
+      return;
+    }
     if (boot.phase !== "ready") return;
 
     if (key.name === "/") {
@@ -601,7 +657,24 @@ export function App({ version }: { version: string }) {
       </box>
     );
   }
-  if (boot.phase === "needs-setup") return <Setup message={boot.message} />;
+  if (boot.phase === "needs-setup") {
+    return (
+      <SetupScreen
+        updateAvailable={showUpdateNotice && availableUpdate !== null}
+        width={width}
+        height={height}
+      />
+    );
+  }
+  if (boot.phase === "failed") {
+    return (
+      <StartupErrorScreen
+        message={boot.message}
+        width={width}
+        height={height}
+      />
+    );
+  }
 
   const images = item !== null && isTrack(item) ? item.album.images : null;
 
@@ -612,7 +685,14 @@ export function App({ version }: { version: string }) {
   const feedbackTop = feedbackTopAboveHud(hudTop);
   const feedback =
     actionNotice ??
-    (error !== null ? { kind: "error" as const, message: error } : null);
+    (error !== null
+      ? { kind: "error" as const, message: error }
+      : showUpdateNotice && availableUpdate !== null
+        ? {
+            kind: "info" as const,
+            message: `spotuify v${availableUpdate.latestVersion} is available — run: spotuify update`,
+          }
+        : null);
 
   return (
     <box flexGrow={1} position="relative">
@@ -708,6 +788,7 @@ export function App({ version }: { version: string }) {
           engine={engine}
           webAccountId={bootAccountId}
           canBrowse={boot.me !== null}
+          updateVersion={availableUpdate?.latestVersion ?? null}
         />
       ) : null}
     </box>

@@ -33,49 +33,31 @@ brew install austin-smith/tap/spotuify
 macOS, Linux, and Windows builds are available from
 [GitHub Releases](https://github.com/austin-smith/spotuify/releases).
 
-## Setup
+## Update
 
-Playback requires [Spotify Premium](https://www.spotify.com/us/premium/).
+### npm and Homebrew
 
-### 1. Register a Spotify app
-
-Create one at <https://developer.spotify.com/dashboard> and add this redirect URI:
-
-```
-http://127.0.0.1:8989/callback
+```sh
+spotuify update
+spotuify update --check
 ```
 
-### 2. Point spotuify at your app
+### Direct download
 
-```bash
-export SPOTUIFY_CLIENT_ID=<your client id>
-```
+Manually download the latest version from [GitHub Releases](https://github.com/austin-smith/spotuify/releases).
 
-On Windows PowerShell:
+## First-time setup
 
-```powershell
-$env:SPOTUIFY_CLIENT_ID = "<your client id>"
-```
+Requirements:
 
-On macOS or Linux, you can instead write it to `~/.config/spotuify/config.json`:
+- An app registered in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+- A [Spotify Premium](https://www.spotify.com/us/premium/) subscription is required for playback
 
-```bash
-mkdir -p ~/.config/spotuify
-echo '{"clientId":"<your client id>"}' > ~/.config/spotuify/config.json
-```
-
-### 3. Authorize
+Run the guided setup:
 
 ```bash
 spotuify auth
 ```
-
-The Web API token pair is cached at `~/.config/spotuify/token.json` and refreshed automatically.
-Spotify refresh tokens expire six months after authorization; when that happens, re-run
-`spotuify auth` to complete the interactive flow again.
-
-This authorizes both the Spotify Web API and terminal playback. Re-run it with `--force` to replace
-the Web API login or `--force-engine` to replace only the playback login.
 
 ## Development
 

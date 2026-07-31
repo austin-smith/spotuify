@@ -71,6 +71,32 @@ test("licenses prints embedded legal notices without side effects", async () => 
   expect(await readdir(directory)).toEqual([]);
 });
 
+test("update rejects unsupported arguments before any network or renderer work", async () => {
+  directory = await mkdtemp(join(tmpdir(), "spotuify-update-cli-test-"));
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+  const child = Bun.spawn([process.execPath, cli, "update", "--unknown"], {
+    cwd: directory,
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: join(directory, "config"),
+      XDG_CACHE_HOME: join(directory, "cache"),
+      SPOTUIFY_ENGINE_PATH: join(directory, "missing-engine"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+
+  expect(exitCode).toBe(2);
+  expect(stdout).toBe("");
+  expect(stderr).toBe("Usage: spotuify update [--check]\n");
+  expect(await readdir(directory)).toEqual([]);
+});
+
 test("software licenses are independent of checkout line endings", () => {
   const unix = formatSoftwareLicenses("license\ntext\n", "notice\ntext\n");
   const windows = formatSoftwareLicenses("license\r\ntext\r\n", "notice\r\ntext\r\n");

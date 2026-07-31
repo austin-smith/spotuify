@@ -6,7 +6,7 @@ import {
 } from "../api/client.ts";
 import type { Me } from "../api/types.ts";
 import { PROFILE_PATH } from "../config.ts";
-import { writePrivateFileAtomic } from "./private-file.ts";
+import { writePrivateFileAtomic } from "../private-file.ts";
 import { ReauthRequiredError } from "./tokens.ts";
 
 interface CachedProfile {

@@ -6,6 +6,13 @@ import { KeymapOverlay } from "../src/ui/KeymapOverlay.tsx";
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
 
+const SUPPORTED_SIZES = [
+  [60, 20],
+  [80, 24],
+  [100, 32],
+  [120, 40],
+] as const;
+
 afterEach(() => {
   setup?.renderer.destroy();
   setup = undefined;
@@ -18,6 +25,7 @@ async function render(
   canBrowse = true,
   webAccountId: string | null = canBrowse ? "account" : null,
   account = "Austin",
+  updateVersion: string | null = null,
 ): Promise<string[]> {
   setup = await createTestRenderer({ width, height });
   createRoot(setup.renderer).render(
@@ -29,6 +37,7 @@ async function render(
       engine={engine}
       webAccountId={webAccountId}
       canBrowse={canBrowse}
+      updateVersion={updateVersion}
     />,
   );
   await Bun.sleep(20);
@@ -46,6 +55,56 @@ describe("keymap engine status", () => {
     expect(screen).toContain("SPOTUIFY v0.1.0");
     expect(header.indexOf("SPOTUIFY")).toBe(rule.indexOf("─"));
     expect(header.indexOf("Austin") + "Austin".length - 1).toBe(rule.lastIndexOf("─"));
+  });
+
+  test.each(SUPPORTED_SIZES)(
+    "keeps an available update inside the measured keymap at %ix%i",
+    async (width, height) => {
+      const lines = await render(
+        width,
+        height,
+        { state: "ready", pid: 42, deviceId: "receiver", accountId: "account" },
+        true,
+        "account",
+        "Austin",
+        "1.2.3",
+      );
+      const screen = lines.join("\n");
+      expect(screen).toContain("v1.2.3 available");
+      expect(screen).toContain("spotuify update");
+      expect(screen).toContain("esc close");
+      for (const line of lines.slice(0, height)) {
+        expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
+      }
+    },
+  );
+
+  test("remeasures omitted groups when a live terminal switches to one column", async () => {
+    setup = await createTestRenderer({ width: 120, height: 40 });
+    const root = createRoot(setup.renderer);
+    const keymap = (width: number) => (
+      <KeymapOverlay
+        width={width}
+        height={40}
+        version="0.1.0"
+        account="Austin"
+        engine={{ state: "ready", pid: 42, deviceId: "receiver", accountId: "account" }}
+        webAccountId="account"
+      />
+    );
+
+    root.render(keymap(120));
+    await Bun.sleep(20);
+    await setup.renderOnce();
+    setup.resize(60, 40);
+    root.render(keymap(60));
+    await Bun.sleep(20);
+    await setup.renderOnce();
+
+    const screen = setup.captureCharFrame();
+    expect(screen).toContain("IN SEARCH");
+    expect(screen).toContain("IN LYRICS");
+    expect(screen).toContain("esc close");
   });
 
   test("keeps long shortcut labels from wrapping into adjacent keymap rows", async () => {

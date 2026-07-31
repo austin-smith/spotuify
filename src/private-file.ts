@@ -3,10 +3,11 @@ import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 /**
- * Atomically replace a private cache file.
+ * Atomically replace an owner-only file.
  *
- * The temporary file is created owner-only in the destination directory, flushed before rename,
- * and never exposes a partially written credential or account cache at the final path.
+ * Credentials, account-derived state, and application caches all stay private to the current
+ * user. The temporary file is flushed before rename and is never visible at the final path until
+ * it is complete.
  */
 export async function writePrivateFileAtomic(path: string, contents: string): Promise<void> {
   const directory = dirname(path);

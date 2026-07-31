@@ -1,12 +1,6 @@
 import { resolve } from "node:path";
-import {
-  artifactName,
-  buildVersion,
-  DIST_DIR,
-  PRODUCT_DESCRIPTION,
-  RELEASE_TARGETS,
-  REPOSITORY_URL,
-} from "./release-config.ts";
+import { buildVersion, DIST_DIR } from "./release-config.ts";
+import { homebrewFormula } from "./homebrew-formula.ts";
 
 const version = await buildVersion();
 const checksumLines = (
@@ -20,39 +14,7 @@ const checksums = new Map(
   }),
 );
 
-function source(targetName: keyof typeof RELEASE_TARGETS): string {
-  const target = RELEASE_TARGETS[targetName];
-  const filename = `${artifactName(version, target)}.tar.gz`;
-  const checksum = checksums.get(filename);
-  if (checksum === undefined) throw new Error(`missing checksum for ${filename}`);
-  return [
-    `  url "${REPOSITORY_URL}/releases/download/v${version}/${filename}"`,
-    `  sha256 "${checksum}"`,
-  ].join("\n");
-}
-
-const formula = `class Spotuify < Formula
-  desc "${PRODUCT_DESCRIPTION}"
-  homepage "${REPOSITORY_URL}"
-  version "${version}"
-${source("darwin-arm64")}
-  license "MIT"
-
-  depends_on macos: :ventura
-  depends_on arch: :arm64
-
-  def install
-    bin.install "spotuify"
-    libexec.install "spotuify-engine"
-  end
-
-  test do
-    assert_match "spotuify #{version}", shell_output("#{bin}/spotuify --version")
-    assert_match "spotuify-engine #{version}", shell_output("#{libexec}/spotuify-engine --version")
-    assert_match "spotuify third-party software notices", shell_output("#{bin}/spotuify licenses")
-  end
-end
-`;
+const formula = homebrewFormula(version, checksums);
 
 const output = resolve(DIST_DIR, "spotuify.rb");
 await Bun.write(output, formula);
