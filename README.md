@@ -33,7 +33,20 @@ brew install austin-smith/tap/spotuify
 macOS, Linux, and Windows builds are available from
 [GitHub Releases](https://github.com/austin-smith/spotuify/releases).
 
-## Setup
+## Update
+
+### npm and Homebrew
+
+```sh
+spotuify update
+spotuify update --check
+```
+
+### Direct download
+
+Manually download the latest version from [GitHub Releases](https://github.com/austin-smith/spotuify/releases).
+
+## First-time setup
 
 Playback requires [Spotify Premium](https://www.spotify.com/us/premium/).
 

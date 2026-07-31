@@ -12,6 +12,7 @@ export const CACHE_DIR = join(xdgDir("XDG_CACHE_HOME", ".cache"), "spotuify");
 export const TOKEN_PATH = join(CONFIG_DIR, "token.json");
 export const PROFILE_PATH = join(CONFIG_DIR, "profile.json");
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+export const UPDATE_PATH = join(CACHE_DIR, "update.json");
 export const LIBRESPOT_CACHE_DIR = join(CACHE_DIR, "librespot");
 
 /**

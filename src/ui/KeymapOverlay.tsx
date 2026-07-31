@@ -1,3 +1,5 @@
+import type { BoxRenderable } from "@opentui/core";
+import { useEffect, useState } from "react";
 import { missingEngineHint, type EngineStatus } from "../engine/librespot.ts";
 import { KEYMAP, type KeyGroup } from "./keys.ts";
 import { truncate } from "./text.ts";
@@ -174,6 +176,7 @@ export function KeymapOverlay({
   engine,
   webAccountId,
   canBrowse = true,
+  updateVersion = null,
 }: {
   width: number;
   height: number;
@@ -182,6 +185,7 @@ export function KeymapOverlay({
   engine: EngineStatus;
   webAccountId: string | null;
   canBrowse?: boolean;
+  updateVersion?: string | null;
 }) {
   const inner = Math.max(0, width - 8);
   const twoColumn = inner >= TWO_COLUMN_MIN;
@@ -209,6 +213,13 @@ export function KeymapOverlay({
             ? "local playback disabled"
             : `local playback failed — ${engine.reason}`;
   const engineLabel = truncate(rawEngineLabel, Math.max(0, inner - 2));
+  const rawUpdateLabel =
+    updateVersion === null
+      ? null
+      : `v${updateVersion} available — run: spotuify update`;
+  const updateLabel =
+    rawUpdateLabel === null ? null : truncate(rawUpdateLabel, Math.max(0, inner - 2));
+  const hasUpdate = updateLabel !== null;
   const engineUp = nativeAccountMatches;
   const versionLabel = `v${version}`;
   const brandAndVersionWidth =
@@ -220,6 +231,7 @@ export function KeymapOverlay({
     Math.max(
       headerWidth,
       Bun.stringWidth(engineLabel) + 2,
+      updateLabel === null ? 0 : Bun.stringWidth(updateLabel) + 2,
       leftWidth + (rightWidth > 0 ? COLUMN_GAP + rightWidth : 0),
     ),
   );
@@ -227,8 +239,19 @@ export function KeymapOverlay({
     account,
     Math.max(0, ruleWidth - brandAndVersionWidth - HEADER_GAP),
   );
-  // Vertical padding (4), the title, the rule and its margin (3), and the footer (1).
-  const maxRows = Math.max(1, height - 8);
+  const [maxRows, setMaxRows] = useState(height);
+
+  // Let the renderer allocate space around the actual header, statuses, rule, and footer. Reset to
+  // the full terminal height whenever chrome or group layout changes so a growing viewport can
+  // reveal groups that were omitted at the previous measurement.
+  useEffect(() => {
+    setMaxRows(height);
+  }, [height, hasUpdate, twoColumn, canBrowse]);
+
+  const measureListRows = function (this: BoxRenderable): void {
+    const measured = Math.max(1, this.height);
+    setMaxRows((current) => (current === measured ? current : measured));
+  };
 
   return (
     <box
@@ -243,7 +266,13 @@ export function KeymapOverlay({
       alignItems="center"
       justifyContent="center"
     >
-      <box flexDirection="column" width={ruleWidth} flexShrink={0}>
+      <box
+        flexDirection="column"
+        width={ruleWidth}
+        maxHeight={height}
+        flexShrink={1}
+        overflow="hidden"
+      >
         <box
           flexDirection="row"
           width={ruleWidth}
@@ -266,11 +295,26 @@ export function KeymapOverlay({
           <text fg={theme.label}>{engineLabel}</text>
         </box>
 
+        {updateLabel === null ? null : (
+          <box flexDirection="row" gap={1}>
+            <text fg={theme.accent}>↑</text>
+            <text fg={theme.label}>{updateLabel}</text>
+          </box>
+        )}
+
         <box marginTop={1}>
           <text fg={theme.faint}>{"─".repeat(Math.max(0, ruleWidth))}</text>
         </box>
 
-        <box flexDirection="row" overflow="hidden" marginTop={1} gap={COLUMN_GAP}>
+        <box
+          flexDirection="row"
+          overflow="hidden"
+          marginTop={1}
+          gap={COLUMN_GAP}
+          minHeight={1}
+          flexShrink={1}
+          onSizeChange={measureListRows}
+        >
           <Column groups={left} width={leftWidth} maxRows={maxRows} />
           {right.length > 0 ? (
             <Column groups={right} width={rightWidth} maxRows={maxRows} />

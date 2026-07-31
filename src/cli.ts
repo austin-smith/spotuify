@@ -5,6 +5,7 @@ import { resolveBootProfile, saveProfileBestEffort } from "./auth/profile.ts";
 import type { Me } from "./api/types.ts";
 import { REDIRECT_URI } from "./config.ts";
 import { authenticateEngine, missingEngineMessage } from "./engine/librespot.ts";
+import { runUpdateCommand } from "./update-command.ts";
 import { VERSION } from "./version.ts";
 
 /** `name (product, country)`, degrading gracefully when the scope didn't grant those fields. */
@@ -21,6 +22,7 @@ Usage:
                              Authorize with Spotify (run this first; opens a browser)
   spotuify whoami            Show the authenticated account
   spotuify licenses          Show software licenses and third-party notices
+  spotuify update [--check]  Install an available update (--check only reports it)
   spotuify -v, --version     Show the product version
   spotuify                   Launch the TUI
 
@@ -102,6 +104,17 @@ async function main(argv: string[]): Promise<number | null> {
       const { softwareLicenses } = await import("./licenses.ts");
       console.log(await softwareLicenses());
       return 0;
+    }
+
+    case "update": {
+      if (rest.some((argument) => argument !== "--check") || rest.length > 1) {
+        console.error("Usage: spotuify update [--check]");
+        return 2;
+      }
+      return await runUpdateCommand({
+        currentVersion: VERSION,
+        checkOnly: rest.includes("--check"),
+      });
     }
 
     default:

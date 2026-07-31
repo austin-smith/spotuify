@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { publishHomebrewFormula } from "../scripts/homebrew-tap.ts";
+import { homebrewFormula } from "../scripts/homebrew-formula.ts";
 
 const formula = `class Spotuify < Formula
   version "1.2.3"
@@ -14,6 +15,17 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("Homebrew tap publisher", () => {
+  it("wraps the main executable with authoritative Homebrew source metadata", () => {
+    const rendered = homebrewFormula(
+      "1.2.3",
+      new Map([["spotuify-v1.2.3-darwin-arm64.tar.gz", "a".repeat(64)]]),
+    );
+    expect(rendered).toContain('libexec.install "spotuify", "spotuify-engine"');
+    expect(rendered).toContain(
+      '(bin/"spotuify").write_env_script libexec/"spotuify", SPOTUIFY_INSTALL_SOURCE: "homebrew"',
+    );
+  });
+
   it("creates the formula when it does not exist", async () => {
     const requests: Array<{ input: string; init?: RequestInit }> = [];
     const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {

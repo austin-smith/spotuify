@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { isSemanticVersion, isStableVersion } from "../src/semver.ts";
 
 export const REPOSITORY = "austin-smith/spotuify";
 export const REPOSITORY_URL = `https://github.com/${REPOSITORY}`;
@@ -54,19 +55,15 @@ export const REPO_ROOT = resolve(import.meta.dir, "..");
 export const DIST_DIR = resolve(REPO_ROOT, "dist");
 export const STAGE_DIR = resolve(DIST_DIR, "stage");
 
-const STRICT_SEMVER =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const STABLE_SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-
 function validSemanticVersion(value: unknown, source: string): string {
-  if (typeof value !== "string" || !STRICT_SEMVER.test(value)) {
+  if (!isSemanticVersion(value)) {
     throw new Error(`${source} must contain a valid semantic version`);
   }
   return value;
 }
 
 function validStableVersion(value: unknown, source: string): string {
-  if (typeof value !== "string" || !STABLE_SEMVER.test(value)) {
+  if (!isStableVersion(value)) {
     throw new Error(`${source} must contain a stable semantic version in X.Y.Z format`);
   }
   return value;

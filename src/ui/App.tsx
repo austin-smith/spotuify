@@ -24,6 +24,11 @@ import { useLyrics } from "../store/lyrics.ts";
 import { usePlayback } from "../store/playback.ts";
 import { useQueue } from "../store/queue.ts";
 import { useSearch } from "../store/search.ts";
+import {
+  checkForUpdate,
+  markUpdateNotified,
+  type AvailableUpdate,
+} from "../update.ts";
 import { ActionsMenu } from "./ActionsMenu.tsx";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { DevicePicker } from "./DevicePicker.tsx";
@@ -51,7 +56,24 @@ type Boot =
       profileRetryAt: number | null;
     };
 
-function Setup({ message }: { message: string }) {
+export function updateNoticeIsVisible(
+  bootPhase: Boot["phase"],
+  hasCompetingFeedback: boolean,
+  overlayOpen: boolean,
+): boolean {
+  return (
+    bootPhase === "needs-setup" ||
+    (bootPhase === "ready" && !hasCompetingFeedback && !overlayOpen)
+  );
+}
+
+function Setup({
+  message,
+  update,
+}: {
+  message: string;
+  update: AvailableUpdate | null;
+}) {
   return (
     <box flexDirection="column" padding={2} gap={1}>
       <text fg={theme.accent}>
@@ -60,6 +82,11 @@ function Setup({ message }: { message: string }) {
       <text fg={theme.error}>{message}</text>
       <text fg={theme.label}>Redirect URI to register: {REDIRECT_URI}</text>
       <text fg={theme.label}>Then run: {engineSetupCommand()}</text>
+      {update === null ? null : (
+        <text fg={theme.accent}>
+          v{update.latestVersion} is available — run: spotuify update
+        </text>
+      )}
       <text fg={theme.label}>Q to quit.</text>
     </box>
   );
@@ -73,6 +100,8 @@ export function App({ version }: { version: string }) {
   const [engineClient, setEngineClient] = useState<LibrespotEngine | null>(null);
   const [profileRecoveryRequest, setProfileRecoveryRequest] = useState(0);
   const [profileRecoveryFailed, setProfileRecoveryFailed] = useState(false);
+  const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
+  const [showUpdateNotice, setShowUpdateNotice] = useState(false);
   const profileRecoveryController = useRef<AbortController | null>(null);
   const activatedDevice = useRef<string | null>(null);
 
@@ -106,6 +135,43 @@ export function App({ version }: { version: string }) {
   const bootProfile = boot.phase === "ready" ? boot.me : null;
   const bootAccountId = bootProfile?.id ?? null;
   const bootProfileRetryAt = boot.phase === "ready" ? boot.profileRetryAt : null;
+  const updateNoticeVisible = updateNoticeIsVisible(
+    boot.phase,
+    actionNotice !== null || error !== null,
+    overlayOpen,
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void checkForUpdate({ currentVersion: version, signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        if (result.status !== "available") {
+          setAvailableUpdate(null);
+          setShowUpdateNotice(false);
+          return;
+        }
+        setAvailableUpdate(result);
+        setShowUpdateNotice(result.shouldNotify);
+      })
+      // A passive check must never destabilize the renderer, including if a future checker
+      // implementation rejects instead of returning an unavailable result.
+      .catch(() => {});
+    return () => controller.abort();
+  }, [version]);
+
+  useEffect(() => {
+    if (
+      availableUpdate === null ||
+      !showUpdateNotice ||
+      !updateNoticeVisible
+    ) {
+      return;
+    }
+    // Effects run after paint, so a version is marked only after a screen capable of displaying
+    // the notice has actually rendered. Quitting during boot must not consume the notification.
+    void markUpdateNotified(availableUpdate);
+  }, [availableUpdate, showUpdateNotice, updateNoticeVisible]);
 
   useEffect(() => {
     let canceled = false;
@@ -601,7 +667,14 @@ export function App({ version }: { version: string }) {
       </box>
     );
   }
-  if (boot.phase === "needs-setup") return <Setup message={boot.message} />;
+  if (boot.phase === "needs-setup") {
+    return (
+      <Setup
+        message={boot.message}
+        update={showUpdateNotice ? availableUpdate : null}
+      />
+    );
+  }
 
   const images = item !== null && isTrack(item) ? item.album.images : null;
 
@@ -612,7 +685,14 @@ export function App({ version }: { version: string }) {
   const feedbackTop = feedbackTopAboveHud(hudTop);
   const feedback =
     actionNotice ??
-    (error !== null ? { kind: "error" as const, message: error } : null);
+    (error !== null
+      ? { kind: "error" as const, message: error }
+      : showUpdateNotice && availableUpdate !== null
+        ? {
+            kind: "info" as const,
+            message: `spotuify v${availableUpdate.latestVersion} is available — run: spotuify update`,
+          }
+        : null);
 
   return (
     <box flexGrow={1} position="relative">
@@ -708,6 +788,7 @@ export function App({ version }: { version: string }) {
           engine={engine}
           webAccountId={bootAccountId}
           canBrowse={boot.me !== null}
+          updateVersion={availableUpdate?.latestVersion ?? null}
         />
       ) : null}
     </box>

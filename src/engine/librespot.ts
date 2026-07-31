@@ -1,7 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { DEVICE_NAME, LIBRESPOT_CACHE_DIR } from "../config.ts";
-
-declare const SPOTUIFY_STANDALONE: boolean | undefined;
+import { isStandaloneBuild } from "../distribution.ts";
 
 const COMMAND_TIMEOUT_MS = 10_000;
 const ENGINE_READINESS_TIMEOUT_MS = 30_000;
@@ -22,10 +21,6 @@ export interface SidecarLocationContext {
   configured?: string;
   standalone?: boolean;
   executablePath?: string;
-}
-
-export function isStandaloneBuild(): boolean {
-  return typeof SPOTUIFY_STANDALONE !== "undefined" && SPOTUIFY_STANDALONE === true;
 }
 
 /**

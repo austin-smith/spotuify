@@ -16,7 +16,7 @@ export function feedbackTopAboveHud(hudTop: number): number {
 
 interface FeedbackBannerProps {
   message: string;
-  kind: "success" | "error";
+  kind: "success" | "error" | "info";
   width: number;
   top: number;
   /** Screen column where the message text, rather than its backing, begins. */

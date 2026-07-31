@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { TOKEN_PATH, TOKEN_URL } from "../config.ts";
-import { writePrivateFileAtomic } from "./private-file.ts";
+import { writePrivateFileAtomic } from "../private-file.ts";
 
 export interface StoredToken {
   accessToken: string;

@@ -8,7 +8,7 @@ import {
   npmPackageTarballName,
 } from "./npm-packages.ts";
 
-interface RegistryMetadata {
+export interface RegistryMetadata {
   "dist-tags"?: Record<string, string>;
   repository?: string | { url?: string };
   versions?: Record<string, { repository?: string | { url?: string } }>;
@@ -45,6 +45,23 @@ export function assertOwnedPackage(name: string, metadata: RegistryMetadata): vo
     throw new Error(
       `${name} already exists with repository ${JSON.stringify(repository)}; ` +
         `expected ${EXPECTED_REPOSITORY}`,
+    );
+  }
+}
+
+export function assertExistingVersionTagged(
+  name: string,
+  metadata: RegistryMetadata,
+  version: string,
+  distTag: NpmDistTag,
+): void {
+  if (
+    metadata.versions?.[version] !== undefined &&
+    metadata["dist-tags"]?.[distTag] !== version
+  ) {
+    throw new Error(
+      `${name}@${version} is already published but npm's ${distTag} tag points to ` +
+        `${JSON.stringify(metadata["dist-tags"]?.[distTag])}; refusing to report a successful retry`,
     );
   }
 }
@@ -133,6 +150,7 @@ async function main(): Promise<void> {
   for (const [name, value] of metadata) {
     if (value === null) throw new Error(`missing npm metadata for ${name}`);
     assertOwnedPackage(name, value);
+    assertExistingVersionTagged(name, value, version, distTag);
   }
 
   if (distTag === "canary") {
