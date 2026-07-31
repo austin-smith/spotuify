@@ -1,5 +1,4 @@
 import { createInterface } from "node:readline/promises";
-import { stdin, stdout } from "node:process";
 import {
   MissingClientIdError,
   REDIRECT_URI,
@@ -17,11 +16,13 @@ type SetupDependencies = {
 };
 
 async function questionInTerminal(prompt: string): Promise<string> {
-  if (stdin.isTTY !== true || stdout.isTTY !== true) {
+  const input = process.stdin;
+  const output = process.stdout;
+  if (input.isTTY !== true || output.isTTY !== true) {
     throw new Error("Spotify app setup requires an interactive terminal.");
   }
 
-  const readline = createInterface({ input: stdin, output: stdout });
+  const readline = createInterface({ input, output });
   try {
     return await readline.question(prompt);
   } finally {
