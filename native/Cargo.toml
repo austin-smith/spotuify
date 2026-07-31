@@ -20,7 +20,7 @@ tokio = { version = "=1.53.0", features = ["io-std", "io-util", "macros", "rt-mu
 # librespot-core 0.8.0's build script is incompatible with vergen 9.1. Pin the last compatible
 # resolver range until a published librespot release removes that constraint.
 [build-dependencies]
-vergen = { version = ">=9.0.6, <9.1", default-features = false }
+vergen = { version = ">=9.0.6, <10.1", default-features = false }
 
 [lints.rust]
 unsafe_code = "deny"
