@@ -10,11 +10,6 @@ const SUPPORTED_SIZES = [
   [120, 40],
 ] as const;
 
-const LONG_ERROR =
-  "Spotify rejected the cached authorization after account verification returned an unexpected response. Run spotuify auth to sign in again. ".repeat(
-    12,
-  );
-
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
 
 afterEach(() => {
@@ -22,14 +17,18 @@ afterEach(() => {
   setup = undefined;
 });
 
-async function render(width: number, height: number, updateAvailable: boolean): Promise<string[]> {
+async function render(
+  width: number,
+  height: number,
+  updateAvailable: boolean,
+): Promise<string[]> {
   setup = await createTestRenderer({ width, height });
   createRoot(setup.renderer).render(
     <SetupScreen
-      message={LONG_ERROR}
       updateAvailable={updateAvailable}
       width={width}
       height={height}
+      authCommand="spotuify auth"
     />,
   );
   await Bun.sleep(20);
@@ -39,14 +38,16 @@ async function render(width: number, height: number, updateAvailable: boolean): 
 
 describe("setup screen layout", () => {
   test.each(SUPPORTED_SIZES)(
-    "keeps setup actions visible with a long error at %ix%i",
+    "shows the setup handoff at %ix%i",
     async (width, height) => {
       const lines = await render(width, height, true);
       const screen = lines.join("\n");
 
       expect(screen).toContain("SPOTUIFY");
-      expect(screen).toContain("Redirect URI to register:");
-      expect(screen).toContain("Then run:");
+      expect(screen).toContain("Setup required.");
+      expect(screen).toContain("Run spotuify auth to get started.");
+      expect(screen).not.toContain("developer.spotify.com");
+      expect(screen).not.toContain("SPOTUIFY_CLIENT_ID");
       expect(screen).toContain("Update available — run: spotuify update");
       expect(screen).toContain("Q to quit.");
       expect(lines[height - 2]).toContain("Q to quit.");
@@ -63,6 +64,8 @@ describe("setup screen layout", () => {
       const lines = await render(width, height, false);
       const screen = lines.join("\n");
 
+      expect(screen).toContain("Setup required.");
+      expect(screen).toContain("Run spotuify auth to get started.");
       expect(screen).not.toContain("Update available");
       expect(lines[height - 2]).toContain("Q to quit.");
     },

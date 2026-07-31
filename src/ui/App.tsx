@@ -12,7 +12,6 @@ import {
   shouldRetryBootProfile,
 } from "../auth/profile.ts";
 import { ReauthRequiredError } from "../auth/tokens.ts";
-import { MissingClientIdError } from "../config.ts";
 import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
 import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
@@ -43,7 +42,7 @@ import { theme } from "./theme.ts";
 
 type Boot =
   | { phase: "loading" }
-  | { phase: "needs-setup"; message: string }
+  | { phase: "needs-setup" }
   | {
       phase: "ready";
       me: Me | null;
@@ -173,17 +172,9 @@ export function App({ version }: { version: string }) {
           authorizationId,
           profileRetryAt: profileResolution.retryAt,
         });
-      } catch (err) {
+      } catch {
         if (canceled) return;
-        setBoot({
-          phase: "needs-setup",
-          message:
-            err instanceof MissingClientIdError
-              ? "No client ID configured. Set SPOTUIFY_CLIENT_ID."
-              : err instanceof Error
-                ? err.message
-                : String(err),
-        });
+        setBoot({ phase: "needs-setup" });
       }
     })();
 
@@ -318,7 +309,7 @@ export function App({ version }: { version: string }) {
             current.phase === "ready" &&
             current.client === bootClient &&
             current.authorizationId === bootAuthorizationId
-              ? { phase: "needs-setup", message }
+              ? { phase: "needs-setup" }
               : current,
           );
         } else {
@@ -642,7 +633,6 @@ export function App({ version }: { version: string }) {
   if (boot.phase === "needs-setup") {
     return (
       <SetupScreen
-        message={boot.message}
         updateAvailable={showUpdateNotice && availableUpdate !== null}
         width={width}
         height={height}

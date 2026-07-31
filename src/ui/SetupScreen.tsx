@@ -1,17 +1,16 @@
-import { REDIRECT_URI } from "../config.ts";
 import { engineSetupCommand } from "../engine/librespot.ts";
 import { theme } from "./theme.ts";
 
 export function SetupScreen({
-  message,
   updateAvailable,
   width,
   height,
+  authCommand = engineSetupCommand(),
 }: {
-  message: string;
   updateAvailable: boolean;
   width: number;
   height: number;
+  authCommand?: string;
 }) {
   return (
     <box
@@ -26,19 +25,11 @@ export function SetupScreen({
         <text fg={theme.accent} flexShrink={0}>
           <strong>SPOTUIFY</strong>
         </text>
-        <text
-          fg={theme.error}
-          marginTop={1}
-          minHeight={1}
-          flexShrink={1}
-          wrapMode="word"
-          truncate
-        >
-          {message}
-        </text>
         <box flexDirection="column" flexShrink={0} marginTop={1}>
-          <text fg={theme.label}>Redirect URI to register: {REDIRECT_URI}</text>
-          <text fg={theme.label}>Then run: {engineSetupCommand()}</text>
+          <text fg={theme.text}>Setup required.</text>
+          <text fg={theme.label} marginTop={1}>
+            Run <span fg={theme.text}>{authCommand}</span> to get started.
+          </text>
         </box>
       </box>
 

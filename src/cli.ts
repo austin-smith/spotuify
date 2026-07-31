@@ -2,6 +2,7 @@
 import { SpotifyClient } from "./api/client.ts";
 import { authenticate, tokenStore } from "./auth/flow.ts";
 import { resolveBootProfile, saveProfileBestEffort } from "./auth/profile.ts";
+import { ensureClientId } from "./auth/setup.ts";
 import type { Me } from "./api/types.ts";
 import { REDIRECT_URI } from "./config.ts";
 import { authenticateEngine, missingEngineMessage } from "./engine/librespot.ts";
@@ -34,6 +35,7 @@ async function main(argv: string[]): Promise<number | null> {
 
   switch (command) {
     case "auth": {
+      await ensureClientId();
       const token = await authenticate({ force: rest.includes("--force") });
       const tokens = await tokenStore();
       const client = new SpotifyClient(tokens);

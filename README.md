@@ -48,47 +48,16 @@ Manually download the latest version from [GitHub Releases](https://github.com/a
 
 ## First-time setup
 
-Playback requires [Spotify Premium](https://www.spotify.com/us/premium/).
+Requirements:
 
-### 1. Register a Spotify app
+- An app registered in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+- A [Spotify Premium](https://www.spotify.com/us/premium/) subscription is required for playback
 
-Create one at <https://developer.spotify.com/dashboard> and add this redirect URI:
-
-```
-http://127.0.0.1:8989/callback
-```
-
-### 2. Point spotuify at your app
-
-```bash
-export SPOTUIFY_CLIENT_ID=<your client id>
-```
-
-On Windows PowerShell:
-
-```powershell
-$env:SPOTUIFY_CLIENT_ID = "<your client id>"
-```
-
-On macOS or Linux, you can instead write it to `~/.config/spotuify/config.json`:
-
-```bash
-mkdir -p ~/.config/spotuify
-echo '{"clientId":"<your client id>"}' > ~/.config/spotuify/config.json
-```
-
-### 3. Authorize
+Run the guided setup:
 
 ```bash
 spotuify auth
 ```
-
-The Web API token pair is cached at `~/.config/spotuify/token.json` and refreshed automatically.
-Spotify refresh tokens expire six months after authorization; when that happens, re-run
-`spotuify auth` to complete the interactive flow again.
-
-This authorizes both the Spotify Web API and terminal playback. Re-run it with `--force` to replace
-the Web API login or `--force-engine` to replace only the playback login.
 
 ## Development
 
