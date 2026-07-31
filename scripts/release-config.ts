@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 export const REPOSITORY = "austin-smith/spotuify";
 export const REPOSITORY_URL = `https://github.com/${REPOSITORY}`;
+export const PRODUCT_DESCRIPTION = "spotify in ur terminal";
 export const HOMEBREW_TAP_REPOSITORY = "austin-smith/homebrew-tap";
 export const HOMEBREW_FORMULA_PATH = "Formula/spotuify.rb";
 export const MACOS_DEPLOYMENT_TARGET = "13.0";
@@ -109,16 +110,24 @@ export async function buildVersion(): Promise<string> {
 export function canaryVersion(
   canonicalVersion: string,
   runNumber: string,
-  commitSha: string,
+  runCreatedAt: string,
 ): string {
   const version = validStableVersion(canonicalVersion, "canonical version");
   if (!/^[1-9]\d*$/.test(runNumber)) {
     throw new Error("GitHub run number must be a positive integer");
   }
-  if (!/^[0-9a-f]{40}$/i.test(commitSha)) {
-    throw new Error("Git commit SHA must contain exactly 40 hexadecimal characters");
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(runCreatedAt)) {
+    throw new Error("GitHub workflow creation time must be an ISO 8601 UTC timestamp");
   }
-  return `${version}-canary.${runNumber}.g${commitSha.slice(0, 12).toLowerCase()}`;
+  const createdAt = new Date(runCreatedAt);
+  if (
+    Number.isNaN(createdAt.getTime()) ||
+    createdAt.toISOString() !== runCreatedAt.replace("Z", ".000Z")
+  ) {
+    throw new Error("GitHub workflow creation time must be a valid UTC timestamp");
+  }
+  const compactDate = runCreatedAt.slice(0, 10).replaceAll("-", "");
+  return `${version}-canary.${compactDate}.${runNumber}`;
 }
 
 export function releaseTarget(argument = process.argv[2]): ReleaseTarget {

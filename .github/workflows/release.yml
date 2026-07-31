@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
+      actions: read
       contents: read
     outputs:
       channel: ${{ steps.publication.outputs.channel }}
@@ -53,6 +54,8 @@ jobs:
 
       - name: Resolve publication
         id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             bun run release:validate-tag "$GITHUB_REF_NAME"
@@ -65,7 +68,13 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
           else
             channel=canary
-            version="$(bun scripts/canary-version.ts "$GITHUB_RUN_NUMBER" "$GITHUB_SHA")"
+            run_created_at="$(
+              gh api \
+                -H "X-GitHub-Api-Version: 2026-03-10" \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                --jq .created_at
+            )"
+            version="$(bun scripts/canary-version.ts "$GITHUB_RUN_NUMBER" "$run_created_at")"
           fi
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"

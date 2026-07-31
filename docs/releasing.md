@@ -5,7 +5,7 @@ from source. They never share npm dist-tags or Homebrew state.
 
 | Event | Version | npm | GitHub Release | Homebrew |
 | --- | --- | --- | --- | --- |
-| Push to `main` | `X.Y.Z-canary.<run-number>.g<commit>` | `canary` | No | No |
+| Push to `main` | `X.Y.Z-canary.<YYYYMMDD>.<run-number>` | `canary` | No | No |
 | Push tag `vX.Y.Z` | `X.Y.Z` | `latest` | Stable, marked latest | Update stable formula |
 
 Canary versions are derived during the workflow and are never committed to the repository. Users

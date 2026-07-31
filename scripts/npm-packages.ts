@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import {
   executableName,
+  PRODUCT_DESCRIPTION,
   RELEASE_TARGETS,
   REPOSITORY_URL,
   type ReleaseTarget,
@@ -81,7 +82,7 @@ export function npmPlatformManifest(version: string, target: ReleaseTarget) {
   return {
     name: platformPackage.name,
     version,
-    description: `Platform binaries for spotuify on ${target.id}`,
+    description: PRODUCT_DESCRIPTION,
     ...commonManifest,
     os: [platformPackage.os],
     cpu: [platformPackage.cpu],
@@ -94,7 +95,7 @@ export function npmRootManifest(version: string) {
   return {
     name: NPM_ROOT_PACKAGE,
     version,
-    description: "Spotify in your terminal",
+    description: PRODUCT_DESCRIPTION,
     ...commonManifest,
     bin: {
       spotuify: "bin/spotuify.cjs",
