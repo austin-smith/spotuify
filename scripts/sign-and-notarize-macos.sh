@@ -29,8 +29,23 @@ certificate="$temporary/developer-id.p12"
 api_key="$temporary/AuthKey_${APPLE_API_KEY_ID}.p8"
 notarization_archive="$temporary/$(basename "$stage").zip"
 keychain_password="$(openssl rand -hex 32)"
+original_keychains=()
+keychain_list_changed=false
+
+while IFS= read -r existing_keychain; do
+  existing_keychain="$(
+    printf '%s' "$existing_keychain" |
+      sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//'
+  )"
+  if [[ -n "$existing_keychain" ]]; then
+    original_keychains+=("$existing_keychain")
+  fi
+done <<<"$(security list-keychains -d user)"
 
 cleanup() {
+  if [[ "$keychain_list_changed" == true ]]; then
+    security list-keychains -d user -s "${original_keychains[@]}" >/dev/null 2>&1 || true
+  fi
   security delete-keychain "$keychain" >/dev/null 2>&1 || true
   rm -rf "$temporary"
 }
@@ -52,11 +67,13 @@ security set-key-partition-list \
   -s \
   -k "$keychain_password" \
   "$keychain"
+security list-keychains -d user -s "$keychain" "${original_keychains[@]}"
+keychain_list_changed=true
 
 identity="$(
   security find-identity -v -p codesigning "$keychain" |
-    sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' |
-    head -n 1
+    awk '/"Developer ID Application:/ && identity == "" { identity = $2 }
+         END { print identity }'
 )"
 if [[ -z "$identity" ]]; then
   echo "the certificate does not contain a Developer ID Application identity" >&2
