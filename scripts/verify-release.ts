@@ -6,6 +6,7 @@ import {
   artifactName,
   assertNativeHost,
   buildVersion,
+  captureCommandOutput,
   DIST_DIR,
   releaseExecutableNames,
   releaseTarget,
@@ -20,23 +21,14 @@ const name = artifactName(version, target);
 const archive = resolve(DIST_DIR, archiveName(version, target));
 const temporary = await mkdtemp(resolve(tmpdir(), "spotuify-release-"));
 
-async function output(command: string[]): Promise<string> {
-  const process = Bun.spawn(command, {
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [exitCode, stdout] = await Promise.all([process.exited, new Response(process.stdout).text()]);
-  if (exitCode !== 0) throw new Error(`${command[0]} exited with status ${exitCode}`);
-  return stdout.trim();
-}
-
 try {
   const metadata = await stat(archive);
   if (!metadata.isFile() || metadata.size === 0) throw new Error(`${archive} is empty`);
   const expectedEntries = [...releaseExecutableNames(target)].sort();
   const expectedMembers = [`${name}/`, ...expectedEntries.map((file) => `${name}/${file}`)].sort();
-  const actualMembers = (await output(["tar", "-tf", archive])).split("\n").sort();
+  const actualMembers = (await captureCommandOutput(["tar", "-tf", archive]))
+    .split("\n")
+    .sort();
   if (JSON.stringify(actualMembers) !== JSON.stringify(expectedMembers)) {
     throw new Error(`archive contains unexpected members: ${actualMembers.join(", ")}`);
   }
@@ -60,9 +52,9 @@ try {
     await chmod(engine, 0o755);
   }
   const [mainVersion, engineVersion, licenses] = await Promise.all([
-    output([executable, "--version"]),
-    output([engine, "--version"]),
-    output([executable, "licenses"]),
+    captureCommandOutput([executable, "--version"]),
+    captureCommandOutput([engine, "--version"]),
+    captureCommandOutput([executable, "licenses"]),
   ]);
   if (mainVersion !== `spotuify ${version}`) {
     throw new Error(`main executable reported ${JSON.stringify(mainVersion)}`);

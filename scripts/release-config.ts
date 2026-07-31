@@ -155,6 +155,24 @@ export function releaseExecutableNames(target: ReleaseTarget): readonly [string,
   return [executableName("spotuify", target), executableName("spotuify-engine", target)];
 }
 
+export function normalizeCommandOutput(stdout: string): string {
+  return stdout.replaceAll("\r\n", "\n").trim();
+}
+
+export async function captureCommandOutput(command: string[]): Promise<string> {
+  const process = Bun.spawn(command, {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [exitCode, stdout] = await Promise.all([
+    process.exited,
+    new Response(process.stdout).text(),
+  ]);
+  if (exitCode !== 0) throw new Error(`${command[0]} exited with status ${exitCode}`);
+  return normalizeCommandOutput(stdout);
+}
+
 export async function run(
   command: string[],
   options: { cwd?: string; env?: Record<string, string | undefined> } = {},

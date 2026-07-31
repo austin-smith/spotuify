@@ -4,6 +4,7 @@ import { relative, resolve } from "node:path";
 import {
   assertNativeHost,
   buildVersion,
+  captureCommandOutput,
   RELEASE_TARGETS,
   releaseTarget,
   type ReleaseTarget,
@@ -19,20 +20,6 @@ import {
   npmRootManifest,
 } from "./npm-packages.ts";
 import { softwareLicenses } from "../src/licenses.ts";
-
-async function output(command: string[]): Promise<string> {
-  const process = Bun.spawn(command, {
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [exitCode, stdout] = await Promise.all([
-    process.exited,
-    new Response(process.stdout).text(),
-  ]);
-  if (exitCode !== 0) throw new Error(`${command[0]} exited with status ${exitCode}`);
-  return stdout.trim();
-}
 
 async function packageFiles(root: string): Promise<string[]> {
   const entries = await readdir(root, { recursive: true, withFileTypes: true });
@@ -116,9 +103,9 @@ async function verifyPlatformPackage(
         await chmod(engine, 0o755);
       }
       const [mainVersion, engineVersion, licenses] = await Promise.all([
-        output([executable, "--version"]),
-        output([engine, "--version"]),
-        output([executable, "licenses"]),
+        captureCommandOutput([executable, "--version"]),
+        captureCommandOutput([engine, "--version"]),
+        captureCommandOutput([executable, "licenses"]),
       ]);
       if (mainVersion !== `spotuify ${version}`) {
         throw new Error(`npm main executable reported ${JSON.stringify(mainVersion)}`);
@@ -153,8 +140,8 @@ async function verifyInstalledLauncher(version: string, target: ReleaseTarget): 
     });
     const launcher = resolve(installedRoot, "bin", "spotuify.cjs");
     const [launcherVersion, licenses] = await Promise.all([
-      output(["node", launcher, "--version"]),
-      output(["node", launcher, "licenses"]),
+      captureCommandOutput(["node", launcher, "--version"]),
+      captureCommandOutput(["node", launcher, "licenses"]),
     ]);
     if (launcherVersion !== `spotuify ${version}`) {
       throw new Error(`npm launcher reported ${JSON.stringify(launcherVersion)}`);

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import packageMetadata from "../package.json";
-import { canaryVersion } from "../scripts/release-config.ts";
+import { canaryVersion, normalizeCommandOutput } from "../scripts/release-config.ts";
 
 interface CargoManifest {
   package?: {
@@ -52,4 +52,9 @@ test("canary versions require a stable canonical version", () => {
   expect(() => canaryVersion("1.2.3+build.1", "42", "a".repeat(40))).toThrow(
     "stable semantic version",
   );
+});
+
+test("command output uses consistent line endings across platforms", () => {
+  expect(normalizeCommandOutput("first\r\nsecond\r\n")).toBe("first\nsecond");
+  expect(normalizeCommandOutput("first\nsecond\n")).toBe("first\nsecond");
 });
