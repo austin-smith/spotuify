@@ -52,6 +52,24 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Verify release tag signature
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_object="$(git rev-parse "${GITHUB_REF_NAME}^{tag}")"
+          verification="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" \
+              --jq '.verification | "\(.verified)\t\(.reason)"'
+          )"
+          IFS=$'\t' read -r verified reason <<< "$verification"
+          if [[ "$verified" != "true" ]]; then
+            echo "$GITHUB_REF_NAME does not have a GitHub-verified signature: $reason" >&2
+            exit 1
+          fi
+
       - name: Resolve publication
         id: publication
         env:

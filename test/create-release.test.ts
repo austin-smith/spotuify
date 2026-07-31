@@ -10,8 +10,8 @@ interface RepositoryFixture {
   readonly remote: string;
 }
 
-async function git(cwd: string, args: string[]): Promise<string> {
-  const process = Bun.spawn(["git", ...args], {
+async function command(cwd: string, executable: string, args: string[]): Promise<string> {
+  const process = Bun.spawn([executable, ...args], {
     cwd,
     stdin: "ignore",
     stdout: "pipe",
@@ -23,20 +23,38 @@ async function git(cwd: string, args: string[]): Promise<string> {
     new Response(process.stderr).text(),
   ]);
   if (exitCode !== 0) {
-    throw new Error(`git ${args.join(" ")} failed: ${stderr.trim()}`);
+    throw new Error(`${executable} ${args.join(" ")} failed: ${stderr.trim()}`);
   }
   return stdout.trim();
+}
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  return command(cwd, "git", args);
 }
 
 async function repositoryFixture(): Promise<RepositoryFixture> {
   const root = await mkdtemp(resolve(tmpdir(), "spotuify-create-release-"));
   const repository = resolve(root, "repository");
   const remote = resolve(root, "remote.git");
+  const signingKey = resolve(root, "release-signing-key");
   await mkdir(repository);
   await git(root, ["init", "--bare", remote]);
   await git(repository, ["init", "--initial-branch=main"]);
   await git(repository, ["config", "user.name", "Release Test"]);
   await git(repository, ["config", "user.email", "release-test@example.com"]);
+  await command(root, "ssh-keygen", [
+    "-q",
+    "-t",
+    "ed25519",
+    "-N",
+    "",
+    "-C",
+    "release-test@example.com",
+    "-f",
+    signingKey,
+  ]);
+  await git(repository, ["config", "gpg.format", "ssh"]);
+  await git(repository, ["config", "user.signingKey", signingKey]);
   await Bun.write(resolve(repository, "tracked.txt"), "initial\n");
   await git(repository, ["add", "tracked.txt"]);
   await git(repository, ["commit", "--message", "initial"]);
@@ -45,7 +63,7 @@ async function repositoryFixture(): Promise<RepositoryFixture> {
   return { root, repository, remote };
 }
 
-test("creates and pushes the canonical annotated release tag", async () => {
+test("creates and pushes the canonical signed release tag", async () => {
   const fixture = await repositoryFixture();
   try {
     await git(fixture.repository, [
@@ -59,10 +77,12 @@ test("creates and pushes the canonical annotated release tag", async () => {
     await expect(createRelease("1.2.3", fixture.repository)).resolves.toBe("v1.2.3");
     const head = await git(fixture.repository, ["rev-parse", "HEAD"]);
     const tagType = await git(fixture.repository, ["cat-file", "-t", "v1.2.3"]);
+    const tagObject = await git(fixture.repository, ["cat-file", "-p", "v1.2.3"]);
     const localTag = await git(fixture.repository, ["rev-list", "-n", "1", "v1.2.3"]);
     const remoteTag = await git(fixture.remote, ["rev-list", "-n", "1", "v1.2.3"]);
     const unrelatedRemoteTag = await git(fixture.remote, ["tag", "--list", "v1.1.0"]);
     expect(tagType).toBe("tag");
+    expect(tagObject).toContain("-----BEGIN SSH SIGNATURE-----");
     expect(localTag).toBe(head);
     expect(remoteTag).toBe(head);
     expect(unrelatedRemoteTag).toBe("");
@@ -123,6 +143,21 @@ test("removes the local tag when the remote rejects the push", async () => {
       "git push --no-follow-tags origin",
     );
     expect(await git(fixture.repository, ["tag", "--list", "v1.2.3"])).toBe("");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("refuses to create a release without a configured signing key", async () => {
+  const fixture = await repositoryFixture();
+  try {
+    await git(fixture.repository, ["config", "user.signingKey", ""]);
+
+    await expect(createRelease("1.2.3", fixture.repository)).rejects.toThrow(
+      "git tag --sign v1.2.3 --message v1.2.3 failed",
+    );
+    expect(await git(fixture.repository, ["tag", "--list", "v1.2.3"])).toBe("");
+    expect(await git(fixture.remote, ["tag", "--list", "v1.2.3"])).toBe("");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

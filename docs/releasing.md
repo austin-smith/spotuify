@@ -177,16 +177,19 @@ canary jobs; do not configure a second publisher.
    ```
 
    The command reads the version from `package.json`, requires a clean `main` exactly matching
-   `origin/main`, creates an annotated `vX.Y.Z` tag, and pushes only that tag.
+   `origin/main`, creates a signed `vX.Y.Z` tag, and pushes only that tag. Git must already be
+   configured with a signing key registered to the maintainer's GitHub account; the command or
+   workflow fails without publishing otherwise.
 
 7. Confirm that all four archives, `SHA256SUMS`, and `spotuify.rb` are attached before the draft is
    published.
 8. Confirm that `Formula/spotuify.rb` was updated in `austin-smith/homebrew-tap`.
 9. Confirm that all five npm packages have the released version.
 
-The workflow rejects a tag unless it points to a commit on `main` and exactly matches the canonical
-`package.json` version and duplicate native Cargo version. It also extracts each finished archive
-and executes `spotuify --version` and `spotuify-engine --version` before publication.
+The workflow rejects a tag unless GitHub verifies its signature, it points to a commit on `main`,
+and it exactly matches the canonical `package.json` version and duplicate native Cargo version. It
+also extracts each finished archive and executes `spotuify --version` and
+`spotuify-engine --version` before publication.
 
 ## Failed and incorrect releases
 
