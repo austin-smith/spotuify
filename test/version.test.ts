@@ -26,27 +26,29 @@ test("product and native manifests share one stable unpublished version", async 
 });
 
 test("canary versions are immutable SemVer identifiers ordered by workflow run", () => {
-  const commitTimestamp = String(Date.UTC(2026, 6, 31) / 1_000);
-  const version = canaryVersion("1.2.3", "30600831370", commitTimestamp);
+  const version = canaryVersion("1.2.3", "30600831370", "2026-07-31T11:10:57Z");
 
   expect(version).toBe("1.2.3-canary.20260731.30600831370");
   expect(version).toMatch(STRICT_SEMVER);
 });
 
-test("canary versions reject invalid run numbers and commit timestamps", () => {
-  expect(() => canaryVersion("1.2.3", "0", "1785456000")).toThrow(
+test("canary versions reject invalid run numbers and workflow creation times", () => {
+  expect(() => canaryVersion("1.2.3", "0", "2026-07-31T11:10:57Z")).toThrow(
     "run number must be a positive integer",
   );
-  expect(() => canaryVersion("1.2.3", "42", "not-a-timestamp")).toThrow(
-    "timestamp must be a non-negative integer",
+  expect(() => canaryVersion("1.2.3", "42", "2026-07-31")).toThrow(
+    "ISO 8601 UTC timestamp",
+  );
+  expect(() => canaryVersion("1.2.3", "42", "2026-02-29T11:10:57Z")).toThrow(
+    "valid UTC timestamp",
   );
 });
 
 test("canary versions require a stable canonical version", () => {
-  expect(() => canaryVersion("1.2.3-beta.1", "42", "1785456000")).toThrow(
+  expect(() => canaryVersion("1.2.3-beta.1", "42", "2026-07-31T11:10:57Z")).toThrow(
     "stable semantic version",
   );
-  expect(() => canaryVersion("1.2.3+build.1", "42", "1785456000")).toThrow(
+  expect(() => canaryVersion("1.2.3+build.1", "42", "2026-07-31T11:10:57Z")).toThrow(
     "stable semantic version",
   );
 });
