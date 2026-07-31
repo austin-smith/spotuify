@@ -12,6 +12,7 @@ import {
   shouldRetryBootProfile,
 } from "../auth/profile.ts";
 import { ReauthRequiredError } from "../auth/tokens.ts";
+import { MissingClientIdError } from "../config.ts";
 import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
 import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
@@ -31,6 +32,7 @@ import { FeedbackBanner, feedbackTopAboveHud } from "./FeedbackBanner.tsx";
 import { LyricsView } from "./LyricsView.tsx";
 import { QueueView } from "./QueueView.tsx";
 import { SetupScreen } from "./SetupScreen.tsx";
+import { StartupErrorScreen } from "./StartupErrorScreen.tsx";
 import { Hud, HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
 import { KeyHints, KEY_HINT_ROWS } from "./KeyHints.tsx";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
@@ -43,6 +45,7 @@ import { theme } from "./theme.ts";
 type Boot =
   | { phase: "loading" }
   | { phase: "needs-setup" }
+  | { phase: "failed"; message: string }
   | {
       phase: "ready";
       me: Me | null;
@@ -51,6 +54,28 @@ type Boot =
       authorizationId: string;
       profileRetryAt: number | null;
     };
+
+type BootFailure = Extract<Boot, { phase: "needs-setup" | "failed" }>;
+
+function isSetupFailure(error: unknown): boolean {
+  return (
+    error instanceof MissingClientIdError ||
+    error instanceof ReauthRequiredError ||
+    (error instanceof SpotifyApiError &&
+      (error.status === 400 || error.status === 401 || error.status === 403))
+  );
+}
+
+export function bootFailureFor(error: unknown): BootFailure {
+  if (isSetupFailure(error)) {
+    return { phase: "needs-setup" };
+  }
+
+  return {
+    phase: "failed",
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
 
 export function updateNoticeIsVisible(
   bootPhase: Boot["phase"],
@@ -71,6 +96,7 @@ export function App({ version }: { version: string }) {
   const [engineClient, setEngineClient] = useState<LibrespotEngine | null>(null);
   const [profileRecoveryRequest, setProfileRecoveryRequest] = useState(0);
   const [profileRecoveryFailed, setProfileRecoveryFailed] = useState(false);
+  const [bootAttempt, setBootAttempt] = useState(0);
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [showUpdateNotice, setShowUpdateNotice] = useState(false);
   const profileRecoveryController = useRef<AbortController | null>(null);
@@ -172,16 +198,16 @@ export function App({ version }: { version: string }) {
           authorizationId,
           profileRetryAt: profileResolution.retryAt,
         });
-      } catch {
+      } catch (error) {
         if (canceled) return;
-        setBoot({ phase: "needs-setup" });
+        setBoot(bootFailureFor(error));
       }
     })();
 
     return () => {
       canceled = true;
     };
-  }, []);
+  }, [bootAttempt]);
 
   useEffect(() => {
     if (bootPlayer === null) return;
@@ -300,11 +326,7 @@ export function App({ version }: { version: string }) {
             : err instanceof Error
               ? err.message
               : String(err);
-        if (
-          err instanceof ReauthRequiredError ||
-          (err instanceof SpotifyApiError &&
-            (err.status === 400 || err.status === 401 || err.status === 403))
-        ) {
+        if (isSetupFailure(err)) {
           setBoot((current) =>
             current.phase === "ready" &&
             current.client === bootClient &&
@@ -491,6 +513,11 @@ export function App({ version }: { version: string }) {
       renderer.destroy();
       return;
     }
+    if (boot.phase === "failed" && key.name === "r") {
+      setBoot({ phase: "loading" });
+      setBootAttempt((attempt) => attempt + 1);
+      return;
+    }
     if (boot.phase !== "ready") return;
 
     if (key.name === "/") {
@@ -634,6 +661,15 @@ export function App({ version }: { version: string }) {
     return (
       <SetupScreen
         updateAvailable={showUpdateNotice && availableUpdate !== null}
+        width={width}
+        height={height}
+      />
+    );
+  }
+  if (boot.phase === "failed") {
+    return (
+      <StartupErrorScreen
+        message={boot.message}
         width={width}
         height={height}
       />
