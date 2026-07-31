@@ -4,34 +4,13 @@ import { authenticate, tokenStore } from "./auth/flow.ts";
 import { resolveBootProfile, saveProfileBestEffort } from "./auth/profile.ts";
 import { prepareClientId } from "./auth/setup.ts";
 import type { Me } from "./api/types.ts";
-import { REDIRECT_URI } from "./config.ts";
+import { CliCancelledError, CliPresenter } from "./cli/presenter.ts";
 import { authenticateEngine, missingEngineMessage } from "./engine/librespot.ts";
 import { runUpdateCommand } from "./update-command.ts";
+import { UPDATE_AVAILABLE_EXIT_CODE } from "./update.ts";
 import { VERSION } from "./version.ts";
 
-/** `name (product, country)`, degrading gracefully when the scope didn't grant those fields. */
-function describeAccount(me: Me): string {
-  const details = [me.product, me.country].filter((d) => d !== undefined);
-  const name = me.display_name ?? me.id;
-  return details.length > 0 ? `${name} (${details.join(", ")})` : name;
-}
-
-const USAGE = `spotuify — spotify in ur terminal
-
-Usage:
-  spotuify auth [--force] [--force-engine] [--reset]
-                             Authorize with Spotify
-                             --reset  Reset Client ID and authorize
-  spotuify whoami            Show the authenticated account
-  spotuify licenses          Show software licenses and third-party notices
-  spotuify update [--check]  Install an available update (--check only reports it)
-  spotuify -v, --version     Show the product version
-  spotuify                   Launch the TUI
-
-Redirect URI to register in your Spotify app: ${REDIRECT_URI}
-`;
-
-async function main(argv: string[]): Promise<number | null> {
+async function main(argv: string[], presenter: CliPresenter): Promise<number | null> {
   const [command, ...rest] = argv;
 
   switch (command) {
@@ -41,59 +20,51 @@ async function main(argv: string[]): Promise<number | null> {
         rest.some((argument) => !allowedArguments.has(argument)) ||
         new Set(rest).size !== rest.length
       ) {
-        console.error("Usage: spotuify auth [--force] [--force-engine] [--reset]");
+        presenter.usageError("Invalid auth options.", "auth");
         return 2;
       }
 
-      const setup = await prepareClientId({ reset: rest.includes("--reset") });
+      presenter.beginAuth();
+      const setup = await prepareClientId(
+        { reset: rest.includes("--reset") },
+        {
+          question: () => presenter.askClientId(),
+          onEvent: (event) => presenter.clientIdSetupEvent(event),
+        },
+      );
+      presenter.checkingWebApi();
       const token = await authenticate({
         clientId: setup.clientId,
         force: setup.requiresAuthorization || rest.includes("--force"),
+        onEvent: (event) => presenter.webAuthenticationEvent(event),
       });
       await setup.commit();
 
       const tokens = await tokenStore(setup.clientId);
       const client = new SpotifyClient(tokens);
       const { profile: me } = await resolveBootProfile(client, token.authorizationId);
-      if (me === null) {
-        console.warn(
-          "Web API authorization succeeded, but Spotify's quota is exhausted; account details are unavailable.",
-        );
-      } else {
-        console.log(`Authenticated as ${describeAccount(me)}`);
-      }
+      presenter.webApiAuthorized(me, token.expiresAt);
       // Only warn on a *known* non-premium account — an absent `product` is a scope gap, not free.
       if (me?.product !== undefined && me.product !== "premium") {
-        console.warn("\nWarning: playback control requires Spotify Premium.");
+        presenter.premiumWarning();
       }
-      console.log(`Token expires ${new Date(token.expiresAt).toLocaleTimeString()}.`);
 
       // Second, independent login: the native engine owns librespot's OAuth and credential cache.
+      presenter.checkingPlayback();
+      let playbackDiagnostic: string | undefined;
       const playbackAuth = await authenticateEngine({
         force: rest.includes("--force-engine"),
+        onEvent: (event) => {
+          if (event.type === "diagnostic") playbackDiagnostic = event.message;
+          presenter.engineAuthenticationEvent(event);
+        },
       });
-      switch (playbackAuth) {
-        case "authorized":
-          console.log("Playback engine authorized. spotuify will appear as a Spotify device.");
-          break;
-        case "missing":
-          console.warn(
-            "\nThe native playback engine is unavailable, so spotuify cannot play audio itself.\n" +
-              `${missingEngineMessage()}\n` +
-              "Without it, spotuify can only control other Spotify devices.",
-          );
-          break;
-        case "timed-out":
-          console.warn(
-            "\nPlayback sign-in timed out; playback in the terminal is disabled.",
-          );
-          break;
-        case "failed":
-          console.warn(
-            "\nPlayback sign-in did not complete; playback in the terminal is disabled.",
-          );
-          break;
-      }
+      presenter.playbackAuthenticationResult(
+        playbackAuth,
+        missingEngineMessage(),
+        playbackDiagnostic,
+      );
+      presenter.finishAuth(playbackAuth);
       return 0;
     }
 
@@ -102,14 +73,14 @@ async function main(argv: string[]): Promise<number | null> {
       const client = new SpotifyClient(tokens);
       const me = await client.get<Me>("/me");
       await saveProfileBestEffort(me, await tokens.authorizationId());
-      console.log(describeAccount(me));
+      presenter.showAccount(me);
       return 0;
     }
 
     case "help":
     case "--help":
     case "-h":
-      console.log(USAGE);
+      presenter.showHelp();
       return 0;
 
     case "-v":
@@ -125,19 +96,23 @@ async function main(argv: string[]): Promise<number | null> {
 
     case "update": {
       if (rest.some((argument) => argument !== "--check") || rest.length > 1) {
-        console.error("Usage: spotuify update [--check]");
+        presenter.usageError("Invalid update options.", "update");
         return 2;
       }
-      return await runUpdateCommand({
+      presenter.beginUpdate();
+      const code = await runUpdateCommand({
         currentVersion: VERSION,
         checkOnly: rest.includes("--check"),
+        stdout: (message) => presenter.updateMessage(message),
+        stderr: (message) => presenter.updateError(message),
       });
+      presenter.finishUpdate(code === 0, code === UPDATE_AVAILABLE_EXIT_CODE);
+      return code;
     }
 
     default:
       if (command !== undefined) {
-        console.error(`Unknown command: ${command}\n`);
-        console.error(USAGE);
+        presenter.usageError(`Unknown command: ${command}`, "unknown");
         return 2;
       }
       // No subcommand: launch the TUI. Imported lazily so CLI paths never construct a renderer.
@@ -147,10 +122,14 @@ async function main(argv: string[]): Promise<number | null> {
   }
 }
 
+const presenter = new CliPresenter();
 try {
-  const code = await main(process.argv.slice(2));
+  const code = await main(process.argv.slice(2), presenter);
   if (code !== null) process.exitCode = code;
 } catch (err) {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exitCode = 1;
+  if (err instanceof CliCancelledError) process.exitCode = 130;
+  else {
+    presenter.fatal(err);
+    process.exitCode = 1;
+  }
 }

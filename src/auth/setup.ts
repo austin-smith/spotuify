@@ -10,12 +10,16 @@ import { TokenStore } from "./tokens.ts";
 
 const DASHBOARD_URL = "https://developer.spotify.com/dashboard";
 
+export type ClientIdSetupEvent =
+  | { type: "setup-required"; dashboardUrl: string; redirectUri: string }
+  | { type: "saved" };
+
 type SetupDependencies = {
   resolve?: () => Promise<ResolvedClientId>;
   hasAuthorization?: (clientId: string) => Promise<boolean>;
   save?: (clientId: string) => Promise<void>;
   question?: (prompt: string) => Promise<string>;
-  log?: (message: string) => void;
+  onEvent?: (event: ClientIdSetupEvent) => void;
 };
 
 async function hasStoredAuthorization(clientId: string): Promise<boolean> {
@@ -45,6 +49,23 @@ async function questionInTerminal(prompt: string): Promise<string> {
   }
 }
 
+function reportSetupEvent(event: ClientIdSetupEvent): void {
+  if (event.type === "saved") {
+    console.log("\nSaved for future use.\n");
+    return;
+  }
+  console.log(
+    [
+      "Spotify app setup",
+      "",
+      `1. Create an app: ${event.dashboardUrl}`,
+      `2. Add this redirect URI: ${event.redirectUri}`,
+      "3. Paste the app’s Client ID below.",
+      "",
+    ].join("\n"),
+  );
+}
+
 /**
  * Resolve an existing Client ID or collect a replacement without persisting it.
  *
@@ -58,7 +79,7 @@ export async function prepareClientId(
     hasAuthorization = hasStoredAuthorization,
     save = saveClientId,
     question = questionInTerminal,
-    log = console.log,
+    onEvent = reportSetupEvent,
   }: SetupDependencies = {},
 ): Promise<ClientIdSetup> {
   let resolved: ResolvedClientId | undefined;
@@ -90,16 +111,7 @@ export async function prepareClientId(
     }
   }
 
-  log(
-    [
-      "Spotify app setup",
-      "",
-      `1. Create an app: ${DASHBOARD_URL}`,
-      `2. Add this redirect URI: ${REDIRECT_URI}`,
-      "3. Paste the app’s Client ID below.",
-      "",
-    ].join("\n"),
-  );
+  onEvent({ type: "setup-required", dashboardUrl: DASHBOARD_URL, redirectUri: REDIRECT_URI });
 
   const clientId = (await question("Client ID: ")).trim();
   if (clientId.length === 0) throw new Error("Client ID cannot be empty.");
@@ -112,7 +124,7 @@ export async function prepareClientId(
       if (committed) return;
       await save(clientId);
       committed = true;
-      log("\nSaved for future use.\n");
+      onEvent({ type: "saved" });
     },
   };
 }

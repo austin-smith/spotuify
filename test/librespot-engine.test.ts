@@ -7,6 +7,7 @@ import {
   engineRestartDelay,
   LibrespotEngine,
   NativePlaybackUnavailableError,
+  parseEngineAuthenticationOutput,
   parseEngineMessage,
   sidecarCandidatePaths,
 } from "../src/engine/librespot.ts";
@@ -61,6 +62,7 @@ describe("librespot sidecar protocol", () => {
     const source = `#!/usr/bin/env bun
 import { writeFileSync } from "node:fs";
 const config = JSON.parse(await Bun.stdin.text());
+console.log("Browse to: https://accounts.spotify.com/authorize?state=test");
 writeFileSync(${JSON.stringify(received)}, JSON.stringify({
   args: process.argv.slice(2),
   config,
@@ -71,9 +73,20 @@ writeFileSync(${JSON.stringify(received)}, JSON.stringify({
       await Bun.write(sidecar, source);
       await chmod(sidecar, 0o700);
 
+      const events: unknown[] = [];
+
       await expect(
-        authenticateEngine({ force: true, sidecarPath: sidecar }, 1_000),
+        authenticateEngine(
+          { force: true, sidecarPath: sidecar, onEvent: (event) => events.push(event) },
+          1_000,
+        ),
       ).resolves.toBe("authorized");
+      expect(events).toEqual([
+        {
+          type: "authorization-required",
+          url: "https://accounts.spotify.com/authorize?state=test",
+        },
+      ]);
       expect(await Bun.file(received).json()).toMatchObject({
         args: ["auth"],
         config: {
@@ -95,21 +108,44 @@ writeFileSync(${JSON.stringify(received)}, JSON.stringify({
     try {
       await Bun.write(
         failure,
-        "#!/usr/bin/env bun\nawait Bun.stdin.text();\nprocess.exit(1);\n",
+        '#!/usr/bin/env bun\nawait Bun.stdin.text();\nconsole.error("credential-free failure");\nprocess.exit(1);\n',
       );
       await Bun.write(silent, "#!/usr/bin/env bun\nsetInterval(() => {}, 1000);\n");
       await chmod(failure, 0o700);
       await chmod(silent, 0o700);
 
+      const events: unknown[] = [];
       await expect(
-        authenticateEngine({ sidecarPath: failure }, 1_000),
+        authenticateEngine(
+          { sidecarPath: failure, onEvent: (event) => events.push(event) },
+          1_000,
+        ),
       ).resolves.toBe("failed");
+      expect(events).toEqual([{ type: "diagnostic", message: "credential-free failure" }]);
       await expect(
         authenticateEngine({ sidecarPath: silent }, 20),
       ).resolves.toBe("timed-out");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  test("accepts only Spotify authorization URLs from native auth output", () => {
+    expect(
+      parseEngineAuthenticationOutput(
+        "Browse to: https://accounts.spotify.com/authorize?state=expected",
+      ),
+    ).toEqual({
+      type: "authorization-required",
+      url: "https://accounts.spotify.com/authorize?state=expected",
+    });
+    expect(
+      parseEngineAuthenticationOutput("Browse to: https://example.com/authorize?state=forged"),
+    ).toBeNull();
+    expect(
+      parseEngineAuthenticationOutput("Browse to: https://accounts.spotify.com/not-authorize"),
+    ).toBeNull();
+    expect(parseEngineAuthenticationOutput("unstructured native output")).toBeNull();
   });
 
   test("reconnect backoff is bounded rather than an infinite login loop", () => {

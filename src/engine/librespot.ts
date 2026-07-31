@@ -70,6 +70,29 @@ function errorMessage(error: unknown): string {
 
 export type EngineAuthenticationResult = "authorized" | "missing" | "failed" | "timed-out";
 
+export type EngineAuthenticationEvent =
+  | { type: "authorization-required"; url: string }
+  | { type: "diagnostic"; message: string };
+
+export function parseEngineAuthenticationOutput(line: string): EngineAuthenticationEvent | null {
+  const prefix = "Browse to: ";
+  if (!line.startsWith(prefix)) return null;
+  const rawUrl = line.slice(prefix.length).trim();
+  try {
+    const url = new URL(rawUrl);
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== "accounts.spotify.com" ||
+      url.pathname !== "/authorize"
+    ) {
+      return null;
+    }
+    return { type: "authorization-required", url: url.toString() };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Ask the native playback engine to run librespot's independent OAuth flow.
  *
@@ -77,7 +100,11 @@ export type EngineAuthenticationResult = "authorized" | "missing" | "failed" | "
  * process boundary; the engine owns its own OAuth token, reusable credentials, and cache security.
  */
 export async function authenticateEngine(
-  options: { force?: boolean; sidecarPath?: string } = {},
+  options: {
+    force?: boolean;
+    sidecarPath?: string;
+    onEvent?: (event: EngineAuthenticationEvent) => void;
+  } = {},
   timeoutMs = 180_000,
 ): Promise<EngineAuthenticationResult> {
   const binary =
@@ -88,8 +115,8 @@ export async function authenticateEngine(
 
   const proc = Bun.spawn([binary, "auth"], {
     stdin: "pipe",
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
   proc.stdin.write(
     `${JSON.stringify({
@@ -100,6 +127,16 @@ export async function authenticateEngine(
   );
   await proc.stdin.end();
 
+  const diagnostics: string[] = [];
+  const stdoutTask = consumeLines(proc.stdout, (line) => {
+    const event = parseEngineAuthenticationOutput(line);
+    if (event !== null) options.onEvent?.(event);
+  });
+  const stderrTask = consumeLines(proc.stderr, (line) => {
+    const message = line.trim();
+    if (message.length > 0 && diagnostics.length < 8) diagnostics.push(message);
+  });
+
   let timedOut = false;
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -107,7 +144,11 @@ export async function authenticateEngine(
   }, timeoutMs);
   try {
     const code = await proc.exited;
+    await Promise.all([stdoutTask, stderrTask]);
     if (timedOut) return "timed-out";
+    if (code !== 0 && diagnostics.length > 0) {
+      options.onEvent?.({ type: "diagnostic", message: diagnostics.join(" ") });
+    }
     return code === 0 ? "authorized" : "failed";
   } finally {
     clearTimeout(timeout);
