@@ -299,11 +299,11 @@ jobs:
               exit 0
             fi
             gh release upload "$GITHUB_REF_NAME" \
-              dist/*.tar.gz dist/*.zip dist/SHA256SUMS dist/spotuify.rb THIRD_PARTY_NOTICES.txt \
+              dist/*.tar.gz dist/*.zip dist/SHA256SUMS dist/spotuify.rb \
               --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
-              dist/*.tar.gz dist/*.zip dist/SHA256SUMS dist/spotuify.rb THIRD_PARTY_NOTICES.txt \
+              dist/*.tar.gz dist/*.zip dist/SHA256SUMS dist/spotuify.rb \
               --draft \
               --generate-notes \
               --title "$GITHUB_REF_NAME" \

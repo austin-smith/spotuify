@@ -17,7 +17,6 @@ The tag `vX.Y.Z` produces:
 | `spotuify-vX.Y.Z-windows-x64.zip` | `windows-2025` | Windows 11, x86-64 |
 | `SHA256SUMS` | release publisher | All archive checksums |
 | `spotuify.rb` | release publisher | Formula ready for `homebrew-tap` |
-| `THIRD_PARTY_NOTICES.txt` | release publisher | Notices for bundled dependencies |
 
 Every archive has one top-level directory containing two executables. Windows uses the same names
 with an `.exe` suffix.
@@ -30,8 +29,8 @@ spotuify-vX.Y.Z-<platform>-<architecture>/
 
 The two executables must remain together for a direct installation. The generated Homebrew formula
 supports Apple silicon macOS, installs `spotuify` into `bin`, and keeps `spotuify-engine` private in
-`libexec`. Dependency notices are published once as a separate release asset instead of being
-duplicated inside every platform archive.
+`libexec`. License terms and third-party notices are embedded in `spotuify` and available through
+`spotuify licenses`, so every distribution includes them without adding files to the archives.
 
 The npm workflow publishes one user-facing package and four internal platform packages:
 
@@ -165,8 +164,8 @@ credentials and npm provenance.
    git push origin vX.Y.Z
    ```
 
-7. Confirm that all four archives, `SHA256SUMS`, `spotuify.rb`, and
-   `THIRD_PARTY_NOTICES.txt` are attached before the draft is published.
+7. Confirm that all four archives, `SHA256SUMS`, and `spotuify.rb` are attached before the draft is
+   published.
 8. Confirm that `Formula/spotuify.rb` was updated in `austin-smith/homebrew-tap`.
 9. Confirm that all five npm packages have the released version.
 

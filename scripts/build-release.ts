@@ -21,6 +21,10 @@ const cargoTarget = resolve(REPO_ROOT, "dist", "cargo-target", target.id);
 const bunWorkDirectory = resolve(REPO_ROOT, "dist", "bun-work", target.id);
 const mainExecutable = resolve(stage, executableName("spotuify", target));
 const engineExecutable = resolve(stage, executableName("spotuify-engine", target));
+const [spotuifyLicense, thirdPartyNotices] = await Promise.all([
+  Bun.file(resolve(REPO_ROOT, "LICENSE")).text(),
+  Bun.file(resolve(REPO_ROOT, "THIRD_PARTY_NOTICES.txt")).text(),
+]);
 
 await rm(stage, { recursive: true, force: true });
 await mkdir(stage, { recursive: true });
@@ -53,6 +57,8 @@ try {
     entrypoints: [resolve(REPO_ROOT, "src", "cli.ts")],
     define: {
       SPOTUIFY_STANDALONE: "true",
+      SPOTUIFY_LICENSE_TEXT: JSON.stringify(spotuifyLicense),
+      SPOTUIFY_THIRD_PARTY_NOTICES_TEXT: JSON.stringify(thirdPartyNotices),
     },
     compile: {
       target: target.bunTarget,

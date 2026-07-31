@@ -18,6 +18,7 @@ import {
   npmPlatformPackage,
   npmRootManifest,
 } from "./npm-packages.ts";
+import { softwareLicenses } from "../src/licenses.ts";
 
 async function output(command: string[]): Promise<string> {
   const process = Bun.spawn(command, {
@@ -107,21 +108,26 @@ async function verifyPlatformPackage(
 
     if (execute) {
       assertNativeHost(target);
+      const expectedLicenses = (await softwareLicenses()).trim();
       const executable = resolve(packageRoot, "bin", mainExecutable);
       const engine = resolve(packageRoot, "bin", engineExecutable);
       if (target.platform !== "win32") {
         await chmod(executable, 0o755);
         await chmod(engine, 0o755);
       }
-      const [mainVersion, engineVersion] = await Promise.all([
+      const [mainVersion, engineVersion, licenses] = await Promise.all([
         output([executable, "--version"]),
         output([engine, "--version"]),
+        output([executable, "licenses"]),
       ]);
       if (mainVersion !== `spotuify ${version}`) {
         throw new Error(`npm main executable reported ${JSON.stringify(mainVersion)}`);
       }
       if (engineVersion !== `spotuify-engine ${version}`) {
         throw new Error(`npm engine executable reported ${JSON.stringify(engineVersion)}`);
+      }
+      if (licenses !== expectedLicenses) {
+        throw new Error("npm main executable reported unexpected software licenses");
       }
     }
   } finally {
@@ -131,6 +137,7 @@ async function verifyPlatformPackage(
 
 async function verifyInstalledLauncher(version: string, target: ReleaseTarget): Promise<void> {
   assertNativeHost(target);
+  const expectedLicenses = (await softwareLicenses()).trim();
   const root = await extractPackage(NPM_ROOT_PACKAGE, version);
   const platformPackage = npmPlatformPackage(target);
   const platform = await extractPackage(platformPackage.name, version);
@@ -144,13 +151,16 @@ async function verifyInstalledLauncher(version: string, target: ReleaseTarget): 
     await cp(platform.packageRoot, resolve(nodeModules, platformPackage.name), {
       recursive: true,
     });
-    const launcherVersion = await output([
-      "node",
-      resolve(installedRoot, "bin", "spotuify.cjs"),
-      "--version",
+    const launcher = resolve(installedRoot, "bin", "spotuify.cjs");
+    const [launcherVersion, licenses] = await Promise.all([
+      output(["node", launcher, "--version"]),
+      output(["node", launcher, "licenses"]),
     ]);
     if (launcherVersion !== `spotuify ${version}`) {
       throw new Error(`npm launcher reported ${JSON.stringify(launcherVersion)}`);
+    }
+    if (licenses !== expectedLicenses) {
+      throw new Error("npm launcher reported unexpected software licenses");
     }
   } finally {
     await Promise.all([

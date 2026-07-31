@@ -48,6 +48,7 @@ ${source("darwin-arm64")}
   test do
     assert_match "spotuify #{version}", shell_output("#{bin}/spotuify --version")
     assert_match "spotuify-engine #{version}", shell_output("#{libexec}/spotuify-engine --version")
+    assert_match "spotuify third-party software notices", shell_output("#{bin}/spotuify licenses")
   end
 end
 `;

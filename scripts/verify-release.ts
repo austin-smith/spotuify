@@ -11,6 +11,7 @@ import {
   releaseTarget,
   run,
 } from "./release-config.ts";
+import { softwareLicenses } from "../src/licenses.ts";
 
 const target = releaseTarget();
 assertNativeHost(target);
@@ -53,19 +54,24 @@ try {
   const [mainName, engineName] = releaseExecutableNames(target);
   const executable = resolve(root, mainName);
   const engine = resolve(root, engineName);
+  const expectedLicenses = (await softwareLicenses()).trim();
   if (target.platform !== "win32") {
     await chmod(executable, 0o755);
     await chmod(engine, 0o755);
   }
-  const [mainVersion, engineVersion] = await Promise.all([
+  const [mainVersion, engineVersion, licenses] = await Promise.all([
     output([executable, "--version"]),
     output([engine, "--version"]),
+    output([executable, "licenses"]),
   ]);
   if (mainVersion !== `spotuify ${version}`) {
     throw new Error(`main executable reported ${JSON.stringify(mainVersion)}`);
   }
   if (engineVersion !== `spotuify-engine ${version}`) {
     throw new Error(`engine executable reported ${JSON.stringify(engineVersion)}`);
+  }
+  if (licenses !== expectedLicenses) {
+    throw new Error("main executable reported unexpected software licenses");
   }
   console.log(`verified ${archive}`);
 } finally {

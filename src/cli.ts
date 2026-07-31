@@ -20,6 +20,7 @@ Usage:
   spotuify auth [--force] [--force-engine]
                              Authorize with Spotify (run this first; opens a browser)
   spotuify whoami            Show the authenticated account
+  spotuify licenses          Show software licenses and third-party notices
   spotuify -v, --version     Show the product version
   spotuify                   Launch the TUI
 
@@ -96,6 +97,12 @@ async function main(argv: string[]): Promise<number | null> {
     case "--version":
       console.log(`spotuify ${VERSION}`);
       return 0;
+
+    case "licenses": {
+      const { softwareLicenses } = await import("./licenses.ts");
+      console.log(await softwareLicenses());
+      return 0;
+    }
 
     default:
       if (command !== undefined) {
