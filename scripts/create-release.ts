@@ -74,7 +74,14 @@ export async function createRelease(
     throw commandError(["show-ref", "--verify", "--quiet", tagRef], existingTag);
   }
 
-  await requireGit(repoRoot, ["tag", "--sign", tag, "--message", tag]);
+  await requireGit(repoRoot, [
+    "tag",
+    "--annotate",
+    "--no-sign",
+    tag,
+    "--message",
+    tag,
+  ]);
   const pushArgs = ["push", "--no-follow-tags", "origin", `${tagRef}:${tagRef}`];
   const push = await git(repoRoot, pushArgs);
   if (push.exitCode !== 0) {
