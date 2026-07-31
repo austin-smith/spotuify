@@ -90,7 +90,7 @@ async function main(argv: string[], presenter: CliPresenter): Promise<number | n
 
     case "licenses": {
       const { softwareLicenses } = await import("./licenses.ts");
-      console.log(await softwareLicenses());
+      await Bun.write(Bun.stdout, `${await softwareLicenses()}\n`);
       return 0;
     }
 
