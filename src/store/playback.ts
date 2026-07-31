@@ -436,6 +436,11 @@ function scheduleReconciliation(
   clearTimer(reconcileTimer);
   reconcileTimer = setTimeout(() => {
     reconcileTimer = null;
+    if (api === null || api !== expectedApi || runId !== expectedRun) return;
+    if (performance.now() < notBefore) {
+      scheduleReconciliation(get, requiredRevision, notBefore);
+      return;
+    }
     void (async () => {
       // An older read cannot satisfy this barrier. Wait for it to leave the single-flight slot,
       // then ensure a read was started after the mutation that requested reconciliation.
@@ -452,7 +457,7 @@ function scheduleReconciliation(
       }
       await get().refresh();
     })();
-  }, Math.max(0, notBefore - performance.now()));
+  }, Math.max(0, Math.ceil(notBefore - performance.now())));
 }
 
 interface WebMutationGuard {

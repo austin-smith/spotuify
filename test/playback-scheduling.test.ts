@@ -40,6 +40,14 @@ const REMOTE_STATE: PlaybackState = {
 
 let stop: (() => void) | undefined;
 
+async function eventually(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (!predicate()) {
+    if (performance.now() >= deadline) throw new Error("condition did not become true");
+    await Bun.sleep(5);
+  }
+}
+
 beforeEach(() => {
   usePlayback.setState({
     item: null,
@@ -596,7 +604,7 @@ describe("native receiver routing", () => {
 
     expect(usePlayback.getState().deviceId).toBeNull();
     await usePlayback.getState().resumeWebReconciliation();
-    await Bun.sleep(COMMAND_RECONCILE_MS + 50);
+    await eventually(() => usePlayback.getState().deviceId === "remote");
 
     expect(reads).toBe(1);
     expect(usePlayback.getState().deviceId).toBe("remote");
