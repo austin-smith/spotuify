@@ -13,15 +13,20 @@
   <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="90%" />
 </p>
 
+## Install
+
+### macOS (Homebrew)
+
+```sh
+brew install austin-smith/tap/spotuify
+```
+
+### Linux
+
+Download the appropriate archive from
+[GitHub Releases](https://github.com/austin-smith/spotuify/releases).
+
 ## Setup
-
-Running from source requires [Bun](https://bun.sh) and the stable
-[Rust toolchain](https://rustup.rs/).
-
-On Linux, install the native build dependencies:
-
-- Debian/Ubuntu: `sudo apt install build-essential pkg-config libasound2-dev`
-- Arch: `sudo pacman -S --needed base-devel alsa-lib`
 
 Playback requires [Spotify Premium](https://www.spotify.com/us/premium/).
 
@@ -48,19 +53,28 @@ echo '{"clientId":"<your client id>"}' > ~/.config/spotuify/config.json
 ### 3. Authorize
 
 ```bash
-bun run auth
+spotuify auth
 ```
 
 The Web API token pair is cached at `~/.config/spotuify/token.json` with mode `0600` and refreshed
 automatically. Spotify refresh tokens expire six months after authorization; when that happens,
-re-run `bun run auth` to complete the interactive flow again.
+re-run `spotuify auth` to complete the interactive flow again.
 
 This authorizes both the Spotify Web API and terminal playback. Re-run it with `--force` to replace
 the Web API login or `--force-engine` to replace only the playback login.
 
 ## Development
 
+Running from source requires [Bun](https://bun.sh) and [Rust](https://rustup.rs/).
+
+On Linux, install the native build dependencies:
+
+- Debian/Ubuntu: `sudo apt install build-essential pkg-config libasound2-dev`
+- Arch: `sudo pacman -S --needed base-devel alsa-lib`
+
 ```sh
+bun install
+bun run auth          # build and authorize both Spotify sessions
 bun run dev           # run the TUI
 bun test              # unit tests
 bun run typecheck     # TypeScript

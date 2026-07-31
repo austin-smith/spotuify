@@ -1,7 +1,7 @@
+import { missingEngineHint, type EngineStatus } from "../engine/librespot.ts";
 import { KEYMAP, type KeyGroup } from "./keys.ts";
-import { theme } from "./theme.ts";
-import type { EngineStatus } from "../engine/librespot.ts";
 import { truncate } from "./text.ts";
+import { theme } from "./theme.ts";
 
 /** Minimum width of the key column, so short shortcuts and actions remain comfortably separated. */
 const MIN_KEY_WIDTH = 8;
@@ -204,7 +204,7 @@ export function KeymapOverlay({
       : engine.state === "starting"
         ? "local playback starting"
         : engine.state === "missing"
-          ? "local playback engine missing — run: bun run engine:build"
+          ? `local playback engine missing — ${missingEngineHint()}`
           : engine.state === "disabled"
             ? "local playback disabled"
             : `local playback failed — ${engine.reason}`;

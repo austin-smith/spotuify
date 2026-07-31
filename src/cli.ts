@@ -4,7 +4,7 @@ import { authenticate, tokenStore } from "./auth/flow.ts";
 import { resolveBootProfile, saveProfileBestEffort } from "./auth/profile.ts";
 import type { Me } from "./api/types.ts";
 import { REDIRECT_URI } from "./config.ts";
-import { authenticateEngine } from "./engine/librespot.ts";
+import { authenticateEngine, missingEngineMessage } from "./engine/librespot.ts";
 import { VERSION } from "./version.ts";
 
 /** `name (product, country)`, degrading gracefully when the scope didn't grant those fields. */
@@ -58,8 +58,8 @@ async function main(argv: string[]): Promise<number | null> {
           break;
         case "missing":
           console.warn(
-            "\nThe native playback engine is not built, so spotuify cannot play audio itself.\n" +
-              "Run `bun run engine:build`, then re-run `spotuify auth`.\n" +
+            "\nThe native playback engine is unavailable, so spotuify cannot play audio itself.\n" +
+              `${missingEngineMessage()}\n` +
               "Without it, spotuify can only control other Spotify devices.",
           );
           break;

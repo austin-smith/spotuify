@@ -1,0 +1,245 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.1.2
+        with:
+          bun-version-file: package.json
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
+
+      - name: Set up pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate version and tag
+        run: bun run release:validate-tag "$GITHUB_REF_NAME"
+
+      - name: Check and test TypeScript
+        run: bun run typecheck && bun test
+
+      - name: Check and test Rust
+        run: |
+          cargo fmt --manifest-path native/Cargo.toml --check
+          cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
+          bun run engine:test
+
+      - name: Install pinned license tools
+        run: |
+          cargo install --locked --version 0.9.1 cargo-about --features cli
+          cargo install --locked --version 0.20.2 cargo-deny
+
+      - name: Check third-party licensing
+        run: bun run licenses:check
+
+  linux:
+    name: Linux ${{ matrix.target }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-22.04
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.1.2
+        with:
+          bun-version-file: package.json
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
+
+      - name: Set up pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build release
+        run: bun run release:build "${{ matrix.target }}"
+
+      - name: Package release
+        run: bun run release:package "${{ matrix.target }}"
+
+      - name: Verify release
+        run: bun run release:verify "${{ matrix.target }}"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: macOS Apple silicon
+    needs: validate
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.1.2
+        with:
+          bun-version-file: package.json
+
+      - name: Set up pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build release
+        run: bun run release:build darwin-arm64
+
+      - name: Sign and notarize
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: scripts/sign-and-notarize-macos.sh "dist/stage/spotuify-v${GITHUB_REF_NAME#v}-darwin-arm64"
+
+      - name: Package release
+        run: bun run release:package darwin-arm64
+
+      - name: Verify release
+        run: bun run release:verify darwin-arm64
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: darwin-arm64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs:
+      - linux
+      - macos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.1.2
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download release archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums and Homebrew formula
+        run: |
+          bun run release:checksums
+          bun run release:formula
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            if [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" != "true" ]]; then
+              echo "$GITHUB_REF_NAME is already published; leaving its assets unchanged"
+              exit 0
+            fi
+            gh release upload "$GITHUB_REF_NAME" \
+              dist/*.tar.gz dist/SHA256SUMS dist/spotuify.rb THIRD_PARTY_NOTICES.txt \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dist/*.tar.gz dist/SHA256SUMS dist/spotuify.rb THIRD_PARTY_NOTICES.txt \
+              --draft \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME" \
+              --verify-tag
+          fi
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" == "true" ]]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          else
+            echo "$GITHUB_REF_NAME is already published"
+          fi
+
+      - name: Download published Homebrew formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/published
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern spotuify.rb \
+            --dir dist/published \
+            --clobber
+
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: bun run release:publish-formula dist/published/spotuify.rb

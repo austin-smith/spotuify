@@ -5,6 +5,7 @@ node_modules
 out
 dist
 *.tgz
+*.bun-build
 native/target
 
 # code coverage

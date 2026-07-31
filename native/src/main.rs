@@ -254,6 +254,10 @@ async fn main() {
     let result = match invocation {
         Invocation::Playback => run().await,
         Invocation::Authenticate => run_auth().await,
+        Invocation::Version => {
+            println!("spotuify-engine {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
     };
     if let Err(error) = result {
         // This terminal message is intentionally credential free; neither cached credentials nor
@@ -267,13 +271,15 @@ async fn main() {
 enum Invocation {
     Playback,
     Authenticate,
+    Version,
 }
 
 fn invocation_from_args(args: Vec<OsString>) -> Result<Invocation> {
     match args.as_slice() {
         [] => Ok(Invocation::Playback),
         [command] if command == "auth" => Ok(Invocation::Authenticate),
-        _ => Err(anyhow!("usage: spotuify-engine [auth]")),
+        [command] if command == "--version" || command == "-v" => Ok(Invocation::Version),
+        _ => Err(anyhow!("usage: spotuify-engine [auth|--version]")),
     }
 }
 
@@ -1151,6 +1157,14 @@ mod tests {
         assert_eq!(
             invocation_from_args(vec![OsString::from("auth")]).unwrap(),
             Invocation::Authenticate
+        );
+        assert_eq!(
+            invocation_from_args(vec![OsString::from("--version")]).unwrap(),
+            Invocation::Version
+        );
+        assert_eq!(
+            invocation_from_args(vec![OsString::from("-v")]).unwrap(),
+            Invocation::Version
         );
         assert!(invocation_from_args(vec![OsString::from("unknown")]).is_err());
         assert!(
