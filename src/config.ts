@@ -84,14 +84,26 @@ export async function saveClientId(clientId: string, path = CONFIG_PATH): Promis
   );
 }
 
-export async function resolveClientId(path = CONFIG_PATH): Promise<string> {
+export interface ResolvedClientId {
+  readonly clientId: string;
+  readonly source: "environment" | "config";
+}
+
+/** Resolve the Client ID and retain whether it came from explicit process configuration. */
+export async function resolveClientIdWithSource(path = CONFIG_PATH): Promise<ResolvedClientId> {
   const fromEnv = process.env["SPOTUIFY_CLIENT_ID"]?.trim();
-  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  if (fromEnv && fromEnv.length > 0) {
+    return { clientId: fromEnv, source: "environment" };
+  }
 
   const config = await readConfig(path);
   if (typeof config.clientId === "string" && config.clientId.trim().length > 0) {
-    return config.clientId.trim();
+    return { clientId: config.clientId.trim(), source: "config" };
   }
 
   throw new MissingClientIdError();
+}
+
+export async function resolveClientId(path = CONFIG_PATH): Promise<string> {
+  return (await resolveClientIdWithSource(path)).clientId;
 }

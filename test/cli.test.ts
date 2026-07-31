@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "bun:test";
+import packageMetadata from "../package.json";
 import { formatSoftwareLicenses, softwareLicenses } from "../src/licenses.ts";
 
 let directory: string | undefined;
@@ -37,7 +38,7 @@ test.each(["-v", "--version"])(
     clearTimeout(timeout);
 
     expect(exitCode).toBe(0);
-    expect(stdout).toBe("spotuify 0.1.0\n");
+    expect(stdout).toBe(`spotuify ${packageMetadata.version}\n`);
     expect(stderr).toBe("");
     expect(await readdir(directory)).toEqual([]);
   },
@@ -94,6 +95,32 @@ test("update rejects unsupported arguments before any network or renderer work",
   expect(exitCode).toBe(2);
   expect(stdout).toBe("");
   expect(stderr).toBe("Usage: spotuify update [--check]\n");
+  expect(await readdir(directory)).toEqual([]);
+});
+
+test("auth rejects unsupported arguments before setup or network work", async () => {
+  directory = await mkdtemp(join(tmpdir(), "spotuify-auth-cli-test-"));
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+  const child = Bun.spawn([process.execPath, cli, "auth", "--unknown"], {
+    cwd: directory,
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: join(directory, "config"),
+      XDG_CACHE_HOME: join(directory, "cache"),
+      SPOTUIFY_ENGINE_PATH: join(directory, "missing-engine"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+
+  expect(exitCode).toBe(2);
+  expect(stdout).toBe("");
+  expect(stderr).toBe("Usage: spotuify auth [--force] [--force-engine] [--reset]\n");
   expect(await readdir(directory)).toEqual([]);
 });
 

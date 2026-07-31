@@ -21,8 +21,10 @@ async function openBrowser(url: string): Promise<void> {
  *
  * Must not run while the TUI owns the terminal — it prints to stdout and waits on a browser.
  */
-export async function authenticate(options: { force?: boolean } = {}): Promise<StoredToken> {
-  const clientId = await resolveClientId();
+export async function authenticate(
+  options: { force?: boolean; clientId?: string } = {},
+): Promise<StoredToken> {
+  const clientId = options.clientId ?? (await resolveClientId());
   const store = new TokenStore(clientId);
 
   if (options.force !== true) {
@@ -62,6 +64,6 @@ export async function authenticate(options: { force?: boolean } = {}): Promise<S
 }
 
 /** A `TokenStore` for the configured client, without running any interactive flow. */
-export async function tokenStore(): Promise<TokenStore> {
-  return new TokenStore(await resolveClientId());
+export async function tokenStore(clientId?: string): Promise<TokenStore> {
+  return new TokenStore(clientId ?? (await resolveClientId()));
 }
