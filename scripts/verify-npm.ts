@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { relative, resolve } from "node:path";
 import {
   assertNativeHost,
-  productVersion,
+  buildVersion,
   RELEASE_TARGETS,
   releaseTarget,
   type ReleaseTarget,
@@ -172,7 +172,7 @@ async function verifyInstalledLauncher(version: string, target: ReleaseTarget): 
 }
 
 const argument = process.argv[2];
-const version = await productVersion();
+const version = await buildVersion();
 if (argument === "root") {
   await verifyRootPackage(version);
 } else if (argument === "install") {

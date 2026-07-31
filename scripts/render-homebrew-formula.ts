@@ -1,13 +1,13 @@
 import { resolve } from "node:path";
 import {
   artifactName,
+  buildVersion,
   DIST_DIR,
-  productVersion,
   RELEASE_TARGETS,
   REPOSITORY_URL,
 } from "./release-config.ts";
 
-const version = await productVersion();
+const version = await buildVersion();
 const checksumLines = (
   await Bun.file(resolve(DIST_DIR, "SHA256SUMS")).text()
 ).trim().split("\n");

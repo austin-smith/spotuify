@@ -3,9 +3,9 @@ import { resolve } from "node:path";
 import {
   artifactName,
   assertNativeHost,
+  buildVersion,
   executableName,
   MACOS_DEPLOYMENT_TARGET,
-  productVersion,
   REPO_ROOT,
   releaseTarget,
   run,
@@ -14,7 +14,7 @@ import {
 
 const target = releaseTarget();
 assertNativeHost(target);
-const version = await productVersion();
+const version = await buildVersion();
 const name = artifactName(version, target);
 const stage = resolve(STAGE_DIR, name);
 const cargoTarget = resolve(REPO_ROOT, "dist", "cargo-target", target.id);
@@ -57,6 +57,7 @@ try {
     entrypoints: [resolve(REPO_ROOT, "src", "cli.ts")],
     define: {
       SPOTUIFY_STANDALONE: "true",
+      SPOTUIFY_BUILD_VERSION: JSON.stringify(version),
       SPOTUIFY_LICENSE_TEXT: JSON.stringify(spotuifyLicense),
       SPOTUIFY_THIRD_PARTY_NOTICES_TEXT: JSON.stringify(thirdPartyNotices),
     },

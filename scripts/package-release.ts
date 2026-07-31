@@ -3,15 +3,15 @@ import { resolve } from "node:path";
 import {
   archiveName,
   artifactName,
+  buildVersion,
   DIST_DIR,
-  productVersion,
   releaseExecutableNames,
   releaseTarget,
   STAGE_DIR,
 } from "./release-config.ts";
 
 const target = releaseTarget();
-const version = await productVersion();
+const version = await buildVersion();
 const name = artifactName(version, target);
 const stage = resolve(STAGE_DIR, name);
 const archive = resolve(DIST_DIR, archiveName(version, target));

@@ -9,7 +9,12 @@ import {
   npmPlatformManifest,
   npmRootManifest,
 } from "../scripts/npm-packages.ts";
-import { assertOwnedPackage } from "../scripts/publish-npm.ts";
+import {
+  assertOwnedPackage,
+  canaryRunNumber,
+  isStaleCanary,
+  npmDistTag,
+} from "../scripts/publish-npm.ts";
 import { archiveName, RELEASE_TARGETS } from "../scripts/release-config.ts";
 
 async function command(command: string[]): Promise<{
@@ -87,6 +92,39 @@ describe("npm release packages", () => {
         },
       }),
     ).not.toThrow();
+  });
+
+  test("requires an explicit supported npm publication channel", () => {
+    expect(npmDistTag(["--tag", "latest"])).toBe("latest");
+    expect(npmDistTag(["--tag", "canary"])).toBe("canary");
+    expect(() => npmDistTag([])).toThrow("--tag must be one of");
+    expect(() => npmDistTag(["--tag", "beta"])).toThrow("--tag must be one of");
+  });
+
+  test("orders canaries by their monotonic workflow run number", () => {
+    expect(canaryRunNumber("1.2.3-canary.42.g0123456789ab")).toBe(42n);
+    expect(canaryRunNumber("2.0.0-canary.30600831370.gabcdef123456")).toBe(
+      30600831370n,
+    );
+    expect(
+      isStaleCanary(
+        "1.2.3-canary.43.gabcdef123456",
+        "1.2.3-canary.42.g0123456789ab",
+      ),
+    ).toBe(true);
+    expect(
+      isStaleCanary(
+        "1.2.3-canary.42.g0123456789ab",
+        "1.2.3-canary.43.gabcdef123456",
+      ),
+    ).toBe(false);
+    expect(() =>
+      isStaleCanary(
+        "1.2.3-canary.42.g0123456789ab",
+        "1.2.3-canary.42.gabcdef123456",
+      ),
+    ).toThrow("already associated");
+    expect(() => canaryRunNumber("1.2.3")).toThrow("invalid canary version");
   });
 
   test("launcher delegates arguments to the installed platform binary", async () => {

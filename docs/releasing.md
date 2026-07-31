@@ -1,11 +1,22 @@
-# Releasing spotuify
+# Publishing spotuify
 
-GitHub Releases is the canonical distribution channel. Each release contains signed and notarized
-macOS builds, Linux builds, an unsigned Windows build, SHA-256 checksums, and a generated Homebrew
-formula. The workflow also publishes the same binaries to npm and updates the maintainer-owned
-Homebrew tap.
+Spotuify has stable and canary publication channels. Both build and verify every supported platform
+from source. They never share npm dist-tags or Homebrew state.
 
-## Release outputs
+| Event | Version | npm | GitHub Release | Homebrew |
+| --- | --- | --- | --- | --- |
+| Push to `main` | `X.Y.Z-canary.<run-number>.g<commit>` | `canary` | No | No |
+| Push tag `vX.Y.Z` | `X.Y.Z` | `latest` | Stable, marked latest | Update stable formula |
+
+Canary versions are derived during the workflow and are never committed to the repository. Users
+opt in with `npm install --global spotuify@canary`. A stable version is published only after the
+matching version is committed to both manifests and its signed tag is pushed.
+
+GitHub Releases is the canonical stable distribution channel. Each stable release contains signed
+and notarized macOS builds, Linux builds, an unsigned Windows build, SHA-256 checksums, and a
+generated Homebrew formula.
+
+## Stable release outputs
 
 The tag `vX.Y.Z` produces:
 
@@ -45,6 +56,7 @@ The npm workflow publishes one user-facing package and four internal platform pa
 Users install only `spotuify`. Its exact-version optional dependencies cause npm to install the
 matching platform package without downloading binaries for other operating systems. The launcher
 executes the platform binary directly; npm installation does not run a `postinstall` script.
+Stable publications explicitly use npm's `latest` dist-tag; canaries explicitly use `canary`.
 
 ## One-time GitHub setup
 
@@ -98,19 +110,19 @@ not replace assets when the GitHub release is already public.
 ### Bootstrap npm trusted publishing
 
 npm requires a package to exist before it can trust a GitHub Actions workflow. The workflow uploads
-an `npm-packages` artifact on every release. On the first release, it reports that bootstrap is
-required instead of attempting token-based publication.
+an `npm-packages` artifact on every publication. Bootstrap the packages from the first stable
+release; canary publication remains disabled until this is complete.
 
 Download that artifact, enter its directory, sign in with an npm account that has 2FA enabled, and
 publish the platform packages before the launcher package:
 
 ```sh
 npm login
-npm publish spotuify-darwin-arm64-X.Y.Z.tgz --access public
-npm publish spotuify-linux-arm64-X.Y.Z.tgz --access public
-npm publish spotuify-linux-x64-X.Y.Z.tgz --access public
-npm publish spotuify-windows-x64-X.Y.Z.tgz --access public
-npm publish spotuify-X.Y.Z.tgz --access public
+npm publish spotuify-darwin-arm64-X.Y.Z.tgz --access public --tag latest
+npm publish spotuify-linux-arm64-X.Y.Z.tgz --access public --tag latest
+npm publish spotuify-linux-x64-X.Y.Z.tgz --access public --tag latest
+npm publish spotuify-windows-x64-X.Y.Z.tgz --access public --tag latest
+npm publish spotuify-X.Y.Z.tgz --access public --tag latest
 ```
 
 For each package, configure **Settings → Trusted Publisher → GitHub Actions** with:
@@ -125,9 +137,10 @@ For each package, configure **Settings → Trusted Publisher → GitHub Actions*
 
 Then set **Publishing access** to **Require two-factor authentication and disallow tokens**. No npm
 token or GitHub environment is required. Future releases publish with short-lived GitHub OIDC
-credentials and npm provenance.
+credentials and npm provenance. The same `release.yml` trusted publisher authorizes both stable and
+canary jobs; do not configure a second publisher.
 
-## Publish a release
+## Publish a stable release
 
 1. Update `package.json` and `native/Cargo.toml` to the same semantic version. Keep
    `native/Cargo.toml` set to `publish = false`.
@@ -169,9 +182,9 @@ credentials and npm provenance.
 8. Confirm that `Formula/spotuify.rb` was updated in `austin-smith/homebrew-tap`.
 9. Confirm that all five npm packages have the released version.
 
-The workflow rejects a tag unless it exactly matches the canonical `package.json` version and the
-duplicate native Cargo version. It also extracts each finished archive and executes
-`spotuify --version` and `spotuify-engine --version` before publication.
+The workflow rejects a tag unless it points to a commit on `main` and exactly matches the canonical
+`package.json` version and duplicate native Cargo version. It also extracts each finished archive
+and executes `spotuify --version` and `spotuify-engine --version` before publication.
 
 ## Failed and incorrect releases
 
@@ -183,3 +196,5 @@ duplicate native Cargo version. It also extracts each finished archive and execu
   release and updates the tap without changing published release assets.
 - If npm publishing fails after the packages are bootstrapped, rerun the npm job. It skips versions
   already present and publishes only the missing packages.
+- If a canary fails and no newer canary has published, rerun the failed jobs. Once a newer canary
+  exists, an older rerun is skipped rather than moving npm's `canary` dist-tag backward.

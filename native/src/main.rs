@@ -255,7 +255,10 @@ async fn main() {
         Invocation::Playback => run().await,
         Invocation::Authenticate => run_auth().await,
         Invocation::Version => {
-            println!("spotuify-engine {}", env!("CARGO_PKG_VERSION"));
+            println!(
+                "spotuify-engine {}",
+                option_env!("SPOTUIFY_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+            );
             Ok(())
         }
     };

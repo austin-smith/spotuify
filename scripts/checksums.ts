@@ -3,12 +3,12 @@ import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import {
   archiveName,
+  buildVersion,
   DIST_DIR,
-  productVersion,
   RELEASE_TARGETS,
 } from "./release-config.ts";
 
-const version = await productVersion();
+const version = await buildVersion();
 const expected = Object.values(RELEASE_TARGETS)
   .map((target) => archiveName(version, target))
   .sort();

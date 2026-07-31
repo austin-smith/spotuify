@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import packageMetadata from "../package.json";
+import { canaryVersion } from "../scripts/release-config.ts";
 
 interface CargoManifest {
   package?: {
@@ -21,4 +22,24 @@ test("product and native manifests share one valid unpublished version", async (
   expect(version).toMatch(STRICT_SEMVER);
   expect(Bun.semver.satisfies(version, version)).toBe(true);
   expect(cargo.package?.publish).toBe(false);
+});
+
+test("canary versions are immutable SemVer identifiers ordered by workflow run", () => {
+  const version = canaryVersion(
+    "1.2.3",
+    "30600831370",
+    "A1B2C3D4E5F6789012345678901234567890ABCD",
+  );
+
+  expect(version).toBe("1.2.3-canary.30600831370.ga1b2c3d4e5f6");
+  expect(version).toMatch(STRICT_SEMVER);
+});
+
+test("canary versions reject ambiguous run and commit identifiers", () => {
+  expect(() => canaryVersion("1.2.3", "0", "a".repeat(40))).toThrow(
+    "run number must be a positive integer",
+  );
+  expect(() => canaryVersion("1.2.3", "42", "not-a-commit")).toThrow(
+    "40 hexadecimal",
+  );
 });

@@ -5,8 +5,8 @@ import {
   archiveName,
   artifactName,
   assertNativeHost,
+  buildVersion,
   DIST_DIR,
-  productVersion,
   releaseExecutableNames,
   releaseTarget,
   run,
@@ -15,7 +15,7 @@ import { softwareLicenses } from "../src/licenses.ts";
 
 const target = releaseTarget();
 assertNativeHost(target);
-const version = await productVersion();
+const version = await buildVersion();
 const name = artifactName(version, target);
 const archive = resolve(DIST_DIR, archiveName(version, target));
 const temporary = await mkdtemp(resolve(tmpdir(), "spotuify-release-"));

@@ -2,7 +2,7 @@ import { chmod, copyFile, mkdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   artifactName,
-  productVersion,
+  buildVersion,
   releaseTarget,
   run,
   STAGE_DIR,
@@ -21,7 +21,7 @@ import {
 } from "./npm-packages.ts";
 
 const argument = process.argv[2];
-const version = await productVersion();
+const version = await buildVersion();
 
 async function createPackage(
   name: string,
