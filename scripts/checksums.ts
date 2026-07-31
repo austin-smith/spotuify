@@ -1,14 +1,23 @@
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { DIST_DIR, productVersion, RELEASE_TARGETS } from "./release-config.ts";
+import {
+  archiveName,
+  DIST_DIR,
+  productVersion,
+  RELEASE_TARGETS,
+} from "./release-config.ts";
 
 const version = await productVersion();
-const expected = Object.keys(RELEASE_TARGETS)
-  .sort()
-  .map((target) => `spotuify-v${version}-${target}.tar.gz`);
+const expected = Object.values(RELEASE_TARGETS)
+  .map((target) => archiveName(version, target))
+  .sort();
 const actual = (await readdir(DIST_DIR))
-  .filter((file) => file.startsWith(`spotuify-v${version}-`) && file.endsWith(".tar.gz"))
+  .filter(
+    (file) =>
+      file.startsWith(`spotuify-v${version}-`) &&
+      (file.endsWith(".tar.gz") || file.endsWith(".zip")),
+  )
   .sort();
 if (JSON.stringify(actual) !== JSON.stringify(expected)) {
   throw new Error(

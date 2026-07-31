@@ -30,6 +30,12 @@ jobs:
         with:
           bun-version-file: package.json
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
 
@@ -86,6 +92,12 @@ jobs:
         with:
           bun-version-file: package.json
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install --yes libasound2-dev pkg-config
 
@@ -104,11 +116,19 @@ jobs:
       - name: Verify release
         run: bun run release:verify "${{ matrix.target }}"
 
-      - name: Upload release archive
+      - name: Package npm binaries
+        run: bun run release:npm:package "${{ matrix.target }}"
+
+      - name: Verify npm binaries
+        run: bun run release:npm:verify "${{ matrix.target }}"
+
+      - name: Upload release outputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.target }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/npm/*.tgz
           if-no-files-found: error
           retention-days: 7
 
@@ -130,6 +150,12 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.1.2
         with:
           bun-version-file: package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
 
       - name: Set up pinned Rust toolchain
         run: rustup show active-toolchain
@@ -155,11 +181,75 @@ jobs:
       - name: Verify release
         run: bun run release:verify darwin-arm64
 
-      - name: Upload release archive
+      - name: Package npm binaries
+        run: bun run release:npm:package darwin-arm64
+
+      - name: Verify npm binaries
+        run: bun run release:npm:verify darwin-arm64
+
+      - name: Upload release outputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: darwin-arm64
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/npm/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows x64
+    needs: validate
+    runs-on: windows-2025
+    timeout-minutes: 50
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.1.2
+        with:
+          bun-version-file: package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Set up pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build release
+        run: bun run release:build windows-x64
+
+      - name: Package release
+        run: bun run release:package windows-x64
+
+      - name: Verify release
+        run: bun run release:verify windows-x64
+
+      - name: Package npm binaries
+        run: bun run release:npm:package windows-x64
+
+      - name: Verify npm binaries
+        run: bun run release:npm:verify windows-x64
+
+      - name: Upload release outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-x64
+          path: |
+            dist/*.zip
+            dist/npm/*.tgz
           if-no-files-found: error
           retention-days: 7
 
@@ -168,6 +258,7 @@ jobs:
     needs:
       - linux
       - macos
+      - windows
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -208,11 +299,11 @@ jobs:
               exit 0
             fi
             gh release upload "$GITHUB_REF_NAME" \
-              dist/*.tar.gz dist/SHA256SUMS dist/spotuify.rb THIRD_PARTY_NOTICES.txt \
+              dist/*.tar.gz dist/*.zip dist/SHA256SUMS dist/spotuify.rb THIRD_PARTY_NOTICES.txt \
               --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
-              dist/*.tar.gz dist/SHA256SUMS dist/spotuify.rb THIRD_PARTY_NOTICES.txt \
+              dist/*.tar.gz dist/*.zip dist/SHA256SUMS dist/spotuify.rb THIRD_PARTY_NOTICES.txt \
               --draft \
               --generate-notes \
               --title "$GITHUB_REF_NAME" \
@@ -229,6 +320,28 @@ jobs:
             echo "$GITHUB_REF_NAME is already published"
           fi
 
+  homebrew:
+    name: Update Homebrew tap
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.1.2
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - name: Download published Homebrew formula
         env:
           GH_TOKEN: ${{ github.token }}
@@ -239,7 +352,61 @@ jobs:
             --dir dist/published \
             --clobber
 
-      - name: Update Homebrew tap
+      - name: Update tap
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: bun run release:publish-formula dist/published/spotuify.rb
+
+  npm:
+    name: Publish npm packages
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.1.2
+        with:
+          bun-version-file: package.json
+
+      - name: Set up Node for trusted publishing
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download platform packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Package npm launcher
+        run: bun run release:npm:package root
+
+      - name: Verify npm packages
+        run: bun run release:npm:verify all
+
+      - name: Upload npm packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-packages
+          path: dist/npm/*.tgz
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Publish npm packages
+        run: bun run release:npm:publish

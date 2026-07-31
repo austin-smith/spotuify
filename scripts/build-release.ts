@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   artifactName,
   assertNativeHost,
+  executableName,
   MACOS_DEPLOYMENT_TARGET,
   productVersion,
   REPO_ROOT,
@@ -18,8 +19,8 @@ const name = artifactName(version, target);
 const stage = resolve(STAGE_DIR, name);
 const cargoTarget = resolve(REPO_ROOT, "dist", "cargo-target", target.id);
 const bunWorkDirectory = resolve(REPO_ROOT, "dist", "bun-work", target.id);
-const mainExecutable = resolve(stage, "spotuify");
-const engineExecutable = resolve(stage, "spotuify-engine");
+const mainExecutable = resolve(stage, executableName("spotuify", target));
+const engineExecutable = resolve(stage, executableName("spotuify-engine", target));
 
 await rm(stage, { recursive: true, force: true });
 await mkdir(stage, { recursive: true });
@@ -71,8 +72,13 @@ try {
   await rm(bunWorkDirectory, { recursive: true, force: true });
 }
 
-await copyFile(resolve(cargoTarget, "release", "spotuify-engine"), engineExecutable);
-await chmod(mainExecutable, 0o755);
-await chmod(engineExecutable, 0o755);
+await copyFile(
+  resolve(cargoTarget, "release", executableName("spotuify-engine", target)),
+  engineExecutable,
+);
+if (target.platform !== "win32") {
+  await chmod(mainExecutable, 0o755);
+  await chmod(engineExecutable, 0o755);
+}
 
 console.log(`staged ${name} in ${stage}`);

@@ -8,12 +8,14 @@ export const MACOS_DEPLOYMENT_TARGET = "13.0";
 
 export interface ReleaseTarget {
   readonly id: string;
-  readonly platform: "darwin" | "linux";
+  readonly platform: "darwin" | "linux" | "win32";
   readonly arch: "arm64" | "x64";
   readonly bunTarget:
     | "bun-darwin-arm64"
     | "bun-linux-arm64"
-    | "bun-linux-x64-baseline";
+    | "bun-linux-x64-baseline"
+    | "bun-windows-x64-baseline";
+  readonly archiveExtension: "tar.gz" | "zip";
 }
 
 export const RELEASE_TARGETS = {
@@ -22,18 +24,28 @@ export const RELEASE_TARGETS = {
     platform: "darwin",
     arch: "arm64",
     bunTarget: "bun-darwin-arm64",
+    archiveExtension: "tar.gz",
   },
   "linux-arm64": {
     id: "linux-arm64",
     platform: "linux",
     arch: "arm64",
     bunTarget: "bun-linux-arm64",
+    archiveExtension: "tar.gz",
   },
   "linux-x64": {
     id: "linux-x64",
     platform: "linux",
     arch: "x64",
     bunTarget: "bun-linux-x64-baseline",
+    archiveExtension: "tar.gz",
+  },
+  "windows-x64": {
+    id: "windows-x64",
+    platform: "win32",
+    arch: "x64",
+    bunTarget: "bun-windows-x64-baseline",
+    archiveExtension: "zip",
   },
 } as const satisfies Record<string, ReleaseTarget>;
 
@@ -95,6 +107,18 @@ export function assertNativeHost(target: ReleaseTarget): void {
 
 export function artifactName(version: string, target: ReleaseTarget): string {
   return `spotuify-v${version}-${target.id}`;
+}
+
+export function archiveName(version: string, target: ReleaseTarget): string {
+  return `${artifactName(version, target)}.${target.archiveExtension}`;
+}
+
+export function executableName(name: string, target: ReleaseTarget): string {
+  return target.platform === "win32" ? `${name}.exe` : name;
+}
+
+export function releaseExecutableNames(target: ReleaseTarget): readonly [string, string] {
+  return [executableName("spotuify", target), executableName("spotuify-engine", target)];
 }
 
 export async function run(

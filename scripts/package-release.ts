@@ -1,9 +1,11 @@
 import { mkdir, rm, stat, utimes } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
+  archiveName,
   artifactName,
   DIST_DIR,
   productVersion,
+  releaseExecutableNames,
   releaseTarget,
   STAGE_DIR,
 } from "./release-config.ts";
@@ -12,8 +14,8 @@ const target = releaseTarget();
 const version = await productVersion();
 const name = artifactName(version, target);
 const stage = resolve(STAGE_DIR, name);
-const archive = resolve(DIST_DIR, `${name}.tar.gz`);
-const expectedFiles = ["spotuify", "spotuify-engine"] as const;
+const archive = resolve(DIST_DIR, archiveName(version, target));
+const expectedFiles = releaseExecutableNames(target);
 
 for (const file of expectedFiles) {
   const metadata = await stat(resolve(stage, file));
@@ -49,21 +51,35 @@ for (const path of [stage, ...expectedFiles.map((file) => resolve(stage, file))]
 await mkdir(DIST_DIR, { recursive: true });
 await rm(archive, { force: true });
 
-const tar = Bun.spawn(["tar", "-cf", "-", "-C", STAGE_DIR, name], {
-  env: { ...Bun.env, COPYFILE_DISABLE: "1" },
-  stdin: "ignore",
-  stdout: "pipe",
-  stderr: "inherit",
-});
-const gzip = Bun.spawn(["gzip", "-n", "-9"], {
-  stdin: tar.stdout,
-  stdout: Bun.file(archive),
-  stderr: "inherit",
-});
-const [tarCode, gzipCode] = await Promise.all([tar.exited, gzip.exited]);
-if (tarCode !== 0 || gzipCode !== 0) {
-  await rm(archive, { force: true });
-  throw new Error(`archive creation failed: tar=${tarCode}, gzip=${gzipCode}`);
+if (target.archiveExtension === "zip") {
+  const zip = Bun.spawn(["tar", "-a", "-cf", archive, "-C", STAGE_DIR, name], {
+    env: { ...Bun.env, COPYFILE_DISABLE: "1" },
+    stdin: "ignore",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const exitCode = await zip.exited;
+  if (exitCode !== 0) {
+    await rm(archive, { force: true });
+    throw new Error(`zip archive creation failed with status ${exitCode}`);
+  }
+} else {
+  const tar = Bun.spawn(["tar", "-cf", "-", "-C", STAGE_DIR, name], {
+    env: { ...Bun.env, COPYFILE_DISABLE: "1" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const gzip = Bun.spawn(["gzip", "-n", "-9"], {
+    stdin: tar.stdout,
+    stdout: Bun.file(archive),
+    stderr: "inherit",
+  });
+  const [tarCode, gzipCode] = await Promise.all([tar.exited, gzip.exited]);
+  if (tarCode !== 0 || gzipCode !== 0) {
+    await rm(archive, { force: true });
+    throw new Error(`archive creation failed: tar=${tarCode}, gzip=${gzipCode}`);
+  }
 }
 
 console.log(`created ${archive}`);

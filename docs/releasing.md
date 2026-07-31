@@ -1,8 +1,9 @@
 # Releasing spotuify
 
 GitHub Releases is the canonical distribution channel. Each release contains signed and notarized
-macOS archives, Linux archives, SHA-256 checksums, and a generated Homebrew formula. After the
-release is published, the workflow updates the maintainer-owned tap automatically.
+macOS builds, Linux builds, an unsigned Windows build, SHA-256 checksums, and a generated Homebrew
+formula. The workflow also publishes the same binaries to npm and updates the maintainer-owned
+Homebrew tap.
 
 ## Release outputs
 
@@ -13,11 +14,13 @@ The tag `vX.Y.Z` produces:
 | `spotuify-vX.Y.Z-darwin-arm64.tar.gz` | `macos-26` | Apple silicon, macOS 13+ |
 | `spotuify-vX.Y.Z-linux-arm64.tar.gz` | `ubuntu-22.04-arm` | arm64, glibc 2.35+ |
 | `spotuify-vX.Y.Z-linux-x64.tar.gz` | `ubuntu-22.04` | x86-64 baseline, glibc 2.35+ |
+| `spotuify-vX.Y.Z-windows-x64.zip` | `windows-2025` | Windows 11, x86-64 |
 | `SHA256SUMS` | release publisher | All archive checksums |
 | `spotuify.rb` | release publisher | Formula ready for `homebrew-tap` |
 | `THIRD_PARTY_NOTICES.txt` | release publisher | Notices for bundled dependencies |
 
-Every archive has one top-level directory containing:
+Every archive has one top-level directory containing two executables. Windows uses the same names
+with an `.exe` suffix.
 
 ```text
 spotuify-vX.Y.Z-<platform>-<architecture>/
@@ -29,6 +32,20 @@ The two executables must remain together for a direct installation. The generate
 supports Apple silicon macOS, installs `spotuify` into `bin`, and keeps `spotuify-engine` private in
 `libexec`. Dependency notices are published once as a separate release asset instead of being
 duplicated inside every platform archive.
+
+The npm workflow publishes one user-facing package and four internal platform packages:
+
+| Package | Purpose |
+| --- | --- |
+| `spotuify` | Exposes the `spotuify` command and selects the current platform |
+| `spotuify-darwin-arm64` | Apple silicon binaries |
+| `spotuify-linux-arm64` | Linux arm64 binaries |
+| `spotuify-linux-x64` | Linux x86-64 binaries |
+| `spotuify-windows-x64` | Windows x86-64 binaries |
+
+Users install only `spotuify`. Its exact-version optional dependencies cause npm to install the
+matching platform package without downloading binaries for other operating systems. The launcher
+executes the platform binary directly; npm installation does not run a `postinstall` script.
 
 ## One-time GitHub setup
 
@@ -79,6 +96,38 @@ brew install austin-smith/tap/spotuify
 The update is idempotent, so rerunning the publisher after a tap failure is safe. The workflow does
 not replace assets when the GitHub release is already public.
 
+### Bootstrap npm trusted publishing
+
+npm requires a package to exist before it can trust a GitHub Actions workflow. The workflow uploads
+an `npm-packages` artifact on every release. On the first release, it reports that bootstrap is
+required instead of attempting token-based publication.
+
+Download that artifact, enter its directory, sign in with an npm account that has 2FA enabled, and
+publish the platform packages before the launcher package:
+
+```sh
+npm login
+npm publish spotuify-darwin-arm64-X.Y.Z.tgz --access public
+npm publish spotuify-linux-arm64-X.Y.Z.tgz --access public
+npm publish spotuify-linux-x64-X.Y.Z.tgz --access public
+npm publish spotuify-windows-x64-X.Y.Z.tgz --access public
+npm publish spotuify-X.Y.Z.tgz --access public
+```
+
+For each package, configure **Settings → Trusted Publisher → GitHub Actions** with:
+
+| Field | Value |
+| --- | --- |
+| Organization or user | `austin-smith` |
+| Repository | `spotuify` |
+| Workflow filename | `release.yml` |
+| Environment | Leave blank |
+| Allowed action | `npm publish` |
+
+Then set **Publishing access** to **Require two-factor authentication and disallow tokens**. No npm
+token or GitHub environment is required. Future releases publish with short-lived GitHub OIDC
+credentials and npm provenance.
+
 ## Publish a release
 
 1. Update `package.json` and `native/Cargo.toml` to the same semantic version. Keep
@@ -116,9 +165,10 @@ not replace assets when the GitHub release is already public.
    git push origin vX.Y.Z
    ```
 
-7. Confirm that all three archives, `SHA256SUMS`, `spotuify.rb`, and
+7. Confirm that all four archives, `SHA256SUMS`, `spotuify.rb`, and
    `THIRD_PARTY_NOTICES.txt` are attached before the draft is published.
 8. Confirm that `Formula/spotuify.rb` was updated in `austin-smith/homebrew-tap`.
+9. Confirm that all five npm packages have the released version.
 
 The workflow rejects a tag unless it exactly matches the canonical `package.json` version and the
 duplicate native Cargo version. It also extracts each finished archive and executes
@@ -130,5 +180,7 @@ duplicate native Cargo version. It also extracts each finished archive and execu
   safely replace assets while the release remains a draft.
 - If a release has already been published, never move its tag or replace its assets. Correct the
   problem with a new patch version and release.
-- If the tap update fails, rerun the publish job. It reads the canonical formula from the existing
+- If the tap update fails, rerun the Homebrew job. It reads the canonical formula from the existing
   release and updates the tap without changing published release assets.
+- If npm publishing fails after the packages are bootstrapped, rerun the npm job. It skips versions
+  already present and publishes only the missing packages.

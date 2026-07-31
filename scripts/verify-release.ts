@@ -2,10 +2,12 @@ import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import {
+  archiveName,
   artifactName,
   assertNativeHost,
   DIST_DIR,
   productVersion,
+  releaseExecutableNames,
   releaseTarget,
   run,
 } from "./release-config.ts";
@@ -14,7 +16,7 @@ const target = releaseTarget();
 assertNativeHost(target);
 const version = await productVersion();
 const name = artifactName(version, target);
-const archive = resolve(DIST_DIR, `${name}.tar.gz`);
+const archive = resolve(DIST_DIR, archiveName(version, target));
 const temporary = await mkdtemp(resolve(tmpdir(), "spotuify-release-"));
 
 async function output(command: string[]): Promise<string> {
@@ -31,19 +33,15 @@ async function output(command: string[]): Promise<string> {
 try {
   const metadata = await stat(archive);
   if (!metadata.isFile() || metadata.size === 0) throw new Error(`${archive} is empty`);
-  const expectedMembers = [
-    `${name}/`,
-    `${name}/spotuify`,
-    `${name}/spotuify-engine`,
-  ].sort();
-  const actualMembers = (await output(["tar", "-tzf", archive])).split("\n").sort();
+  const expectedEntries = [...releaseExecutableNames(target)].sort();
+  const expectedMembers = [`${name}/`, ...expectedEntries.map((file) => `${name}/${file}`)].sort();
+  const actualMembers = (await output(["tar", "-tf", archive])).split("\n").sort();
   if (JSON.stringify(actualMembers) !== JSON.stringify(expectedMembers)) {
     throw new Error(`archive contains unexpected members: ${actualMembers.join(", ")}`);
   }
-  await run(["tar", "-xzf", archive, "-C", temporary]);
+  await run(["tar", "-xf", archive, "-C", temporary]);
 
   const root = resolve(temporary, name);
-  const expectedEntries = ["spotuify", "spotuify-engine"].sort();
   const actualEntries = (await Array.fromAsync(new Bun.Glob("*").scan({ cwd: root }))).sort();
   if (JSON.stringify(actualEntries) !== JSON.stringify(expectedEntries)) {
     throw new Error(
@@ -52,10 +50,13 @@ try {
     );
   }
 
-  const executable = resolve(root, "spotuify");
-  const engine = resolve(root, "spotuify-engine");
-  await chmod(executable, 0o755);
-  await chmod(engine, 0o755);
+  const [mainName, engineName] = releaseExecutableNames(target);
+  const executable = resolve(root, mainName);
+  const engine = resolve(root, engineName);
+  if (target.platform !== "win32") {
+    await chmod(executable, 0o755);
+    await chmod(engine, 0o755);
+  }
   const [mainVersion, engineVersion] = await Promise.all([
     output([executable, "--version"]),
     output([engine, "--version"]),
