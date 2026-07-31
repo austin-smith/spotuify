@@ -65,7 +65,8 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
           else
             channel=canary
-            version="$(bun scripts/canary-version.ts "$GITHUB_RUN_NUMBER" "$GITHUB_SHA")"
+            commit_timestamp="$(git show --no-patch --format=%ct "$GITHUB_SHA")"
+            version="$(bun scripts/canary-version.ts "$GITHUB_RUN_NUMBER" "$commit_timestamp")"
           fi
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"

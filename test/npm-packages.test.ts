@@ -55,6 +55,15 @@ describe("npm release packages", () => {
     });
   });
 
+  test("uses the product description for root and platform packages", () => {
+    expect(npmRootManifest("1.2.3").description).toBe("spotify in ur terminal");
+    for (const target of Object.values(RELEASE_TARGETS)) {
+      expect(npmPlatformManifest("1.2.3", target).description).toBe(
+        "spotify in ur terminal",
+      );
+    }
+  });
+
   test("uses npm platform selectors and Windows release settings", () => {
     const windows = RELEASE_TARGETS["windows-x64"];
     const linux = RELEASE_TARGETS["linux-x64"];
@@ -103,26 +112,33 @@ describe("npm release packages", () => {
   });
 
   test("orders canaries by their monotonic workflow run number", () => {
-    expect(canaryRunNumber("1.2.3-canary.42.g0123456789ab")).toBe(42n);
-    expect(canaryRunNumber("2.0.0-canary.30600831370.gabcdef123456")).toBe(
+    expect(canaryRunNumber("1.2.3-canary.20260731.42")).toBe(42n);
+    expect(canaryRunNumber("2.0.0-canary.20260731.30600831370")).toBe(
       30600831370n,
     );
+    expect(canaryRunNumber("1.2.3-canary.41.g0123456789ab")).toBe(41n);
     expect(
       isStaleCanary(
-        "1.2.3-canary.43.gabcdef123456",
-        "1.2.3-canary.42.g0123456789ab",
+        "1.2.3-canary.41.g0123456789ab",
+        "1.2.3-canary.20260731.42",
+      ),
+    ).toBe(false);
+    expect(
+      isStaleCanary(
+        "1.2.3-canary.20260801.43",
+        "1.2.3-canary.20260731.42",
       ),
     ).toBe(true);
     expect(
       isStaleCanary(
-        "1.2.3-canary.42.g0123456789ab",
-        "1.2.3-canary.43.gabcdef123456",
+        "1.2.3-canary.20260731.42",
+        "1.2.3-canary.20260801.43",
       ),
     ).toBe(false);
     expect(() =>
       isStaleCanary(
-        "1.2.3-canary.42.g0123456789ab",
-        "1.2.3-canary.42.gabcdef123456",
+        "1.2.3-canary.20260731.42",
+        "1.2.3-canary.20260801.42",
       ),
     ).toThrow("already associated");
     expect(() => canaryRunNumber("1.2.3")).toThrow("invalid canary version");

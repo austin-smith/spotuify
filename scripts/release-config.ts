@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 export const REPOSITORY = "austin-smith/spotuify";
 export const REPOSITORY_URL = `https://github.com/${REPOSITORY}`;
+export const PRODUCT_DESCRIPTION = "spotify in ur terminal";
 export const HOMEBREW_TAP_REPOSITORY = "austin-smith/homebrew-tap";
 export const HOMEBREW_FORMULA_PATH = "Formula/spotuify.rb";
 export const MACOS_DEPLOYMENT_TARGET = "13.0";
@@ -109,16 +110,22 @@ export async function buildVersion(): Promise<string> {
 export function canaryVersion(
   canonicalVersion: string,
   runNumber: string,
-  commitSha: string,
+  commitTimestamp: string,
 ): string {
   const version = validStableVersion(canonicalVersion, "canonical version");
   if (!/^[1-9]\d*$/.test(runNumber)) {
     throw new Error("GitHub run number must be a positive integer");
   }
-  if (!/^[0-9a-f]{40}$/i.test(commitSha)) {
-    throw new Error("Git commit SHA must contain exactly 40 hexadecimal characters");
+  if (!/^(?:0|[1-9]\d*)$/.test(commitTimestamp)) {
+    throw new Error("Git commit timestamp must be a non-negative integer");
   }
-  return `${version}-canary.${runNumber}.g${commitSha.slice(0, 12).toLowerCase()}`;
+  const timestamp = Number(commitTimestamp);
+  const date = new Date(timestamp * 1_000);
+  if (!Number.isSafeInteger(timestamp) || Number.isNaN(date.getTime())) {
+    throw new Error("Git commit timestamp is outside the supported range");
+  }
+  const compactDate = date.toISOString().slice(0, 10).replaceAll("-", "");
+  return `${version}-canary.${compactDate}.${runNumber}`;
 }
 
 export function releaseTarget(argument = process.argv[2]): ReleaseTarget {

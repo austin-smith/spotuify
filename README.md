@@ -18,7 +18,8 @@
 ### npm (macOS, Linux, Windows)
 
 ```sh
-npm install -g spotuify
+npm install -g spotuify          # stable
+npm install -g spotuify@canary   # canary
 ```
 
 ### Homebrew (macOS)

@@ -59,10 +59,15 @@ export function npmDistTag(args: string[]): NpmDistTag {
 }
 
 export function canaryRunNumber(version: string): bigint {
-  const match =
+  const datedMatch =
+    /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-canary\.\d{8}\.([1-9]\d*)$/.exec(
+      version,
+    );
+  const legacyMatch =
     /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-canary\.([1-9]\d*)\.g[0-9a-f]{12}$/.exec(
       version,
     );
+  const match = datedMatch ?? legacyMatch;
   if (match?.[1] === undefined) {
     throw new Error(`invalid canary version ${JSON.stringify(version)}`);
   }
