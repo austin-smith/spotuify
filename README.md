@@ -13,15 +13,26 @@
   <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="90%" />
 </p>
 
+## Install
+
+### npm (macOS, Linux, Windows)
+
+```sh
+npm install -g spotuify
+```
+
+### Homebrew (macOS)
+
+```sh
+brew install austin-smith/tap/spotuify
+```
+
+### Direct download
+
+macOS, Linux, and Windows builds are available from
+[GitHub Releases](https://github.com/austin-smith/spotuify/releases).
+
 ## Setup
-
-Running from source requires [Bun](https://bun.sh) and the stable
-[Rust toolchain](https://rustup.rs/).
-
-On Linux, install the native build dependencies:
-
-- Debian/Ubuntu: `sudo apt install build-essential pkg-config libasound2-dev`
-- Arch: `sudo pacman -S --needed base-devel alsa-lib`
 
 Playback requires [Spotify Premium](https://www.spotify.com/us/premium/).
 
@@ -39,28 +50,44 @@ http://127.0.0.1:8989/callback
 export SPOTUIFY_CLIENT_ID=<your client id>
 ```
 
-Or write it to `~/.config/spotuify/config.json`:
+On Windows PowerShell:
+
+```powershell
+$env:SPOTUIFY_CLIENT_ID = "<your client id>"
+```
+
+On macOS or Linux, you can instead write it to `~/.config/spotuify/config.json`:
 
 ```bash
+mkdir -p ~/.config/spotuify
 echo '{"clientId":"<your client id>"}' > ~/.config/spotuify/config.json
 ```
 
 ### 3. Authorize
 
 ```bash
-bun run auth
+spotuify auth
 ```
 
-The Web API token pair is cached at `~/.config/spotuify/token.json` with mode `0600` and refreshed
-automatically. Spotify refresh tokens expire six months after authorization; when that happens,
-re-run `bun run auth` to complete the interactive flow again.
+The Web API token pair is cached at `~/.config/spotuify/token.json` and refreshed automatically.
+Spotify refresh tokens expire six months after authorization; when that happens, re-run
+`spotuify auth` to complete the interactive flow again.
 
 This authorizes both the Spotify Web API and terminal playback. Re-run it with `--force` to replace
 the Web API login or `--force-engine` to replace only the playback login.
 
 ## Development
 
+Running from source requires [Bun](https://bun.sh) and [Rust](https://rustup.rs/).
+
+On Linux, install the native build dependencies:
+
+- Debian/Ubuntu: `sudo apt install build-essential pkg-config libasound2-dev`
+- Arch: `sudo pacman -S --needed base-devel alsa-lib`
+
 ```sh
+bun install
+bun run auth          # build and authorize both Spotify sessions
 bun run dev           # run the TUI
 bun test              # unit tests
 bun run typecheck     # TypeScript

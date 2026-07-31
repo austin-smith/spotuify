@@ -1,5 +1,7 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { DEVICE_NAME, LIBRESPOT_CACHE_DIR } from "../config.ts";
+
+declare const SPOTUIFY_STANDALONE: boolean | undefined;
 
 const COMMAND_TIMEOUT_MS = 10_000;
 const ENGINE_READINESS_TIMEOUT_MS = 30_000;
@@ -15,17 +17,56 @@ export function engineRestartDelay(
   return delays[attempt] ?? null;
 }
 
-/** Candidate sidecars for source execution, ordered from explicit override to build fallback. */
-export function sidecarCandidatePaths(
-  platform: NodeJS.Platform = process.platform,
-  configured: string | undefined = process.env["SPOTUIFY_ENGINE_PATH"],
-): string[] {
+export interface SidecarLocationContext {
+  platform?: NodeJS.Platform;
+  configured?: string;
+  standalone?: boolean;
+  executablePath?: string;
+}
+
+export function isStandaloneBuild(): boolean {
+  return typeof SPOTUIFY_STANDALONE !== "undefined" && SPOTUIFY_STANDALONE === true;
+}
+
+/**
+ * Candidate sidecars ordered from explicit override, to packaged layouts, to source builds.
+ *
+ * Release archives keep both executables together. Homebrew installs the private sidecar in
+ * `libexec`, adjacent to its `bin` directory. Source execution falls back to Cargo artifacts.
+ */
+export function sidecarCandidatePaths({
+  platform = process.platform,
+  configured = process.env["SPOTUIFY_ENGINE_PATH"],
+  standalone = isStandaloneBuild(),
+  executablePath = process.execPath,
+}: SidecarLocationContext = {}): string[] {
   const executable = platform === "win32" ? "spotuify-engine.exe" : "spotuify-engine";
+  const executableDirectory = dirname(resolve(executablePath));
   return [
     ...(configured && configured.length > 0 ? [resolve(configured)] : []),
+    ...(standalone
+      ? [
+          resolve(executableDirectory, executable),
+          resolve(executableDirectory, "../libexec", executable),
+        ]
+      : []),
     resolve(import.meta.dir, "../../native/target/debug", executable),
     resolve(import.meta.dir, "../../native/target/release", executable),
   ];
+}
+
+export function engineSetupCommand(standalone = isStandaloneBuild()): string {
+  return standalone ? "spotuify auth" : "bun run auth";
+}
+
+export function missingEngineMessage(standalone = isStandaloneBuild()): string {
+  return standalone
+    ? "The packaged playback engine is missing. Reinstall spotuify and run `spotuify auth` again."
+    : "Run `bun run engine:build`, then re-run `bun run auth`.";
+}
+
+export function missingEngineHint(standalone = isStandaloneBuild()): string {
+  return standalone ? "reinstall spotuify" : "run: bun run engine:build";
 }
 
 function errorMessage(error: unknown): string {

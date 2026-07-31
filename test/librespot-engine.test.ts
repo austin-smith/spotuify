@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   authenticateEngine,
   engineRestartDelay,
@@ -21,21 +21,37 @@ async function eventually(predicate: () => boolean, timeoutMs = 1_000): Promise<
 
 describe("librespot sidecar protocol", () => {
   test("uses the platform-specific native executable name", () => {
-    expect(sidecarCandidatePaths("darwin", undefined).map((path) => basename(path))).toEqual(
+    expect(sidecarCandidatePaths({ platform: "darwin" }).map((path) => basename(path))).toEqual(
       ["spotuify-engine", "spotuify-engine"],
     );
-    expect(sidecarCandidatePaths("win32", undefined).map((path) => basename(path))).toEqual(
+    expect(sidecarCandidatePaths({ platform: "win32" }).map((path) => basename(path))).toEqual(
       ["spotuify-engine.exe", "spotuify-engine.exe"],
     );
   });
 
   test("prefers an explicit sidecar and then the freshly built debug artifact", () => {
     const configured = join(tmpdir(), "configured-sidecar");
-    const candidates = sidecarCandidatePaths(process.platform, configured);
+    const candidates = sidecarCandidatePaths({ configured });
 
     expect(candidates[0]).toBe(configured);
     expect(candidates[1]).toContain(`${join("native", "target", "debug")}`);
     expect(candidates[2]).toContain(`${join("native", "target", "release")}`);
+  });
+
+  test("finds archive and Homebrew sidecars before source build fallbacks", () => {
+    const executablePath = join(tmpdir(), "Cellar", "spotuify", "0.1.0", "bin", "spotuify");
+    const executableDirectory = dirname(executablePath);
+    const candidates = sidecarCandidatePaths({
+      standalone: true,
+      executablePath,
+    });
+
+    expect(candidates.slice(0, 2)).toEqual([
+      resolve(executableDirectory, "spotuify-engine"),
+      resolve(executableDirectory, "../libexec", "spotuify-engine"),
+    ]);
+    expect(candidates[2]).toContain(`${join("native", "target", "debug")}`);
+    expect(candidates[3]).toContain(`${join("native", "target", "release")}`);
   });
 
   test("delegates playback OAuth and cache ownership to the native engine", async () => {

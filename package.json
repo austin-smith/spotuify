@@ -1,10 +1,16 @@
 {
   "name": "spotuify",
   "version": "0.1.0",
+  "packageManager": "bun@1.3.14",
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
   "license": "MIT",
+  "homepage": "https://github.com/austin-smith/spotuify",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/austin-smith/spotuify.git"
+  },
   "bin": {
     "spotuify": "src/cli.ts"
   },
@@ -16,6 +22,19 @@
     "engine:test": "cargo test --manifest-path native/Cargo.toml",
     "licenses:check": "scripts/licenses.sh check",
     "licenses:generate": "scripts/licenses.sh generate",
+    "release:build": "bun run scripts/build-release.ts",
+    "release:canary-version": "bun run scripts/canary-version.ts",
+    "release:checksums": "bun run scripts/checksums.ts",
+    "release:formula": "bun run scripts/render-homebrew-formula.ts",
+    "release:npm:package": "bun run scripts/package-npm.ts",
+    "release:npm:check": "bun run scripts/publish-npm.ts --check --tag latest",
+    "release:npm:publish": "bun run scripts/publish-npm.ts",
+    "release:npm:smoke": "bun run scripts/verify-npm.ts install",
+    "release:npm:verify": "bun run scripts/verify-npm.ts",
+    "release:package": "bun run scripts/package-release.ts",
+    "release:publish-formula": "bun run scripts/publish-homebrew-formula.ts",
+    "release:validate-tag": "bun run scripts/validate-release-tag.ts",
+    "release:verify": "bun run scripts/verify-release.ts",
     "spotuify": "bun run src/cli.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"

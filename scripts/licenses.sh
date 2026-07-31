@@ -33,10 +33,12 @@ require_tool() {
 generate_notices() (
   local output_path="$1"
   local raw_output
+  local javascript_output
 
   cargo fetch --locked --manifest-path native/Cargo.toml
   raw_output="$(mktemp)"
-  trap 'rm -f "$raw_output"' EXIT
+  javascript_output="$(mktemp)"
+  trap 'rm -f "$raw_output" "$javascript_output"' EXIT
   cargo-about generate \
     --manifest-path native/Cargo.toml \
     --config "$license_tools_dir/about.toml" \
@@ -44,7 +46,13 @@ generate_notices() (
     --fail \
     --output-file "$raw_output" \
     "$license_tools_dir/about.hbs"
-  tr -d '\r' < "$raw_output" |
+  bun run "$license_tools_dir/javascript.ts" > "$javascript_output"
+  {
+    cat "$raw_output"
+    printf '\n\n'
+    cat "$javascript_output"
+  } |
+    tr -d '\r' |
     sed 's/[[:blank:]]*$//' |
     awk 'NF { while (blank > 0) { print ""; blank-- } print; next } { blank++ }' > "$output_path"
 )
@@ -54,14 +62,14 @@ case "${1:-}" in
     require_tool \
       cargo-about \
       "$cargo_about_version" \
-      "cargo install --locked --version $cargo_about_version cargo-about"
+      "cargo install --locked --version $cargo_about_version cargo-about --features cli"
     generate_notices "$repo_root/THIRD_PARTY_NOTICES.txt"
     ;;
   check)
     require_tool \
       cargo-about \
       "$cargo_about_version" \
-      "cargo install --locked --version $cargo_about_version cargo-about"
+      "cargo install --locked --version $cargo_about_version cargo-about --features cli"
     require_tool \
       cargo-deny \
       "$cargo_deny_version" \

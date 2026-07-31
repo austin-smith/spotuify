@@ -13,7 +13,11 @@ import {
 } from "../auth/profile.ts";
 import { ReauthRequiredError } from "../auth/tokens.ts";
 import { MissingClientIdError, REDIRECT_URI } from "../config.ts";
-import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
+import {
+  engineSetupCommand,
+  LibrespotEngine,
+  type EngineStatus,
+} from "../engine/librespot.ts";
 import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
 import { useLyrics } from "../store/lyrics.ts";
@@ -55,7 +59,7 @@ function Setup({ message }: { message: string }) {
       </text>
       <text fg={theme.error}>{message}</text>
       <text fg={theme.label}>Redirect URI to register: {REDIRECT_URI}</text>
-      <text fg={theme.label}>Then run: bun run auth</text>
+      <text fg={theme.label}>Then run: {engineSetupCommand()}</text>
       <text fg={theme.label}>Q to quit.</text>
     </box>
   );
