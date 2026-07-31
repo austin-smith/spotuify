@@ -142,7 +142,7 @@ canary jobs; do not configure a second publisher.
 
 ## Publish a stable release
 
-1. Update `package.json` and `native/Cargo.toml` to the same semantic version. Keep
+1. Update `package.json` and `native/Cargo.toml` to the same stable `X.Y.Z` version. Keep
    `native/Cargo.toml` set to `publish = false`.
 2. Refresh the native package version recorded in `native/Cargo.lock` without updating third-party
    dependencies:

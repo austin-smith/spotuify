@@ -55,10 +55,18 @@ export const STAGE_DIR = resolve(DIST_DIR, "stage");
 
 const STRICT_SEMVER =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const STABLE_SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
-function validVersion(value: unknown, source: string): string {
+function validSemanticVersion(value: unknown, source: string): string {
   if (typeof value !== "string" || !STRICT_SEMVER.test(value)) {
-    throw new Error(`${source} must contain a valid semantic product version`);
+    throw new Error(`${source} must contain a valid semantic version`);
+  }
+  return value;
+}
+
+function validStableVersion(value: unknown, source: string): string {
+  if (typeof value !== "string" || !STABLE_SEMVER.test(value)) {
+    throw new Error(`${source} must contain a stable semantic version in X.Y.Z format`);
   }
   return value;
 }
@@ -68,8 +76,8 @@ export async function productVersion(): Promise<string> {
   const cargoToml = Bun.TOML.parse(
     await Bun.file(resolve(REPO_ROOT, "native", "Cargo.toml")).text(),
   ) as { package?: { version?: unknown; publish?: unknown } };
-  const packageVersion = validVersion(packageJson.version, "package.json");
-  const nativeVersion = validVersion(cargoToml.package?.version, "native/Cargo.toml");
+  const packageVersion = validStableVersion(packageJson.version, "package.json");
+  const nativeVersion = validStableVersion(cargoToml.package?.version, "native/Cargo.toml");
 
   if (packageJson.private !== true) {
     throw new Error("package.json must keep private = true");
@@ -95,7 +103,7 @@ export async function buildVersion(): Promise<string> {
   const override = Bun.env.SPOTUIFY_BUILD_VERSION;
   return override === undefined
     ? canonicalVersion
-    : validVersion(override, "SPOTUIFY_BUILD_VERSION");
+    : validSemanticVersion(override, "SPOTUIFY_BUILD_VERSION");
 }
 
 export function canaryVersion(
@@ -103,15 +111,14 @@ export function canaryVersion(
   runNumber: string,
   commitSha: string,
 ): string {
-  const version = validVersion(canonicalVersion, "canonical version");
+  const version = validStableVersion(canonicalVersion, "canonical version");
   if (!/^[1-9]\d*$/.test(runNumber)) {
     throw new Error("GitHub run number must be a positive integer");
   }
   if (!/^[0-9a-f]{40}$/i.test(commitSha)) {
     throw new Error("Git commit SHA must contain exactly 40 hexadecimal characters");
   }
-  const coreVersion = version.split(/[+-]/, 1)[0];
-  return `${coreVersion}-canary.${runNumber}.g${commitSha.slice(0, 12).toLowerCase()}`;
+  return `${version}-canary.${runNumber}.g${commitSha.slice(0, 12).toLowerCase()}`;
 }
 
 export function releaseTarget(argument = process.argv[2]): ReleaseTarget {
