@@ -36,7 +36,6 @@ pub async fn authenticate(config: AuthConfig, session_config: SessionConfig) -> 
         return Ok(());
     }
 
-    println!("\nSpotify needs to authorize terminal playback.");
     let oauth = OAuthClientBuilder::new(
         &session_config.client_id,
         OAUTH_REDIRECT_URI,

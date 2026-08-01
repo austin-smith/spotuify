@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "bun:test";
 import packageMetadata from "../package.json";
+import { PLAIN_HELP } from "../src/cli/presenter.ts";
 import { formatSoftwareLicenses, softwareLicenses } from "../src/licenses.ts";
 
 let directory: string | undefined;
@@ -43,6 +44,33 @@ test.each(["-v", "--version"])(
     expect(await readdir(directory)).toEqual([]);
   },
 );
+
+test.each(["help", "-h", "--help"])("%s prints stable help without side effects", async (flag) => {
+  directory = await mkdtemp(join(tmpdir(), "spotuify-help-test-"));
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+  const child = Bun.spawn([process.execPath, cli, flag], {
+    cwd: directory,
+    env: {
+      ...process.env,
+      CI: "true",
+      XDG_CONFIG_HOME: join(directory, "config"),
+      XDG_CACHE_HOME: join(directory, "cache"),
+      SPOTUIFY_ENGINE_PATH: join(directory, "missing-engine"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+
+  expect(exitCode).toBe(0);
+  expect(stdout).toBe(PLAIN_HELP);
+  expect(stderr).toBe("");
+  expect(await readdir(directory)).toEqual([]);
+});
 
 test("licenses prints embedded legal notices without side effects", async () => {
   directory = await mkdtemp(join(tmpdir(), "spotuify-licenses-test-"));
@@ -94,7 +122,7 @@ test("update rejects unsupported arguments before any network or renderer work",
 
   expect(exitCode).toBe(2);
   expect(stdout).toBe("");
-  expect(stderr).toBe("Usage: spotuify update [--check]\n");
+  expect(stderr).toBe("Invalid update options.\nUsage: spotuify update [--check]\n");
   expect(await readdir(directory)).toEqual([]);
 });
 
@@ -120,7 +148,9 @@ test("auth rejects unsupported arguments before setup or network work", async ()
 
   expect(exitCode).toBe(2);
   expect(stdout).toBe("");
-  expect(stderr).toBe("Usage: spotuify auth [--force] [--force-engine] [--reset]\n");
+  expect(stderr).toBe(
+    "Invalid auth options.\nUsage: spotuify auth [--force] [--force-engine] [--reset]\n",
+  );
   expect(await readdir(directory)).toEqual([]);
 });
 

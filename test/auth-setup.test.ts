@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
-import { prepareClientId } from "../src/auth/setup.ts";
+import { prepareClientId, type ClientIdSetupEvent } from "../src/auth/setup.ts";
 import { MissingClientIdError, REDIRECT_URI, saveClientId } from "../src/config.ts";
 
 let directory: string | undefined;
@@ -30,7 +30,7 @@ describe("Spotify app setup", () => {
         save: async () => {
           saved = true;
         },
-        log: (message) => messages.push(message),
+        onEvent: (event) => messages.push(event.type),
       },
     );
     await setup.commit();
@@ -57,7 +57,7 @@ describe("Spotify app setup", () => {
         save: async (clientId) => {
           savedClientId = clientId;
         },
-        log: () => {},
+        onEvent: () => {},
       },
     );
 
@@ -85,7 +85,7 @@ describe("Spotify app setup", () => {
           prompted = true;
           return "unused";
         },
-        log: () => {},
+        onEvent: () => {},
       },
     );
 
@@ -111,7 +111,7 @@ describe("Spotify app setup", () => {
           save: async () => {
             saved = true;
           },
-          log: () => {},
+          onEvent: () => {},
         },
       ),
     ).rejects.toThrow(
@@ -124,7 +124,7 @@ describe("Spotify app setup", () => {
   });
 
   test("keeps a missing Client ID pending until authorization succeeds", async () => {
-    const messages: string[] = [];
+    const events: ClientIdSetupEvent[] = [];
     const prompts: string[] = [];
     let savedClientId: string | undefined;
 
@@ -141,7 +141,7 @@ describe("Spotify app setup", () => {
         save: async (value) => {
           savedClientId = value;
         },
-        log: (message) => messages.push(message),
+        onEvent: (event) => events.push(event),
       },
     );
 
@@ -149,22 +149,19 @@ describe("Spotify app setup", () => {
     expect(setup.requiresAuthorization).toBe(true);
     expect(savedClientId).toBeUndefined();
     expect(prompts).toEqual(["Client ID: "]);
-    expect(messages).toEqual([
-      [
-        "Spotify app setup",
-        "",
-        "1. Create an app: https://developer.spotify.com/dashboard",
-        `2. Add this redirect URI: ${REDIRECT_URI}`,
-        "3. Paste the app’s Client ID below.",
-        "",
-      ].join("\n"),
+    expect(events).toEqual([
+      {
+        type: "setup-required",
+        dashboardUrl: "https://developer.spotify.com/dashboard",
+        redirectUri: REDIRECT_URI,
+      },
     ]);
 
     await setup.commit();
     await setup.commit();
 
     expect(savedClientId).toBe("pasted-client-id");
-    expect(messages.at(-1)).toBe("\nSaved for future use.\n");
+    expect(events.at(-1)).toEqual({ type: "saved" });
   });
 
   test("reset collects a replacement without changing working configuration", async () => {
@@ -178,7 +175,7 @@ describe("Spotify app setup", () => {
         save: async (value) => {
           savedClientId = value;
         },
-        log: () => {},
+        onEvent: () => {},
       },
     );
 
@@ -204,7 +201,7 @@ describe("Spotify app setup", () => {
           save: async () => {
             saved = true;
           },
-          log: () => {},
+          onEvent: () => {},
         },
       ),
     ).rejects.toThrow("Client ID cannot be empty.");
