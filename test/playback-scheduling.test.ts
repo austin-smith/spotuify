@@ -545,6 +545,37 @@ describe("selection transitions", () => {
     expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
   });
 
+  test("requires a follow-up snapshot when the requested item was already current", async () => {
+    const staleState: PlaybackState = { ...REMOTE_STATE, progress_ms: 90_000 };
+    const restartedState: PlaybackState = { ...REMOTE_STATE, progress_ms: 0 };
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return reads < 3 ? staleState : restartedState;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => reads === 1);
+    await usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+
+    expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeTrue();
+    await eventually(() => reads >= 2, COMMAND_RECONCILE_MS + 500);
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    expect(usePlayback.getState().progressMs).toBeGreaterThanOrEqual(90_000);
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      SELECTION_RECONCILE_RETRY_MS + 500,
+    );
+    expect(reads).toBe(3);
+    expect(usePlayback.getState().progressMs).toBeLessThan(2_000);
+  });
+
   test("keeps a context-only selection through a stale item and verifies its context", async () => {
     const selectedContextUri = "spotify:playlist:selected";
     const staleState: PlaybackState = {

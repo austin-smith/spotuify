@@ -62,6 +62,8 @@ export interface PendingPlaybackSelection {
   item: PlayableItem | null;
   /** Requested playback identity used to reject stale post-command Web snapshots. */
   confirmation: PlaybackSelectionConfirmation;
+  /** The first matching Web snapshot is ambiguous because it could predate the command. */
+  requiresFollowUp: boolean;
   /** The control lane whose acknowledgement is allowed to finish this transition. */
   lane: PlaybackSelectionLane;
 }
@@ -561,6 +563,17 @@ function selectionConfirmationFor(
   return null;
 }
 
+function selectionRequiresFollowUp(
+  confirmation: PlaybackSelectionConfirmation,
+  currentItem: PlayableItem | null,
+): boolean {
+  if (confirmation === null) return false;
+  // A context-only selection has no expected item, and replaying the current URI makes an item
+  // match indistinguishable from a stale pre-command snapshot. In both cases, spend the one
+  // bounded follow-up read before accepting an otherwise identical response.
+  return confirmation.kind === "context" || currentItem?.uri === confirmation.uri;
+}
+
 function clearPendingSelection(
   set: (patch: Partial<PlaybackSlice>) => void,
   get: () => PlaybackSlice,
@@ -1006,12 +1019,10 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         const next = applyState(state);
         const pendingSelection = get().pendingSelection;
         const selectionMatches = selectionMatchesState(pendingSelection, state);
-        // A context-only command has no expected item with which to distinguish a fresh response
-        // from a stale snapshot of the same context. Always require its one bounded follow-up read.
-        const contextNeedsFollowUp =
-          pendingSelection?.confirmation?.kind === "context" &&
+        const selectionNeedsFollowUp =
+          pendingSelection?.requiresFollowUp === true &&
           selectionConfirmationRetries === 0;
-        if (selectionMatches && !contextNeedsFollowUp) {
+        if (selectionMatches && !selectionNeedsFollowUp) {
           selectionConfirmationRetries = 0;
           next.pendingSelection = null;
         } else if (pendingSelection !== null) {
@@ -1124,12 +1135,14 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     selectionConfirmationRetries = 0;
     const state = get();
     const routeNative = nativeCanHandle(state);
+    const confirmation = selectionConfirmationFor(options, preview);
     set({
       pendingSelection: {
         requestId,
         label: preview?.label ?? "selection",
         item: preview?.item ?? null,
-        confirmation: selectionConfirmationFor(options, preview),
+        confirmation,
+        requiresFollowUp: selectionRequiresFollowUp(confirmation, state.item),
         lane: routeNative ? "native" : "web",
       },
       error: null,

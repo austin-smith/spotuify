@@ -19,6 +19,7 @@ const PENDING: PendingPlaybackSelection = {
   label: TRACK.name,
   item: TRACK,
   confirmation: { kind: "item", uri: TRACK.uri },
+  requiresFollowUp: false,
   lane: "native",
 };
 
@@ -96,6 +97,7 @@ test("a context without track metadata gets a restrained starting surface", asyn
       label: "Daily Mix",
       item: null,
       confirmation: { kind: "context", uri: "spotify:playlist:daily-mix" },
+      requiresFollowUp: true,
       lane: "web",
     }),
   );
