@@ -69,9 +69,12 @@ receiver even when Spotify's own device list omits it — and `device list` show
 
 A selector naming the embedded receiver routes through its runtime rather than the Web API:
 `play` and `open` transfer playback there natively before starting, while the state commands
-(`pause`, `next`, `previous`, `seek`, `volume`, `shuffle`, `repeat`) require the receiver to
-already be the active device — the same commands aimed at any other idle device would fail at
-Spotify anyway. All other devices are reached through the Web API.
+(`pause`, `next`, `previous`, `seek`, `volume`, `shuffle`, `repeat`, and `queue add`) require the
+receiver to already be the active device — the same commands aimed at any other idle device would
+fail at Spotify anyway. All other devices are reached through the Web API. When a runtime is
+present, `queue add` also forwards through it rather than opening a second Web API session, and a
+playback command Spotify or the receiver rejects fails the CLI command instead of printing
+success.
 
 ## Browse and manage Spotify
 

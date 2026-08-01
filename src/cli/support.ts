@@ -104,6 +104,33 @@ function runtimeDeviceList(
 }
 
 /**
+ * The runtime's merged device view, or `null` when no runtime can provide one.
+ *
+ * A runtime predating `device.list` answers with an unknown-method refusal; reads degrade to the
+ * Web API view rather than failing every device command mid-upgrade. Mutations do not get this
+ * leniency — silently taking a different path is worse than an error.
+ */
+async function probeRuntimeDevices(): Promise<{
+  devices: Device[];
+  localDeviceId: string | null;
+} | null> {
+  try {
+    const probe = await tryRuntimeRequest("device.list");
+    return probe.connected ? runtimeDeviceList(probe.value) : null;
+  } catch (error) {
+    // Classified runtimes answer with a RuntimeRemoteError; anything older or unclassified
+    // arrives as a plain Error. Match the refusal itself, not the wrapper.
+    if (
+      error instanceof Error &&
+      error.message.includes("Unknown runtime method")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
  * Every targetable device.
  *
  * A connected runtime is the authority: its list merges Spotify's remote devices with the embedded
@@ -111,8 +138,8 @@ function runtimeDeviceList(
  * is all there is.
  */
 export async function allDevices(): Promise<Device[]> {
-  const probe = await tryRuntimeRequest("device.list");
-  if (probe.connected) return runtimeDeviceList(probe.value).devices;
+  const merged = await probeRuntimeDevices();
+  if (merged !== null) return merged.devices;
   const { player } = await cliSession();
   return await player.devices();
 }
@@ -137,15 +164,15 @@ export type DeviceTarget =
 export async function resolveDeviceTarget(
   selector: string,
 ): Promise<DeviceTarget> {
-  const probe = await tryRuntimeRequest("device.list");
-  if (!probe.connected) {
+  const merged = await probeRuntimeDevices();
+  if (merged === null) {
     const { player } = await cliSession();
     return {
       route: "web",
       device: targetDevice(await player.devices(), selector),
     };
   }
-  const { devices, localDeviceId } = runtimeDeviceList(probe.value);
+  const { devices, localDeviceId } = merged;
   const device = targetDevice(devices, selector);
   if (localDeviceId !== null && device.id === localDeviceId) {
     return {

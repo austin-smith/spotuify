@@ -644,6 +644,106 @@ describe("local runtime control", () => {
     expect(requests).toEqual(["device.list", "device.list"]);
   });
 
+  test("routes queue additions and device current through the runtime", async () => {
+    const control = await paths();
+    const requests: { method: string; params: unknown }[] = [];
+    server = await startControlServer(
+      (method, params) => {
+        requests.push({ method, params });
+        if (method === "queue.add") return {};
+        if (method === "status") {
+          return {
+            active: true,
+            isPlaying: true,
+            item: null,
+            progressMs: 0,
+            durationMs: 0,
+            shuffle: false,
+            repeat: "off",
+            device: { id: "local-dev", name: "spotuify", volumePercent: 40 },
+          };
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+      { paths: control },
+    );
+    const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+    const env = { ...process.env, SPOTUIFY_RUNTIME_DIR: control.directory };
+
+    const add = Bun.spawn(
+      [
+        process.execPath,
+        cli,
+        "--json",
+        "queue",
+        "add",
+        "spotify:track:one",
+        "spotify:track:two",
+      ],
+      { env, stdout: "pipe", stderr: "pipe" },
+    );
+    const [addExit, addErr] = await Promise.all([
+      add.exited,
+      new Response(add.stderr).text(),
+    ]);
+    expect(addErr).toBe("");
+    expect(addExit).toBe(0);
+    expect(requests).toEqual([
+      { method: "queue.add", params: { uri: "spotify:track:one" } },
+      { method: "queue.add", params: { uri: "spotify:track:two" } },
+    ]);
+    requests.length = 0;
+
+    const current = Bun.spawn(
+      [process.execPath, cli, "--json", "device", "current"],
+      { env, stdout: "pipe", stderr: "pipe" },
+    );
+    const [currentExit, currentOut] = await Promise.all([
+      current.exited,
+      new Response(current.stdout).text(),
+    ]);
+    expect(currentExit).toBe(0);
+    expect(JSON.parse(currentOut)).toMatchObject({
+      command: "device.current",
+      data: { id: "local-dev", name: "spotuify" },
+    });
+    expect(requests).toEqual([{ method: "status", params: {} }]);
+  });
+
+  // An older runtime predating device.list must degrade reads to the Web API view instead of
+  // failing every device command mid-upgrade.
+  test("falls back to the Web API when the runtime predates device.list", async () => {
+    const control = await paths();
+    server = await startControlServer(
+      (method) => {
+        throw new Error(`Unknown runtime method: ${method}`);
+      },
+      { paths: control },
+    );
+    const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+    const child = Bun.spawn(
+      [process.execPath, cli, "--json", "device", "list"],
+      {
+        env: {
+          ...process.env,
+          SPOTUIFY_RUNTIME_DIR: control.directory,
+          XDG_CONFIG_HOME: join(control.directory, "missing-config"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [exitCode, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+    ]);
+    // Reaching the credential check proves the command took the Web API path after the refusal.
+    expect(exitCode).toBe(3);
+    expect(JSON.parse(stderr)).toMatchObject({
+      error: { code: "authentication_required" },
+    });
+  });
+
   test("sends shuffle toggle and repeat cycle for the runtime to resolve", async () => {
     const control = await paths();
     const requests: { method: string; params: unknown }[] = [];

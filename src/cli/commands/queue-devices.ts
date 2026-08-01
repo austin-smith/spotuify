@@ -1,17 +1,22 @@
 import { Command } from "commander";
 import { artistLine } from "../../api/types.ts";
-import { tryRuntimeRequest } from "../../runtime/control.ts";
+import { runtimeRequest, tryRuntimeRequest } from "../../runtime/control.ts";
 import { unavailable, usageError } from "../errors.ts";
-import { normalizeItem, type CliIo } from "../output.ts";
+import {
+  normalizeItem,
+  normalizeRuntimePlayback,
+  type CliIo,
+} from "../output.ts";
 import { cliSession } from "../session.ts";
 import { spotifyReference } from "../values.ts";
 import {
   allDevices,
   currentState,
+  inactiveReceiver,
   itemRows,
   mutation,
   outputFor,
-  selectedDevice,
+  resolveDeviceTarget,
   table,
   uniqueDevice,
 } from "../support.ts";
@@ -56,11 +61,6 @@ export function registerQueueAndDevices(program: Command, io: CliIo): void {
         options: { device?: string },
         command: Command,
       ) => {
-        const { player } = await cliSession();
-        const deviceId =
-          options.device === undefined
-            ? undefined
-            : (await selectedDevice(options.device)).id;
         const uris = items.map((item) => {
           const ref = spotifyReference(item);
           if (ref.kind !== "track" && ref.kind !== "episode")
@@ -69,6 +69,34 @@ export function registerQueueAndDevices(program: Command, io: CliIo): void {
             );
           return ref.uri;
         });
+        const resolved =
+          options.device === undefined
+            ? undefined
+            : await resolveDeviceTarget(options.device);
+        if (resolved?.route === "local" && !resolved.active) {
+          inactiveReceiver(resolved.name);
+        }
+        // A running runtime owns the queue path: additions go through its client and serialize
+        // with the other mutations instead of racing them from a second Web API session.
+        if (resolved === undefined || resolved.route === "local") {
+          const first = await tryRuntimeRequest("queue.add", { uri: uris[0] });
+          if (first.connected) {
+            for (const uri of uris.slice(1)) {
+              await runtimeRequest("queue.add", { uri });
+            }
+            mutation(
+              command,
+              io,
+              "queue.add",
+              { source: "runtime", uris, deviceId: resolved?.id ?? null },
+              `Added ${uris.length} item${uris.length === 1 ? "" : "s"} to the queue.`,
+            );
+            return;
+          }
+        }
+        const { player } = await cliSession();
+        const deviceId =
+          resolved?.route === "web" ? resolved.device.id : undefined;
         for (const uri of uris) await player.addToQueue(uri, deviceId);
         mutation(
           command,
@@ -109,6 +137,23 @@ export function registerQueueAndDevices(program: Command, io: CliIo): void {
     .command("current")
     .description("Show the active device")
     .action(async (_options, command: Command) => {
+      // While the receiver is active, native transfer events outrun `/me/player`; the runtime
+      // snapshot is the authority when one exists.
+      const runtime = await tryRuntimeRequest("status");
+      if (runtime.connected) {
+        const device = normalizeRuntimePlayback(runtime.value)["device"] as {
+          id: string | null;
+          name: string;
+          type: string | null;
+        } | null;
+        if (device === null) throw unavailable("No active playback device.");
+        outputFor(command, io).emit(
+          "device.current",
+          device,
+          `${device.name}${device.type === null ? "" : ` (${device.type})`}\n${device.id ?? "No device ID"}`,
+        );
+        return;
+      }
       const state = await currentState();
       if (state?.device === null || state?.device === undefined)
         throw unavailable("No active playback device.");

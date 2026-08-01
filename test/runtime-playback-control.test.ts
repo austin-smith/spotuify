@@ -66,6 +66,7 @@ describe("runtime playback adapter", () => {
         toggles++;
         await Bun.sleep(10);
         usePlayback.setState({ isPlaying: target });
+        return null;
       },
     });
     const handler = createPlaybackRuntimeHandler();
@@ -150,6 +151,7 @@ describe("runtime playback adapter", () => {
         const current = usePlayback.getState().volumePercent ?? 0;
         await Bun.sleep(10);
         usePlayback.setState({ volumePercent: current + delta });
+        return null;
       },
     });
     const handler = createPlaybackRuntimeHandler();
@@ -170,6 +172,7 @@ describe("runtime playback adapter", () => {
       progressMs: 30_000,
       seekBy: async (deltaMs: number) => {
         seeks.push(deltaMs);
+        return null;
       },
     });
     const handler = createPlaybackRuntimeHandler();
@@ -194,9 +197,11 @@ describe("runtime playback adapter", () => {
       ready: true,
       toggleShuffle: async () => {
         shuffles++;
+        return null;
       },
       cycleRepeat: async () => {
         cycles++;
+        return null;
       },
     });
     const handler = createPlaybackRuntimeHandler();
@@ -220,6 +225,37 @@ describe("runtime playback adapter", () => {
     await expect(
       handler("seek", { positionMs: 1_000, offsetMs: 1_000 }),
     ).rejects.toThrow("not both");
+  });
+
+  /**
+   * Store actions never reject — the TUI banner is their error surface — so the handler must read
+   * the reported outcome. Without this, a refused command answers the RPC with success.
+   */
+  test("propagates a store-reported failure to the RPC caller", async () => {
+    usePlayback.setState({
+      ready: true,
+      togglePlay: async () => ({ failure: new Error("spotify declined") }),
+    });
+
+    await expect(createPlaybackRuntimeHandler()("toggle", {})).rejects.toThrow(
+      "spotify declined",
+    );
+  });
+
+  test("forwards queue additions through the runtime's own client", async () => {
+    const queued: string[] = [];
+    const player = {
+      addToQueue: async (uri: string) => {
+        queued.push(uri);
+      },
+    } as unknown as PlayerApi;
+    usePlayback.setState({ ready: true });
+    const handler = createPlaybackRuntimeHandler(player);
+
+    await handler("queue.add", { uri: "spotify:track:one" });
+    await expect(handler("queue.add", {})).rejects.toThrow("uri is required");
+
+    expect(queued).toEqual(["spotify:track:one"]);
   });
 
   test("lists the merged device view with the receiver identified", async () => {

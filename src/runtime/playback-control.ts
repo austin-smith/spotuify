@@ -10,7 +10,10 @@ import {
   transferPlayback,
   withLocalDevice,
 } from "../store/devices.ts";
-import { usePlayback } from "../store/playback.ts";
+import {
+  usePlayback,
+  type PlaybackCommandOutcome,
+} from "../store/playback.ts";
 import { asCliError, unavailable, usageError } from "../cli/errors.ts";
 import {
   startControlServer,
@@ -58,6 +61,11 @@ export function playbackRuntimeSnapshot(): Record<string, unknown> {
   };
 }
 
+/** Reject the RPC when a store mutation reports failure; the TUI banner already has the error. */
+function accepted(outcome: PlaybackCommandOutcome): void {
+  if (outcome !== null) throw outcome.failure;
+}
+
 function objectParams(params: unknown): Record<string, unknown> {
   if (params === null || typeof params !== "object" || Array.isArray(params))
     throw usageError("Invalid runtime parameters.");
@@ -93,21 +101,21 @@ export function createPlaybackRuntimeHandler(
         const offset =
           typeof params["offset"] === "number" ? params["offset"] : undefined;
         if (contextUri !== undefined || uris !== undefined)
-          await store.playSelection({ contextUri, uris, offset });
-        else if (!store.isPlaying) await store.togglePlay();
+          accepted(await store.playSelection({ contextUri, uris, offset }));
+        else if (!store.isPlaying) accepted(await store.togglePlay());
         break;
       }
       case "pause":
-        if (store.isPlaying) await store.togglePlay();
+        if (store.isPlaying) accepted(await store.togglePlay());
         break;
       case "toggle":
-        await store.togglePlay();
+        accepted(await store.togglePlay());
         break;
       case "next":
-        await store.next();
+        accepted(await store.next());
         break;
       case "previous":
-        await store.previous();
+        accepted(await store.previous());
         break;
       // Relative forms (`offsetMs`, `delta`, `toggle`, `"cycle"`) exist so clients never have to
       // read state and send back an absolute: that read-modify-write loses updates when two
@@ -119,9 +127,9 @@ export function createPlaybackRuntimeHandler(
         if (typeof positionMs === "number" && typeof offsetMs === "number")
           throw usageError("Provide positionMs or offsetMs, not both.");
         if (store.item === null) throw unavailable("Nothing is playing.");
-        if (typeof offsetMs === "number") await store.seekBy(offsetMs);
+        if (typeof offsetMs === "number") accepted(await store.seekBy(offsetMs));
         else if (typeof positionMs === "number")
-          await store.seekBy(positionMs - store.progressMs);
+          accepted(await store.seekBy(positionMs - store.progressMs));
         else throw usageError("positionMs or offsetMs is required.");
         break;
       }
@@ -132,25 +140,26 @@ export function createPlaybackRuntimeHandler(
           throw usageError("Provide percent or delta, not both.");
         if (store.volumePercent === null)
           throw unavailable("The active device does not report its volume.");
-        if (typeof delta === "number") await store.adjustVolume(delta);
+        if (typeof delta === "number") accepted(await store.adjustVolume(delta));
         else if (typeof percent === "number")
-          await store.adjustVolume(percent - store.volumePercent);
+          accepted(await store.adjustVolume(percent - store.volumePercent));
         else throw usageError("percent or delta is required.");
         break;
       }
       case "shuffle": {
         if (params["toggle"] === true) {
-          await store.toggleShuffle();
+          accepted(await store.toggleShuffle());
           break;
         }
         if (typeof params["enabled"] !== "boolean")
           throw usageError("enabled or toggle is required.");
-        if (store.shuffle !== params["enabled"]) await store.toggleShuffle();
+        if (store.shuffle !== params["enabled"])
+          accepted(await store.toggleShuffle());
         break;
       }
       case "repeat": {
         if (params["mode"] === "cycle") {
-          await store.cycleRepeat();
+          accepted(await store.cycleRepeat());
           break;
         }
         if (
@@ -163,8 +172,17 @@ export function createPlaybackRuntimeHandler(
           count < 2 && usePlayback.getState().repeat !== target;
           count++
         ) {
-          await usePlayback.getState().cycleRepeat();
+          accepted(await usePlayback.getState().cycleRepeat());
         }
+        break;
+      }
+      case "queue.add": {
+        if (player === undefined) throw unavailable("Queue is unavailable.");
+        if (typeof params["uri"] !== "string")
+          throw usageError("uri is required.");
+        // Forwarded through this runtime's own client so a CLI process never spins up a second
+        // Web API session, and additions serialize with the other mutations.
+        await player.addToQueue(params["uri"]);
         break;
       }
       case "device.list": {

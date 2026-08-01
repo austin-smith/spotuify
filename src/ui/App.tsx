@@ -106,6 +106,7 @@ export function App({ version }: { version: string }) {
   const [profileRecoveryRequest, setProfileRecoveryRequest] = useState(0);
   const [profileRecoveryFailed, setProfileRecoveryFailed] = useState(false);
   const [bootAttempt, setBootAttempt] = useState(0);
+  const [runtimeAttempt, setRuntimeAttempt] = useState(0);
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [showUpdateNotice, setShowUpdateNotice] = useState(false);
   const profileRecoveryController = useRef<AbortController | null>(null);
@@ -256,7 +257,7 @@ export function App({ version }: { version: string }) {
       runtimeServer.current = null;
       void close?.();
     };
-  }, [bootPlayer]);
+  }, [bootPlayer, runtimeAttempt]);
 
   useEffect(() => {
     if (
@@ -581,6 +582,11 @@ export function App({ version }: { version: string }) {
       setBootAttempt((attempt) => attempt + 1);
       return;
     }
+    if (runtimeOwnership === "conflict" && key.name === "r") {
+      setRuntimeOwnership("checking");
+      setRuntimeAttempt((attempt) => attempt + 1);
+      return;
+    }
     if (boot.phase !== "ready") return;
 
     if (key.name === "/") {
@@ -733,6 +739,17 @@ export function App({ version }: { version: string }) {
     return (
       <StartupErrorScreen
         message={boot.message}
+        width={width}
+        height={height}
+      />
+    );
+  }
+  // A bounded, explained conflict beats an unexplained LOADING screen: playback initialization is
+  // deliberately blocked while another runtime owns local commands, and nothing else renders that.
+  if (runtimeOwnership === "conflict") {
+    return (
+      <StartupErrorScreen
+        message="Another Spotuify runtime is already serving local commands. Stop it with `spotuify service stop`, then retry."
         width={width}
         height={height}
       />

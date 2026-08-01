@@ -226,3 +226,43 @@ describe("how long an error stays up", () => {
     }
   });
 });
+
+describe("command outcomes", () => {
+  test("a rejected command reports its failure instead of resolving silently", async () => {
+    const failure = new SpotifyApiError(502, "/me/player/next", "bad gateway", null);
+    await withFailure(failure);
+
+    const outcome = await usePlayback.getState().next();
+
+    expect(outcome).not.toBeNull();
+    expect(outcome?.failure).toBe(failure);
+  });
+
+  /**
+   * `fail()` hides transport refusals from the banner on purpose — Spotify's own clients do
+   * nothing. RPC callers still get the refusal: the Web CLI path reports it, so the runtime path
+   * must too.
+   */
+  test("a transport refusal is reported to callers even though the banner stays quiet", async () => {
+    const refusal = new PlayerCommandRejectedError("Restriction violated");
+    await withFailure(refusal);
+
+    const outcome = await usePlayback.getState().previous();
+
+    expect(outcome?.failure).toBe(refusal);
+    expect(usePlayback.getState().error).toBeNull();
+  });
+
+  test("a failed selection restores the context it optimistically replaced", async () => {
+    await withFailure(new SpotifyApiError(404, "/me/player/play", "gone", null));
+    usePlayback.setState({ contextUri: "spotify:playlist:before" });
+
+    const outcome = await usePlayback
+      .getState()
+      .playSelection({ contextUri: "spotify:album:requested" });
+
+    expect(outcome).not.toBeNull();
+    expect(usePlayback.getState().contextUri).toBe("spotify:playlist:before");
+    expect(usePlayback.getState().pendingSelection).toBeNull();
+  });
+});
