@@ -405,7 +405,7 @@ function describe(err: unknown): string {
 function fail(
   set: (patch: Partial<PlaybackSlice>) => void,
   err: unknown,
-  lifetime: "until-success" | "transient" = "until-success",
+  lifetime: "until-success" | "transient",
 ): void {
   if (err instanceof PlayerCommandRejectedError) return;
   if (err instanceof SpotifyLimitError) {
@@ -730,7 +730,7 @@ function deferPendingSelectionResolution(
     // cannot drop the renderer back to the branded idle state.
     if (promotePendingSelectionFromNativeTransport(set, get, requestId)) return;
     // Connection or a half-complete/unrelated event sequence is not confirmation.
-    if (resolution.kind === "failed") fail(set, resolution.error);
+    if (resolution.kind === "failed") fail(set, resolution.error, "transient");
     clearPendingSelection(set, get, requestId);
   }, NATIVE_TAKEOVER_GRACE_MS);
 }
@@ -1244,7 +1244,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         ) {
           return;
         }
-        fail(set, err);
+        fail(set, err, "until-success");
         const pendingSelection = get().pendingSelection;
         if (pendingSelection !== null) resetPendingSelectionTracking(pendingSelection.requestId);
         set({ ready: true, pendingSelection: null });

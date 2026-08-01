@@ -891,6 +891,7 @@ describe("native receiver routing", () => {
   test("incomplete native events give a failed Web takeover only a bounded grace period", async () => {
     const events: { listener?: (event: EngineEvent) => void } = {};
     let rejectPlay: ((error: Error) => void) | undefined;
+    let reads = 0;
     const engine = {
       getStatus: () =>
         ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
@@ -903,7 +904,10 @@ describe("native receiver routing", () => {
       },
     } as unknown as LibrespotEngine;
     const player = {
-      state: async () => EMPTY_REMOTE_STATE,
+      state: async () => {
+        reads++;
+        return EMPTY_REMOTE_STATE;
+      },
       play: async () =>
         await new Promise<void>((_resolve, reject) => {
           rejectPlay = reject;
@@ -932,14 +936,45 @@ describe("native receiver routing", () => {
     });
     events.listener?.({ name: "playing", uri: "spotify:track:other", position_ms: 9_000 });
     expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
-    rejectPlay?.(new Error("Web playback failed"));
-    await request;
-    expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
-    expect(usePlayback.getState().error).toBeNull();
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    let errorTimer: ReturnType<typeof setTimeout> | undefined;
+    let runErrorClear: (() => void) | undefined;
+    globalThis.setTimeout = ((
+      callback: (...args: unknown[]) => void,
+      delay?: number,
+      ...args: unknown[]
+    ) => {
+      if (runErrorClear === undefined && delay === ERROR_LINGER_MS) {
+        errorTimer = realSetTimeout(() => {}, ERROR_LINGER_MS);
+        runErrorClear = () => {
+          if (errorTimer !== undefined) realClearTimeout(errorTimer);
+          callback(...args);
+        };
+        return errorTimer;
+      }
+      return realSetTimeout(callback, delay, ...args);
+    }) as typeof setTimeout;
 
-    await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
-    expect(usePlayback.getState().pendingSelection).toBeNull();
-    expect(usePlayback.getState().error).toBe("Web playback failed");
+    try {
+      rejectPlay?.(new Error("Web playback failed"));
+      await request;
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().error).toBeNull();
+
+      await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
+      expect(usePlayback.getState().pendingSelection).toBeNull();
+      expect(usePlayback.getState().error).toBe("Web playback failed");
+      expect(runErrorClear).toBeFunction();
+      expect(reads).toBe(1);
+
+      runErrorClear?.();
+      expect(usePlayback.getState().error).toBeNull();
+      expect(reads).toBe(1);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      if (errorTimer !== undefined) realClearTimeout(errorTimer);
+    }
   });
 
   test.each(["native-before-web", "web-before-native"] as const)(
