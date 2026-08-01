@@ -1,11 +1,13 @@
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { afterEach, describe, expect, test } from "bun:test";
+import { playbackEmptyStateText } from "../src/ui/PlaybackEmptyState.tsx";
 import {
   BrandLockup,
   BrandSplash,
   brandLockupHeight,
   brandLockupMode,
+  brandSplashLayout,
 } from "../src/ui/Brand.tsx";
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
@@ -21,6 +23,24 @@ describe("responsive brand lockup", () => {
     expect(brandLockupHeight(70, 6)).toBe(6);
     expect(brandLockupMode(69, 6)).toBe("plain");
     expect(brandLockupMode(100, 1)).toBe("plain");
+  });
+
+  test("measures wrapped guidance before choosing the brand treatment", () => {
+    const message = playbackEmptyStateText(true, true);
+    expect(brandSplashLayout(message, 24, 5)).toEqual({
+      innerWidth: 20,
+      messageLines: ["NOTHING PLAYING —", "press / to find", "something"],
+      brandHeight: 1,
+      gapHeight: 1,
+      totalHeight: 5,
+      top: 0,
+    });
+    expect(brandSplashLayout(message, 24, 3)).toMatchObject({
+      brandHeight: 0,
+      gapHeight: 0,
+      totalHeight: 3,
+      top: 0,
+    });
   });
 
   test.each([
@@ -57,5 +77,29 @@ describe("responsive brand lockup", () => {
     await setup.renderOnce();
 
     expect(setup.captureCharFrame()).toContain("SPOTUIFY");
+  });
+
+  test("keeps wrapped empty-state guidance visible in a narrow splash", async () => {
+    const width = 24;
+    const height = 5;
+    const message = playbackEmptyStateText(true, true);
+    setup = await createTestRenderer({ width, height });
+    createRoot(setup.renderer).render(
+      <box width={width} height={height} position="relative">
+        <BrandSplash message={message} width={width} height={height} />
+      </box>,
+    );
+    await Bun.sleep(20);
+    await setup.renderOnce();
+
+    const lines = setup.captureCharFrame().split("\n");
+    const visibleText = lines
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join(" ");
+    expect(visibleText).toContain(`SPOTUIFY ${message}`);
+    for (const line of lines.slice(0, height)) {
+      expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
+    }
   });
 });

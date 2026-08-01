@@ -1,4 +1,5 @@
 import { theme } from "./theme.ts";
+import { wrap } from "./text.ts";
 
 const WORDMARK_WIDTH = 70;
 const WORDMARK_HEIGHT = 6;
@@ -18,6 +19,43 @@ export function brandLockupHeight(
   maxHeight = Number.POSITIVE_INFINITY,
 ): number {
   return brandLockupMode(width, maxHeight) === "block" ? WORDMARK_HEIGHT : 1;
+}
+
+export interface BrandSplashLayout {
+  innerWidth: number;
+  messageLines: string[];
+  brandHeight: number;
+  gapHeight: number;
+  totalHeight: number;
+  top: number;
+}
+
+/** Measure every row before positioning the fixed splash region. */
+export function brandSplashLayout(
+  message: string,
+  width: number,
+  height: number,
+): BrandSplashLayout {
+  const innerWidth = Math.max(1, width - 4);
+  const availableHeight = Math.max(0, height);
+  // Guidance is more important than decoration when the terminal is extremely short.
+  const messageLines = wrap(message, innerWidth).slice(0, availableHeight);
+  const remainingHeight = availableHeight - messageLines.length;
+  const preferredGap = remainingHeight >= 2 ? 1 : 0;
+  const brandBudget = Math.max(0, remainingHeight - preferredGap);
+  const brandHeight =
+    brandBudget > 0 ? brandLockupHeight(innerWidth, brandBudget) : 0;
+  const gapHeight = brandHeight > 0 && remainingHeight > brandHeight ? 1 : 0;
+  const totalHeight = brandHeight + gapHeight + messageLines.length;
+
+  return {
+    innerWidth,
+    messageLines,
+    brandHeight,
+    gapHeight,
+    totalHeight,
+    top: Math.max(0, Math.floor((availableHeight - totalHeight) / 2)),
+  };
 }
 
 export function BrandLockup({
@@ -64,27 +102,41 @@ export function BrandSplash({
   width: number;
   height: number;
 }) {
-  const innerWidth = Math.max(1, width - 4);
-  const maxBrandHeight = Math.max(1, height - 2);
-  const brandHeight = brandLockupHeight(innerWidth, maxBrandHeight);
-  const totalHeight = brandHeight + 2;
+  const layout = brandSplashLayout(message, width, height);
+  if (layout.totalHeight === 0) return null;
 
   return (
     <box
       position="absolute"
       left={2}
-      top={Math.max(0, Math.floor((height - totalHeight) / 2))}
-      width={innerWidth}
-      height={totalHeight}
+      top={layout.top}
+      width={layout.innerWidth}
+      height={layout.totalHeight}
       zIndex={2}
       flexDirection="column"
       alignItems="center"
       overflow="hidden"
     >
-      <BrandLockup width={innerWidth} maxHeight={maxBrandHeight} />
-      <text fg={theme.muted} marginTop={1}>
-        {message}
-      </text>
+      {layout.brandHeight > 0 ? (
+        <BrandLockup width={layout.innerWidth} maxHeight={layout.brandHeight} />
+      ) : null}
+      {layout.messageLines.length > 0 ? (
+        <box
+          width={layout.innerWidth}
+          height={layout.messageLines.length}
+          marginTop={layout.gapHeight}
+          flexDirection="column"
+          alignItems="center"
+          flexShrink={0}
+          overflow="hidden"
+        >
+          {layout.messageLines.map((line, index) => (
+            <text key={`${index}:${line}`} fg={theme.muted}>
+              {line}
+            </text>
+          ))}
+        </box>
+      ) : null}
     </box>
   );
 }

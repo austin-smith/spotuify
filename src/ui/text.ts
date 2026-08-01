@@ -59,9 +59,8 @@ function splitWord(value: string, max: number): string[] {
 /**
  * Break a line onto as many rows as it needs, on word boundaries.
  *
- * The counterpart to `truncate`, for the one place where clipping is wrong: a lyric line cut at the
- * right edge loses words, and a lyric with missing words is not a lyric. Only used where the
- * container scrolls, so the extra rows have somewhere to go.
+ * The counterpart to `truncate` for content whose caller has allocated the resulting rows. A lyric
+ * line or actionable guidance cut at the right edge loses information the reader needs.
  */
 export function wrap(value: string, max: number): string[] {
   if (max <= 0) return [];
