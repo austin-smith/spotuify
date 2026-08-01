@@ -576,6 +576,76 @@ describe("selection transitions", () => {
     expect(usePlayback.getState().progressMs).toBeLessThan(2_000);
   });
 
+  test("requires a follow-up when playback was unknown before the selection", async () => {
+    const staleState: PlaybackState = { ...REMOTE_STATE, progress_ms: 90_000 };
+    const startedState: PlaybackState = { ...REMOTE_STATE, progress_ms: 0 };
+    let reads = 0;
+    let resolveInitial: ((state: PlaybackState | null) => void) | undefined;
+    const player = {
+      state: async () => {
+        reads++;
+        if (reads === 1) {
+          return await new Promise<PlaybackState | null>((resolve) => {
+            resolveInitial = resolve;
+          });
+        }
+        return reads === 2 ? staleState : startedState;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => resolveInitial !== undefined);
+    expect(usePlayback.getState().sessionPresence).toBe("unknown");
+    expect(usePlayback.getState().ready).toBeFalse();
+
+    await usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+    expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeTrue();
+
+    const finishInitial = resolveInitial;
+    if (finishInitial === undefined) throw new Error("initial playback read did not start");
+    finishInitial(staleState);
+    await eventually(() => reads >= 2, COMMAND_RECONCILE_MS + 500);
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    expect(usePlayback.getState().progressMs).toBeGreaterThanOrEqual(90_000);
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      SELECTION_RECONCILE_RETRY_MS + 500,
+    );
+    expect(reads).toBe(3);
+    expect(usePlayback.getState().progressMs).toBeLessThan(2_000);
+  });
+
+  test("accepts the first matching snapshot after playback was confirmed absent", async () => {
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return reads === 1 ? null : REMOTE_STATE;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => usePlayback.getState().sessionPresence === "absent");
+    await usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+
+    expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeFalse();
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      COMMAND_RECONCILE_MS + 500,
+    );
+    await Bun.sleep(SELECTION_RECONCILE_RETRY_MS + 100);
+    expect(reads).toBe(2);
+    expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+  });
+
   test("keeps a context-only selection through a stale item and verifies its context", async () => {
     const selectedContextUri = "spotify:playlist:selected";
     const staleState: PlaybackState = {

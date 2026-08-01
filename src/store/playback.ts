@@ -565,13 +565,17 @@ function selectionConfirmationFor(
 
 function selectionRequiresFollowUp(
   confirmation: PlaybackSelectionConfirmation,
-  currentItem: PlayableItem | null,
+  current: Pick<PlaybackSlice, "item" | "sessionPresence">,
 ): boolean {
   if (confirmation === null) return false;
-  // A context-only selection has no expected item, and replaying the current URI makes an item
-  // match indistinguishable from a stale pre-command snapshot. In both cases, spend the one
-  // bounded follow-up read before accepting an otherwise identical response.
-  return confirmation.kind === "context" || currentItem?.uri === confirmation.uri;
+  // Unknown playback, a context-only selection, and replaying the current URI all make an item
+  // match indistinguishable from a stale pre-command snapshot. Spend the one bounded follow-up
+  // read in those cases, but not after Spotify has authoritatively confirmed an absent session.
+  return (
+    current.sessionPresence === "unknown" ||
+    confirmation.kind === "context" ||
+    current.item?.uri === confirmation.uri
+  );
 }
 
 function clearPendingSelection(
@@ -1142,7 +1146,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         label: preview?.label ?? "selection",
         item: preview?.item ?? null,
         confirmation,
-        requiresFollowUp: selectionRequiresFollowUp(confirmation, state.item),
+        requiresFollowUp: selectionRequiresFollowUp(confirmation, state),
         lane: routeNative ? "native" : "web",
       },
       error: null,
