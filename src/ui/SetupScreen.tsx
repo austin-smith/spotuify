@@ -16,6 +16,7 @@ export interface SetupScreenLayout {
   innerWidth: number;
   brandHeight: number;
   brandGapHeight: number;
+  headingLines: string[];
   instructionHeight: number;
   instructionGapHeight: number;
   updateHeight: number;
@@ -36,20 +37,24 @@ export function setupScreenLayout(
   height: number,
 ): SetupScreenLayout {
   const innerWidth = Math.max(1, width - SCREEN_PADDING_X * 2);
+  const innerHeight = Math.max(0, height - SCREEN_PADDING_Y * 2);
+  const headingLines = wrap(HEADING, innerWidth);
   const instructionHeight = wrap(setupInstruction(authCommand), innerWidth).length;
-  const instructionGapHeight = instructionHeight > 0 ? INSTRUCTION_GAP : 0;
   const updateHeight = updateAvailable ? wrap(UPDATE_NOTICE, innerWidth).length : 0;
-  const footerGapHeight = FOOTER_GAP;
   const quitHeight = wrap(QUIT_HINT, innerWidth).length;
-  const quitGapHeight = updateHeight > 0 ? QUIT_GAP : 0;
-  const contentHeight =
-    1 +
-    instructionGapHeight +
+  const mandatoryHeight =
+    headingLines.length +
     instructionHeight +
-    footerGapHeight +
     updateHeight +
-    quitGapHeight +
     quitHeight;
+  let gapBudget = Math.max(0, innerHeight - mandatoryHeight);
+  const instructionGapHeight = Math.min(INSTRUCTION_GAP, gapBudget);
+  gapBudget -= instructionGapHeight;
+  const footerGapHeight = Math.min(FOOTER_GAP, gapBudget);
+  gapBudget -= footerGapHeight;
+  const quitGapHeight = updateHeight > 0 ? Math.min(QUIT_GAP, gapBudget) : 0;
+  const contentHeight =
+    mandatoryHeight + instructionGapHeight + footerGapHeight + quitGapHeight;
   const brand = brandedScreenLayout(
     width,
     height,
@@ -62,6 +67,7 @@ export function setupScreenLayout(
     innerWidth,
     brandHeight: brand.brandHeight,
     brandGapHeight: brand.gapHeight,
+    headingLines,
     instructionHeight,
     instructionGapHeight,
     updateHeight,
@@ -97,7 +103,18 @@ export function SetupScreen({
         <BrandLockup width={layout.innerWidth} maxHeight={layout.brandHeight} />
       ) : null}
       <box flexDirection="column" flexShrink={0} marginTop={layout.brandGapHeight}>
-        <text fg={theme.text}>{HEADING}</text>
+        <box
+          flexDirection="column"
+          height={layout.headingLines.length}
+          flexShrink={0}
+          overflow="hidden"
+        >
+          {layout.headingLines.map((line, index) => (
+            <text key={`${index}:${line}`} fg={theme.text}>
+              {line}
+            </text>
+          ))}
+        </box>
         <box
           height={layout.instructionHeight}
           flexShrink={0}

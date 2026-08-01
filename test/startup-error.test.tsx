@@ -50,6 +50,39 @@ describe("startup failure classification", () => {
 });
 
 describe("startup error screen layout", () => {
+  test("measures wrapped heading and recovery hints before allocating branding", () => {
+    const layout = startupErrorLayout("failure", 14, 7);
+
+    expect(layout.headingLines).toEqual(["Startup", "failed."]);
+    expect(layout.footerLines).toEqual(["R to", "retry.", "Q to quit."]);
+    expect(layout.brandHeight).toBe(0);
+    expect(layout.brandGapHeight).toBe(0);
+    expect(layout.messageLines).toEqual([]);
+    expect(layout.messageGapHeight).toBe(0);
+    expect(layout.footerGapHeight).toBe(0);
+  });
+
+  test("keeps recovery actions visible when error chrome wraps", async () => {
+    setup = await createTestRenderer({ width: 14, height: 7 });
+    createRoot(setup.renderer).render(
+      <StartupErrorScreen message="failure" width={14} height={7} />,
+    );
+    await Bun.sleep(20);
+    await setup.renderOnce();
+
+    const lines = setup.captureCharFrame().split("\n");
+    const screen = lines.join("\n");
+    const copy = screen.replace(/\s+/g, " ").trim();
+
+    expect(screen).not.toContain("SPOTUIFY");
+    expect(copy).toBe("Startup failed. R to retry. Q to quit.");
+    expect(lines[5]).toContain("Q to quit.");
+
+    for (const line of lines.slice(0, 7)) {
+      expect(Bun.stringWidth(line)).toBeLessThanOrEqual(14);
+    }
+  });
+
   test("measures wrapped diagnostics before choosing the brand treatment", () => {
     const message = `${"Detailed diagnostic context ".repeat(16)}END-OF-DIAGNOSTIC`;
     const layout = startupErrorLayout(message, 80, 18);

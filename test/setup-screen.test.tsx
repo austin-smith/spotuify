@@ -38,6 +38,32 @@ async function render(
 }
 
 describe("setup screen layout", () => {
+  test("measures a wrapped heading before allocating branding", () => {
+    const layout = setupScreenLayout("spotuify auth", false, 18, 8);
+
+    expect(layout.headingLines).toEqual(["Setup", "required."]);
+    expect(layout.brandHeight).toBe(0);
+    expect(layout.brandGapHeight).toBe(0);
+    expect(layout.instructionGapHeight).toBe(0);
+    expect(layout.footerGapHeight).toBe(0);
+  });
+
+  test("keeps the complete setup handoff visible when the heading wraps", async () => {
+    const lines = await render(18, 8, false);
+    const screen = lines.join("\n");
+    const copy = screen.replace(/\s+/g, " ").trim();
+
+    expect(screen).not.toContain("SPOTUIFY");
+    expect(copy).toContain(
+      "Setup required. Run spotuify auth to get started. Q to quit.",
+    );
+    expect(lines[6]).toContain("Q to quit.");
+
+    for (const line of lines.slice(0, 8)) {
+      expect(Bun.stringWidth(line)).toBeLessThanOrEqual(18);
+    }
+  });
+
   test("measures wrapped handoff copy before choosing the brand treatment", () => {
     const authCommand = `${"authenticate-with-a-long-command ".repeat(14)}ENDOFHANDOFF`;
     const layout = setupScreenLayout(authCommand, true, 80, 18);
