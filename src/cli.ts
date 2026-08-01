@@ -90,7 +90,13 @@ async function main(argv: string[], presenter: CliPresenter): Promise<number | n
 
     case "licenses": {
       const { softwareLicenses } = await import("./licenses.ts");
-      await Bun.write(Bun.stdout, `${await softwareLicenses()}\n`);
+      const licenses = `${await softwareLicenses()}\n`;
+      await new Promise<void>((resolve, reject) => {
+        process.stdout.write(licenses, (error) => {
+          if (error !== null && error !== undefined) reject(error);
+          else resolve();
+        });
+      });
       return 0;
     }
 
