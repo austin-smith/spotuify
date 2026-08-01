@@ -19,6 +19,7 @@ const PENDING: PendingPlaybackSelection = {
   label: TRACK.name,
   item: TRACK,
   confirmation: { kind: "item", uri: TRACK.uri },
+  lane: "native",
 };
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
@@ -95,6 +96,7 @@ test("a context without track metadata gets a restrained starting surface", asyn
       label: "Daily Mix",
       item: null,
       confirmation: { kind: "context", uri: "spotify:playlist:daily-mix" },
+      lane: "web",
     }),
   );
   await Bun.sleep(20);

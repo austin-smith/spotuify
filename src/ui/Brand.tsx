@@ -21,6 +21,33 @@ export function brandLockupHeight(
   return brandLockupMode(width, maxHeight) === "block" ? WORDMARK_HEIGHT : 1;
 }
 
+export interface BrandedScreenLayout {
+  innerWidth: number;
+  innerHeight: number;
+  brandHeight: number;
+  gapHeight: number;
+}
+
+/** Give content its measured rows first, then choose the strongest brand treatment that remains. */
+export function brandedScreenLayout(
+  width: number,
+  height: number,
+  contentHeight: number,
+  paddingX = 2,
+  paddingY = 1,
+): BrandedScreenLayout {
+  const innerWidth = Math.max(1, width - paddingX * 2);
+  const innerHeight = Math.max(0, height - paddingY * 2);
+  const remainingHeight = Math.max(0, innerHeight - Math.max(0, contentHeight));
+  const preferredGap = remainingHeight >= 2 ? 1 : 0;
+  const brandBudget = Math.max(0, remainingHeight - preferredGap);
+  const brandHeight =
+    brandBudget > 0 ? brandLockupHeight(innerWidth, brandBudget) : 0;
+  const gapHeight = brandHeight > 0 && remainingHeight > brandHeight ? 1 : 0;
+
+  return { innerWidth, innerHeight, brandHeight, gapHeight };
+}
+
 export interface BrandSplashLayout {
   innerWidth: number;
   messageLines: string[];

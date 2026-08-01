@@ -52,6 +52,8 @@ export type PlaybackSelectionConfirmation =
   | { kind: "context"; uri: string }
   | null;
 
+export type PlaybackSelectionLane = "native" | "web";
+
 export interface PendingPlaybackSelection {
   /** Monotonic identity so an older command cannot clear a newer selection. */
   requestId: number;
@@ -60,6 +62,8 @@ export interface PendingPlaybackSelection {
   item: PlayableItem | null;
   /** Requested playback identity used to reject stale post-command Web snapshots. */
   confirmation: PlaybackSelectionConfirmation;
+  /** The control lane whose acknowledgement is allowed to finish this transition. */
+  lane: PlaybackSelectionLane;
 }
 
 export interface PlaybackStartOptions {
@@ -567,6 +571,25 @@ function clearPendingSelection(
   set({ pendingSelection: null });
 }
 
+function movePendingSelectionToWeb(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  requestId: number,
+): void {
+  const pendingSelection = get().pendingSelection;
+  if (pendingSelection?.requestId !== requestId || pendingSelection.lane === "web") return;
+  set({ pendingSelection: { ...pendingSelection, lane: "web" } });
+}
+
+function clearPendingWebSelection(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+): void {
+  if (get().pendingSelection?.lane !== "web") return;
+  selectionConfirmationRetries = 0;
+  set({ pendingSelection: null });
+}
+
 function nativeAccountMatches(): boolean {
   const status = native?.getStatus();
   return (
@@ -885,6 +908,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         nativeRevision++;
         refreshController?.abort();
         applyNativeEvent(set, event);
+        if (establishesLocalPlayback) clearPendingWebSelection(set, get);
         clearTimer(pollTimer);
         clearTimer(reconcileTimer);
         pollTimer = null;
@@ -1098,17 +1122,18 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     if (api === null) return;
     const requestId = ++selectionRequestId;
     selectionConfirmationRetries = 0;
+    const state = get();
+    const routeNative = nativeCanHandle(state);
     set({
       pendingSelection: {
         requestId,
         label: preview?.label ?? "selection",
         item: preview?.item ?? null,
         confirmation: selectionConfirmationFor(options, preview),
+        lane: routeNative ? "native" : "web",
       },
       error: null,
     });
-    const state = get();
-    const routeNative = nativeCanHandle(state);
     let webMutation = routeNative ? null : beginWebMutation();
     try {
       if (
@@ -1126,6 +1151,9 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         clearPendingSelection(set, get, requestId);
         return;
       }
+      // Native availability can change between route selection and command dispatch. Once this
+      // request falls back, only Web reconciliation or an authoritative native takeover owns it.
+      movePendingSelectionToWeb(set, get, requestId);
       webMutation ??= beginWebMutation();
       await api.play({
         ...options,

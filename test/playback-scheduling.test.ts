@@ -688,6 +688,59 @@ describe("native receiver routing", () => {
     expect(usePlayback.getState().progressMs).toBe(4_000);
   });
 
+  test("authoritative native takeover clears a pending Web selection", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let rejectPlay: ((error: Error) => void) | undefined;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => false,
+      onEvent: (next: (event: EngineEvent) => void) => {
+        events.listener = next;
+        return () => {
+          delete events.listener;
+        };
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => REMOTE_STATE,
+      play: async () =>
+        await new Promise<void>((_resolve, reject) => {
+          rejectPlay = reject;
+        }),
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, engine, "account");
+    await eventually(() => usePlayback.getState().deviceId === "remote");
+    const request = usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+    await eventually(() => rejectPlay !== undefined);
+    expect(usePlayback.getState().pendingSelection?.lane).toBe("web");
+
+    events.listener?.({ name: "session_connected" });
+    events.listener?.({
+      name: "track_changed",
+      media_type: "track",
+      id: REMOTE_TRACK.id ?? undefined,
+      uri: REMOTE_TRACK.uri,
+      title: REMOTE_TRACK.name,
+      duration_ms: REMOTE_TRACK.duration_ms,
+      artists: REMOTE_TRACK.artists,
+      album: REMOTE_TRACK.album.name,
+      covers: [],
+    });
+    events.listener?.({ name: "playing", uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+
+    expect(usePlayback.getState().pendingSelection).toBeNull();
+    expect(usePlayback.getState().deviceId).toBe("native");
+    expect(usePlayback.getState().isPlaying).toBeTrue();
+    rejectPlay?.(new Error("superseded Web command failed late"));
+    await request;
+    expect(usePlayback.getState().error).toBeNull();
+  });
+
   test("suspending Web reconciliation leaves native playback authoritative", async () => {
     const events: { listener?: (event: EngineEvent) => void } = {};
     let reads = 0;

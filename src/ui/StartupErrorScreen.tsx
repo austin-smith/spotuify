@@ -1,10 +1,9 @@
-import { brandLockupHeight, BrandLockup } from "./Brand.tsx";
+import { brandedScreenLayout, BrandLockup } from "./Brand.tsx";
 import { theme } from "./theme.ts";
 import { truncate, wrap } from "./text.ts";
 
 const SCREEN_PADDING_X = 2;
 const SCREEN_PADDING_Y = 1;
-const CONTENT_GAP = 1;
 const MESSAGE_GAP = 1;
 const FOOTER_GAP = 1;
 const HEADING_LINES = ["Startup failed."] as const;
@@ -37,13 +36,15 @@ export function startupErrorLayout(
     wrappedMessage.length +
     footerGapHeight +
     FOOTER_LINES.length;
-  const remainingHeight = Math.max(0, innerHeight - contentHeight);
-  const preferredBrandGap = remainingHeight >= 2 ? CONTENT_GAP : 0;
-  const brandBudget = Math.max(0, remainingHeight - preferredBrandGap);
-  const brandHeight =
-    brandBudget > 0 ? brandLockupHeight(innerWidth, brandBudget) : 0;
-  const brandGapHeight =
-    brandHeight > 0 && remainingHeight > brandHeight ? CONTENT_GAP : 0;
+  const brand = brandedScreenLayout(
+    width,
+    height,
+    contentHeight,
+    SCREEN_PADDING_X,
+    SCREEN_PADDING_Y,
+  );
+  const brandHeight = brand.brandHeight;
+  const brandGapHeight = brand.gapHeight;
   const fixedHeight =
     brandHeight +
     brandGapHeight +
