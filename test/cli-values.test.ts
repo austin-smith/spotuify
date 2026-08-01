@@ -4,6 +4,7 @@ import {
   signedDurationMs,
   signedPercent,
   spotifyReference,
+  timestampMs,
 } from "../src/cli/values.ts";
 import { targetDevice } from "../src/cli/support.ts";
 
@@ -74,5 +75,21 @@ describe("CLI values", () => {
         "Unavailable speaker",
       ),
     ).toThrow("no usable ID");
+  });
+});
+
+describe("timestampMs", () => {
+  test("accepts ISO 8601 date-times", () => {
+    expect(timestampMs("2026-08-01T12:00:00Z", "before")).toBe(
+      Date.parse("2026-08-01T12:00:00Z"),
+    );
+  });
+
+  test("accepts epoch milliseconds verbatim", () => {
+    expect(timestampMs("1754049600000", "after")).toBe(1_754_049_600_000);
+  });
+
+  test("rejects text that is neither, naming the option", () => {
+    expect(() => timestampMs("yesterday", "before")).toThrow("Invalid before");
   });
 });

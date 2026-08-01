@@ -60,8 +60,9 @@ spotuify
 
 ## CLI
 
-Use the CLI to control playback, search the catalog, manage your library and playlists, view and add
-to the queue, and switch devices. For scripts, add `--json` to get machine-readable output.
+Use the CLI to control playback, search the catalog, manage your library, playlists, and followed
+artists, view and add to the queue, and switch devices. For scripts, add `--json` to get
+machine-readable output.
 
 Some examples:
 

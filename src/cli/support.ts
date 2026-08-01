@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import type { PlaylistDetails } from "../api/playlists.ts";
 import { artistLine, type Device, type PlayableItem } from "../api/types.ts";
 import { unavailable, usageError } from "./errors.ts";
 import {
@@ -174,4 +175,39 @@ export async function currentState() {
 
 export function playlistId(value: string): string {
   return spotifyReference(value, "playlist").id;
+}
+
+export function normalizePlaylistDetails(
+  details: PlaylistDetails,
+): Record<string, unknown> {
+  return {
+    id: details.id,
+    uri: details.uri,
+    name: details.name,
+    description: details.description,
+    public: details.public,
+    collaborative: details.collaborative,
+    owner: details.ownerName,
+    followers: details.followers,
+    totalItems: details.totalItems,
+  };
+}
+
+/** The shared heading for `show <playlist>` and `playlist show`. */
+export function playlistHeader(details: PlaylistDetails): string {
+  const visibility =
+    details.public === null ? null : details.public ? "public" : "private";
+  const facts = [
+    details.ownerName === "" ? null : `by ${details.ownerName}`,
+    details.totalItems === null
+      ? null
+      : `${details.totalItems} item${details.totalItems === 1 ? "" : "s"}`,
+    visibility,
+    details.collaborative ? "collaborative" : null,
+  ].filter((fact): fact is string => fact !== null);
+  return [
+    `${details.name}${facts.length > 0 ? ` — ${facts.join(" · ")}` : ""}`,
+    ...(details.description === null ? [] : [details.description]),
+    details.uri,
+  ].join("\n");
 }

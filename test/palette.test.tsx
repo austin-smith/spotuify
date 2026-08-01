@@ -7,6 +7,7 @@ import { useSearch } from "../src/store/search.ts";
 import { Palette } from "../src/ui/Palette.tsx";
 
 const RESULTS: SearchResults = {
+  ...EMPTY_RESULTS,
   tracks: [
     {
       id: "1",

@@ -1,13 +1,16 @@
 import { Command } from "commander";
-import { stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { SpotifyClient } from "../../api/client.ts";
 import { authenticate, tokenStore } from "../../auth/flow.ts";
 import { resolveBootProfile } from "../../auth/profile.ts";
 import { prepareClientId } from "../../auth/setup.ts";
 import {
   CONFIG_PATH,
+  LIBRESPOT_CACHE_DIR,
+  PROFILE_PATH,
   REDIRECT_URI,
   resolveClientIdWithSource,
+  TOKEN_PATH,
 } from "../../config.ts";
 import {
   authenticateEngine,
@@ -159,6 +162,44 @@ export function registerSystemCommands(
         presenter.finishAuth(playbackAuth);
       },
     );
+
+  program
+    .command("logout")
+    .description("Remove stored Web API and playback credentials")
+    .action(async (_options, command: Command) => {
+      const exists = async (path: string) =>
+        await stat(path).then(
+          () => true,
+          () => false,
+        );
+      // The playback engine keeps its credentials inside its cache directory, and cached audio is
+      // keyed to the signed-out account — both go together. The client ID in config.json stays:
+      // logout ends the session, it does not unconfigure the application.
+      const [webApi, profile, playback] = await Promise.all([
+        exists(TOKEN_PATH),
+        exists(PROFILE_PATH),
+        exists(LIBRESPOT_CACHE_DIR),
+      ]);
+      await Promise.all([
+        rm(TOKEN_PATH, { force: true }),
+        rm(PROFILE_PATH, { force: true }),
+        rm(LIBRESPOT_CACHE_DIR, { recursive: true, force: true }),
+      ]);
+      const runtime = await tryRuntimeRequest("ping");
+      const cleared = webApi || profile || playback;
+      mutation(
+        command,
+        io,
+        "logout",
+        { webApi, playback, runtimeActive: runtime.connected },
+        [
+          cleared ? "Signed out." : "No stored credentials were found.",
+          ...(runtime.connected
+            ? ["A running Spotuify session keeps its authorization until it exits."]
+            : []),
+        ].join("\n"),
+      );
+    });
 
   const showAccount = async (command: Command) => {
     const me = await (await cliSession()).profile();

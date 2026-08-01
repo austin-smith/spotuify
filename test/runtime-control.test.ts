@@ -398,26 +398,17 @@ describe("local runtime control", () => {
     });
   });
 
-  test("accepts a negative compact seek as a positional argument", async () => {
+  /**
+   * Relative commands must reach the runtime as the raw offset, never as a pre-computed absolute:
+   * a client-side status read plus absolute write loses updates when two commands race.
+   */
+  test("sends a negative compact seek as a relative offset in one request", async () => {
     const control = await paths();
-    let seekPosition: unknown;
+    const requests: { method: string; params: unknown }[] = [];
     server = await startControlServer(
       (method, params) => {
-        if (method === "status")
-          return {
-            active: true,
-            isPlaying: true,
-            item: null,
-            progressMs: 30_000,
-            durationMs: 180_000,
-            shuffle: false,
-            repeat: "off",
-            device: null,
-          };
-        if (method === "seek") {
-          seekPosition = (params as Record<string, unknown>)["positionMs"];
-          return { progressMs: seekPosition };
-        }
+        requests.push({ method, params });
+        if (method === "seek") return { progressMs: 15_000 };
         throw new Error("unexpected method");
       },
       { paths: control },
@@ -437,33 +428,21 @@ describe("local runtime control", () => {
     ]);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    expect(seekPosition).toBe(15_000);
+    expect(requests).toEqual([
+      { method: "seek", params: { offsetMs: -15_000 } },
+    ]);
   });
 
-  test("accepts a documented negative relative volume", async () => {
+  test("sends a documented negative relative volume as a delta in one request", async () => {
     const control = await paths();
-    let volume: unknown;
+    const requests: { method: string; params: unknown }[] = [];
     server = await startControlServer(
       (method, params) => {
-        if (method === "status") {
-          return {
-            active: true,
-            isPlaying: true,
-            item: null,
-            progressMs: 0,
-            durationMs: 0,
-            shuffle: false,
-            repeat: "off",
-            device: {
-              id: "device",
-              name: "Speaker",
-              volumePercent: 50,
-            },
-          };
-        }
+        requests.push({ method, params });
         if (method === "volume") {
-          volume = (params as Record<string, unknown>)["percent"];
-          return { volumePercent: volume };
+          return {
+            device: { id: "device", name: "Speaker", volumePercent: 45 },
+          };
         }
         throw new Error("unexpected method");
       },
@@ -478,13 +457,54 @@ describe("local runtime control", () => {
         stderr: "pipe",
       },
     );
-    const [exitCode, stderr] = await Promise.all([
+    const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
+      new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    expect(volume).toBe(45);
+    expect(requests).toEqual([
+      { method: "volume", params: { delta: -5 } },
+    ]);
+    expect(JSON.parse(stdout)).toMatchObject({
+      data: { ok: true, volume_percent: 45 },
+    });
+  });
+
+  test("sends shuffle toggle and repeat cycle for the runtime to resolve", async () => {
+    const control = await paths();
+    const requests: { method: string; params: unknown }[] = [];
+    server = await startControlServer(
+      (method, params) => {
+        requests.push({ method, params });
+        if (method === "shuffle") return { shuffle: true };
+        if (method === "repeat") return { repeat: "context" };
+        throw new Error("unexpected method");
+      },
+      { paths: control },
+    );
+    const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+    for (const args of [
+      ["shuffle", "toggle"],
+      ["repeat", "cycle"],
+    ]) {
+      const child = Bun.spawn([process.execPath, cli, "--json", ...args], {
+        env: { ...process.env, SPOTUIFY_RUNTIME_DIR: control.directory },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [exitCode, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stderr).text(),
+      ]);
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+    }
+    expect(requests).toEqual([
+      { method: "shuffle", params: { toggle: true } },
+      { method: "repeat", params: { mode: "cycle" } },
+    ]);
   });
 
   test("interrupts a long status watch immediately", async () => {

@@ -60,32 +60,46 @@ spotuify volume 75
 spotuify volume -5
 ```
 
-Use `--device <id-or-name>` on `play`, `pause`, `open`, and `queue add` when a specific Spotify
-Connect device should receive the operation. Device IDs are unambiguous; a name is accepted only
-when exactly one device has that name.
+Every playback command except `status` and `toggle` accepts `--device <id-or-name>` when a
+specific Spotify Connect device should receive the operation — `play`, `pause`, `open`,
+`next`, `previous`, `seek`, `volume`, `shuffle`, `repeat`, and `queue add`. Device IDs are
+unambiguous; a name is accepted only when exactly one device has that name. A targeted command
+always goes through the Web API, even when the TUI's local runtime is available.
 
 ## Browse and manage Spotify
 
-The CLI covers discovery, listening history, the library, queue, devices, and owned playlists:
+The CLI covers discovery, listening history, the library, followed artists, queue, devices, and
+owned playlists:
 
 ```sh
 spotuify search "kind of blue" --type album
+spotuify search "song exploder" --type show --limit 20
 spotuify show spotify:album:1weenld61qoidwYuZ1GESA
 spotuify lyrics
-spotuify history recent --limit 10
+spotuify history recent --limit 10 --after 2026-07-01T00:00:00Z
 spotuify history top --range long
+spotuify history top --type artist
 
-spotuify library contains spotify:track:4iV5W9uYEdYUVa79Axb7Rh
 spotuify library save spotify:album:4aawyAB9vmqN3uQ7FjRGTy
 spotuify library remove spotify:album:4aawyAB9vmqN3uQ7FjRGTy
+
+spotuify follow list
+spotuify follow add spotify:artist:0OdUWJ0sBjDrqHygGUXeCF
 
 spotuify queue list
 spotuify queue add spotify:track:4iV5W9uYEdYUVa79Axb7Rh
 spotuify device transfer "Living Room"
 ```
 
+`search --type all` covers tracks, artists, albums, and playlists; ask for `show`, `episode`, or
+`audiobook` by name. `--limit` applies per type, and the CLI pages through Spotify's 10-per-request
+search window as needed. `show` on a podcast lists the latest fifty episodes — the way to find an
+episode URI to play or queue. `history recent` walks further back with `--before`/`--after` and
+`history top` with `--offset`.
+
 Playlist commands use Spotify's current playlist-items API. Spotify exposes contents only for
-playlists the signed-in user owns or collaborates on.
+playlists the signed-in user owns or collaborates on. Playlists hold tracks and episodes, and both
+appear in `playlist show`.
 
 ```sh
 spotuify playlist list --owned
@@ -97,10 +111,18 @@ spotuify playlist replace spotify:playlist:PLAYLIST_ID spotify:track:FIRST spoti
 spotuify playlist replace spotify:playlist:PLAYLIST_ID  # clear it
 spotuify playlist edit spotify:playlist:PLAYLIST_ID --visibility private
 spotuify playlist move spotify:playlist:PLAYLIST_ID --from 8 --before 2 --length 3
+spotuify playlist follow spotify:playlist:PLAYLIST_ID
+spotuify playlist unfollow spotify:playlist:PLAYLIST_ID
+spotuify playlist delete spotify:playlist:PLAYLIST_ID
 ```
 
 Playlist move positions are one-based. `--snapshot <id>` is available on remove and move when a
 script needs optimistic concurrency against a known Spotify playlist snapshot.
+
+Spotify has no separate delete operation — an owned playlist that everyone unfollows stops
+existing. `playlist delete` therefore verifies ownership first and refuses playlists that belong
+to someone else; `playlist unfollow` is the command for removing another person's playlist from
+the library.
 
 ## Automation output
 
@@ -175,7 +197,12 @@ spotuify account show
 spotuify config show
 spotuify config path
 spotuify doctor
+spotuify logout
 ```
+
+`logout` removes the stored Web API token, the cached profile, and the playback engine's
+credentials and cache. The configured Client ID stays — signing out does not unconfigure the
+application. A Spotuify session that is already running keeps its authorization until it exits.
 
 Web API authorization and terminal playback authorization remain independent. The Web API token is
 never passed to the native playback engine.

@@ -1,6 +1,7 @@
 import { Command, CommanderError, Help, Option } from "commander";
 import { VERSION } from "../version.ts";
 import { registerDiscovery } from "./commands/discovery.ts";
+import { registerFollow } from "./commands/follow.ts";
 import { registerLibrary } from "./commands/library.ts";
 import { registerPlayback } from "./commands/playback.ts";
 import { registerPlaylists } from "./commands/playlists.ts";
@@ -48,8 +49,10 @@ const ROOT_COMMAND_GROUPS: Readonly<Record<string, string>> = {
   lyrics: HELP_GROUP.browse,
   library: HELP_GROUP.library,
   playlist: HELP_GROUP.library,
+  follow: HELP_GROUP.library,
   history: HELP_GROUP.library,
   auth: HELP_GROUP.system,
+  logout: HELP_GROUP.system,
   account: HELP_GROUP.system,
   config: HELP_GROUP.system,
   doctor: HELP_GROUP.system,
@@ -247,6 +250,7 @@ export function createCliProgram(dependencies: CliDependencies = {}): {
   registerQueueAndDevices(program, io);
   registerDiscovery(program, io);
   registerLibrary(program, io);
+  registerFollow(program, io);
   registerPlaylists(program, io);
   registerSystemCommands(program, io, presenter, state);
   groupRootCommands(program);

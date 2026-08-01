@@ -373,7 +373,7 @@ test("play rejects unsupported show contexts before playback work", async () => 
   expect(JSON.parse(stderr)).toMatchObject({
     error: {
       code: "usage_error",
-      message: expect.stringContaining("episode URI"),
+      message: expect.stringContaining("spotuify show"),
     },
   });
   await expectNoApplicationState(directory);
@@ -562,4 +562,101 @@ test("software licenses are independent of checkout line endings", () => {
 
   expect(windows).toBe(unix);
   expect(windows).not.toContain("\r");
+});
+
+test.each([
+  [["follow", "add", "spotify:track:abc123"], "cannot be followed"],
+  [
+    ["history", "recent", "--before", "123", "--after", "456"],
+    "only one of --before or --after",
+  ],
+  [["search", "oliver", "tree", "--limit", "51"], "cannot exceed 50"],
+] as [string[], string][])(
+  "%j is rejected before any session or network work",
+  async (argv, message) => {
+    directory = await mkdtemp(join(tmpdir(), "spotuify-usage-test-"));
+    const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+    const child = Bun.spawn([process.execPath, cli, "--json", ...argv], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        XDG_CONFIG_HOME: join(directory, "config"),
+        XDG_CACHE_HOME: join(directory, "cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(2);
+    expect(JSON.parse(stderr)).toMatchObject({
+      error: {
+        code: "usage_error",
+        message: expect.stringContaining(message),
+      },
+    });
+    await expectNoApplicationState(directory);
+  },
+);
+
+test("logout succeeds without stored credentials and reports what it found", async () => {
+  directory = await mkdtemp(join(tmpdir(), "spotuify-logout-test-"));
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+  const child = Bun.spawn([process.execPath, cli, "--json", "logout"], {
+    cwd: directory,
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: join(directory, "config"),
+      XDG_CACHE_HOME: join(directory, "cache"),
+      // Probe an isolated runtime dir; a live session on the host must not leak into the test.
+      SPOTUIFY_RUNTIME_DIR: join(directory, "runtime"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toMatchObject({
+    command: "logout",
+    data: { ok: true, web_api: false, playback: false, runtime_active: false },
+  });
+  await expectNoApplicationState(directory);
+});
+
+test("logout removes stored web credentials but keeps the client configuration", async () => {
+  directory = await mkdtemp(join(tmpdir(), "spotuify-logout-state-test-"));
+  const configDir = join(directory, "config", "spotuify");
+  await Bun.write(join(configDir, "token.json"), "{}");
+  await Bun.write(join(configDir, "config.json"), JSON.stringify({ clientId: "abc" }));
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+  const child = Bun.spawn([process.execPath, cli, "--json", "logout"], {
+    cwd: directory,
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: join(directory, "config"),
+      XDG_CACHE_HOME: join(directory, "cache"),
+      // Probe an isolated runtime dir; a live session on the host must not leak into the test.
+      SPOTUIFY_RUNTIME_DIR: join(directory, "runtime"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+  ]);
+
+  expect(exitCode).toBe(0);
+  expect(JSON.parse(stdout)).toMatchObject({ data: { ok: true, web_api: true } });
+  expect(await Bun.file(join(configDir, "token.json")).exists()).toBe(false);
+  expect(await Bun.file(join(configDir, "config.json")).exists()).toBe(true);
 });

@@ -1,5 +1,13 @@
 import type { SpotifyClient } from "./client.ts";
-import type { Page, SimpleAlbum, SimpleArtist } from "./types.ts";
+import type {
+  Episode,
+  Page,
+  SimpleAlbum,
+  SimpleArtist,
+  SimpleAudiobook,
+  SimpleShow,
+  Track,
+} from "./types.ts";
 
 /**
  * A track as returned inside an album.
@@ -50,6 +58,9 @@ export async function artistAlbums(
   return compact(page).sort((a, b) => (b.release_date ?? "").localeCompare(a.release_date ?? ""));
 }
 
+// There is deliberately no top-tracks function: `/artists/{id}/top-tracks` answers 403 for every
+// request, like the retired playlist `/tracks` route. An artist's catalog here is their releases.
+
 /** An album's track list, in running order. */
 export async function albumTracks(
   client: SpotifyClient,
@@ -61,5 +72,78 @@ export async function albumTracks(
     ...(options.signal ? { signal: options.signal } : {}),
   });
 
+  return compact(page);
+}
+
+/** A chapter as returned inside an audiobook: simplified, with no parent audiobook field. */
+export interface AudiobookChapter {
+  id: string;
+  name: string;
+  uri: string;
+  duration_ms: number;
+  chapter_number: number;
+}
+
+/** Both listing endpoints accept up to 50 per page. */
+const SHOW_EPISODES_LIMIT = 50;
+
+export async function showDetails(
+  client: SpotifyClient,
+  showId: string,
+  options: { market?: string; signal?: AbortSignal } = {},
+): Promise<SimpleShow> {
+  const show = await client.request<SimpleShow | null>(`/shows/${showId}`, {
+    query: { market: options.market },
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (show === null) throw new Error("spotify returned no show");
+  return show;
+}
+
+/**
+ * A show's most recent episodes, newest first — the order Spotify returns.
+ *
+ * Deliberately one page. A daily show carries thousands of episodes, and a listing that walks all
+ * of them punishes exactly the shows people follow most; the episode URI needed to play or queue
+ * one is almost always in the latest fifty.
+ */
+export async function showEpisodes(
+  client: SpotifyClient,
+  showId: string,
+  options: { market?: string; signal?: AbortSignal } = {},
+): Promise<Episode[]> {
+  const page = await client.request<Page<Episode | null>>(`/shows/${showId}/episodes`, {
+    query: { limit: SHOW_EPISODES_LIMIT, market: options.market },
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  return compact(page);
+}
+
+export async function audiobookDetails(
+  client: SpotifyClient,
+  audiobookId: string,
+  options: { market?: string; signal?: AbortSignal } = {},
+): Promise<SimpleAudiobook> {
+  const audiobook = await client.request<SimpleAudiobook | null>(`/audiobooks/${audiobookId}`, {
+    query: { market: options.market },
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (audiobook === null) throw new Error("spotify returned no audiobook");
+  return audiobook;
+}
+
+/** An audiobook's chapters, in reading order. One page covers nearly every audiobook. */
+export async function audiobookChapters(
+  client: SpotifyClient,
+  audiobookId: string,
+  options: { market?: string; signal?: AbortSignal } = {},
+): Promise<AudiobookChapter[]> {
+  const page = await client.request<Page<AudiobookChapter | null>>(
+    `/audiobooks/${audiobookId}/chapters`,
+    {
+      query: { limit: SHOW_EPISODES_LIMIT, market: options.market },
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+  );
   return compact(page);
 }

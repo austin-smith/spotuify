@@ -5,6 +5,7 @@ import {
   type PlayableItem,
   type RepeatState,
 } from "../api/types.ts";
+import { transferPlayback, withLocalDevice } from "../store/devices.ts";
 import { usePlayback } from "../store/playback.ts";
 import { asCliError, unavailable, usageError } from "../cli/errors.ts";
 import {
@@ -104,27 +105,50 @@ export function createPlaybackRuntimeHandler(
       case "previous":
         await store.previous();
         break;
+      // Relative forms (`offsetMs`, `delta`, `toggle`, `"cycle"`) exist so clients never have to
+      // read state and send back an absolute: that read-modify-write loses updates when two
+      // commands race. The delta is applied here, inside the serialized mutation, against state
+      // that cannot go stale.
       case "seek": {
-        if (typeof params["positionMs"] !== "number")
-          throw usageError("positionMs is required.");
-        await store.seekBy(params["positionMs"] - store.progressMs);
+        const positionMs = params["positionMs"];
+        const offsetMs = params["offsetMs"];
+        if (typeof positionMs === "number" && typeof offsetMs === "number")
+          throw usageError("Provide positionMs or offsetMs, not both.");
+        if (store.item === null) throw unavailable("Nothing is playing.");
+        if (typeof offsetMs === "number") await store.seekBy(offsetMs);
+        else if (typeof positionMs === "number")
+          await store.seekBy(positionMs - store.progressMs);
+        else throw usageError("positionMs or offsetMs is required.");
         break;
       }
       case "volume": {
-        if (typeof params["percent"] !== "number")
-          throw usageError("percent is required.");
+        const percent = params["percent"];
+        const delta = params["delta"];
+        if (typeof percent === "number" && typeof delta === "number")
+          throw usageError("Provide percent or delta, not both.");
         if (store.volumePercent === null)
           throw unavailable("The active device does not report its volume.");
-        await store.adjustVolume(params["percent"] - store.volumePercent);
+        if (typeof delta === "number") await store.adjustVolume(delta);
+        else if (typeof percent === "number")
+          await store.adjustVolume(percent - store.volumePercent);
+        else throw usageError("percent or delta is required.");
         break;
       }
       case "shuffle": {
+        if (params["toggle"] === true) {
+          await store.toggleShuffle();
+          break;
+        }
         if (typeof params["enabled"] !== "boolean")
-          throw usageError("enabled is required.");
+          throw usageError("enabled or toggle is required.");
         if (store.shuffle !== params["enabled"]) await store.toggleShuffle();
         break;
       }
       case "repeat": {
+        if (params["mode"] === "cycle") {
+          await store.cycleRepeat();
+          break;
+        }
         if (
           !(["off", "context", "track"] as unknown[]).includes(params["mode"])
         )
@@ -144,7 +168,7 @@ export function createPlaybackRuntimeHandler(
           throw unavailable("Device transfer is unavailable.");
         if (typeof params["selector"] !== "string")
           throw usageError("selector is required.");
-        const devices = await player.devices();
+        const devices = withLocalDevice(await player.devices());
         const byId = devices.find((device) => device.id === params["selector"]);
         const named = devices.filter(
           (device) =>
@@ -163,8 +187,7 @@ export function createPlaybackRuntimeHandler(
           throw unavailable("That device cannot receive playback.");
         }
         const play = params["play"] !== false;
-        await player.transfer(device.id, play);
-        store.confirmDeviceTransfer(device.id, device.name);
+        await transferPlayback(device as typeof device & { id: string }, play, player);
         return { device, play, state: playbackRuntimeSnapshot() };
       }
       default:

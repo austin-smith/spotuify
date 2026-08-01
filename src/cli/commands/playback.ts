@@ -137,7 +137,7 @@ export function registerPlayback(
         }
         if (ref?.kind === "show") {
           throw usageError(
-            "Spotify shows cannot be played as a context. Use an episode URI instead.",
+            "Spotify shows cannot be played as a context. Play one of its episodes instead — `spotuify show <show-uri>` lists them.",
           );
         }
         if (
@@ -263,208 +263,284 @@ export function registerPlayback(
     program
       .command(name)
       .description(description)
-      .action(async (_options, command: Command) => {
-        const runtime = await tryRuntimeRequest(name);
-        if (runtime.connected) {
-          mutation(
-            command,
-            io,
-            name,
-            { source: "runtime", state: runtime.value },
-            name === "next"
-              ? "Skipped to next item."
-              : "Returned to previous item.",
-          );
-          return;
-        }
-        const { player } = await cliSession();
-        await player[name]();
-        mutation(
-          command,
-          io,
-          name,
-          {},
+      .option("-d, --device <id-or-name>", "target Spotify Connect device")
+      .action(async (options: { device?: string }, command: Command) => {
+        const message =
           name === "next"
             ? "Skipped to next item."
-            : "Returned to previous item.",
-        );
+            : "Returned to previous item.";
+        if (options.device === undefined) {
+          const runtime = await tryRuntimeRequest(name);
+          if (runtime.connected) {
+            mutation(
+              command,
+              io,
+              name,
+              { source: "runtime", state: runtime.value },
+              message,
+            );
+            return;
+          }
+        }
+        const { player } = await cliSession();
+        const deviceId =
+          options.device === undefined
+            ? undefined
+            : (await selectedDevice(options.device)).id;
+        await player[name](deviceId);
+        mutation(command, io, name, { deviceId: deviceId ?? null }, message);
       });
   }
 
   program
     .command("seek <position>")
     .description("Seek to a time or by a signed duration")
-    .action(async (position: string, _options, command: Command) => {
-      const parsed = signedDurationMs(position);
-      let target = parsed.milliseconds;
-      const runtimeStatus = await tryRuntimeRequest("status");
-      if (runtimeStatus.connected) {
+    .option("-d, --device <id-or-name>", "target Spotify Connect device")
+    .action(
+      async (
+        position: string,
+        options: { device?: string },
+        command: Command,
+      ) => {
+        const parsed = signedDurationMs(position);
+        let target = parsed.milliseconds;
+        if (options.device === undefined) {
+          // A relative seek is sent as the raw offset: the runtime applies it inside its
+          // serialized mutation, so two concurrent `seek +5s` commands both land.
+          const runtime = await tryRuntimeRequest(
+            "seek",
+            parsed.relative
+              ? { offsetMs: parsed.milliseconds }
+              : { positionMs: Math.max(0, parsed.milliseconds) },
+          );
+          if (runtime.connected) {
+            const position =
+              runtimeNumber(runtime.value, "progressMs") ??
+              Math.max(0, parsed.milliseconds);
+            mutation(
+              command,
+              io,
+              "seek",
+              { source: "runtime", positionMs: position, state: runtime.value },
+              `Seeked to ${formatDuration(position)}.`,
+            );
+            return;
+          }
+        }
+        const { player } = await cliSession();
+        const deviceId =
+          options.device === undefined
+            ? undefined
+            : (await selectedDevice(options.device)).id;
         if (parsed.relative) {
-          const progress = runtimeNumber(runtimeStatus.value, "progressMs");
-          if (progress === null) throw unavailable("Nothing is playing.");
-          target += progress;
+          const state = await player.state("foreground");
+          if (state === null) throw unavailable("Nothing is playing.");
+          if (state.progress_ms === null) {
+            throw unavailable("The current playback position is unavailable.");
+          }
+          target += state.progress_ms;
         }
         target = Math.max(0, target);
-        const result = await runtimeRequest("seek", { positionMs: target });
+        await player.seek(target, deviceId);
         mutation(
           command,
           io,
           "seek",
-          { source: "runtime", positionMs: target, state: result },
+          { positionMs: target, deviceId: deviceId ?? null },
           `Seeked to ${formatDuration(target)}.`,
         );
-        return;
-      }
-      const { player } = await cliSession();
-      if (parsed.relative) {
-        const state = await player.state("foreground");
-        if (state === null) throw unavailable("Nothing is playing.");
-        if (state.progress_ms === null) {
-          throw unavailable("The current playback position is unavailable.");
-        }
-        target += state.progress_ms;
-      }
-      target = Math.max(0, target);
-      await player.seek(target);
-      mutation(
-        command,
-        io,
-        "seek",
-        { positionMs: target },
-        `Seeked to ${formatDuration(target)}.`,
-      );
-    });
+      },
+    );
 
   program
     .command("volume <level>")
     .description("Set volume to 0–100 or adjust it with +N/-N")
-    .action(async (level: string, _options, command: Command) => {
-      const parsed = signedPercent(level);
-      let percent = parsed.percent;
-      const runtimeStatus = await tryRuntimeRequest("status");
-      if (runtimeStatus.connected) {
+    .option("-d, --device <id-or-name>", "target Spotify Connect device")
+    .action(
+      async (
+        level: string,
+        options: { device?: string },
+        command: Command,
+      ) => {
+        const parsed = signedPercent(level);
+        let percent = parsed.percent;
+        if (options.device === undefined) {
+          // A relative change is sent as the raw delta and applied inside the runtime's
+          // serialized mutation, so two concurrent `volume +5` commands both land.
+          const runtime = await tryRuntimeRequest(
+            "volume",
+            parsed.relative
+              ? { delta: Math.round(parsed.percent) }
+              : { percent: Math.round(parsed.percent) },
+          );
+          if (runtime.connected) {
+            const device =
+              runtime.value !== null && typeof runtime.value === "object"
+                ? (runtime.value as Record<string, unknown>)["device"]
+                : null;
+            const volume =
+              device !== null && typeof device === "object"
+                ? (device as Record<string, unknown>)["volumePercent"]
+                : null;
+            mutation(
+              command,
+              io,
+              "volume",
+              {
+                source: "runtime",
+                volumePercent: typeof volume === "number" ? volume : null,
+                state: runtime.value,
+              },
+              typeof volume === "number"
+                ? `Volume set to ${volume}%.`
+                : "Volume adjusted.",
+            );
+            return;
+          }
+        }
+        const { player } = await cliSession();
+        const device =
+          options.device === undefined
+            ? undefined
+            : await selectedDevice(options.device);
         if (parsed.relative) {
-          const value = runtimeStatus.value;
-          const device =
-            value !== null && typeof value === "object"
-              ? (value as Record<string, unknown>)["device"]
-              : null;
-          const current =
-            device !== null && typeof device === "object"
-              ? (device as Record<string, unknown>)["volumePercent"]
-              : null;
-          if (typeof current !== "number")
-            throw unavailable("The active device does not report its volume.");
+          // A targeted device reports its own volume; only the untargeted path needs playback state.
+          let current: number | null;
+          if (device !== undefined) current = device.volume_percent;
+          else {
+            const state = await player.state("foreground");
+            if (state?.device === null || state?.device === undefined)
+              throw unavailable("No active playback device.");
+            current = state.device.volume_percent;
+          }
+          if (current === null)
+            throw unavailable("The device does not report its volume.");
           percent += current;
         }
         percent = Math.max(0, Math.min(100, Math.round(percent)));
-        const result = await runtimeRequest("volume", { percent });
+        await player.setVolume(percent, device?.id);
         mutation(
           command,
           io,
           "volume",
-          { source: "runtime", volumePercent: percent, state: result },
+          { volumePercent: percent, deviceId: device?.id ?? null },
           `Volume set to ${percent}%.`,
         );
-        return;
-      }
-      const { player } = await cliSession();
-      if (parsed.relative) {
-        const state = await player.state("foreground");
-        if (state?.device === null || state?.device === undefined)
-          throw unavailable("No active playback device.");
-        if (state.device.volume_percent === null)
-          throw unavailable("The active device does not report its volume.");
-        percent += state.device.volume_percent;
-      }
-      percent = Math.max(0, Math.min(100, Math.round(percent)));
-      await player.setVolume(percent);
-      mutation(
-        command,
-        io,
-        "volume",
-        { volumePercent: percent },
-        `Volume set to ${percent}%.`,
-      );
-    });
+      },
+    );
 
   program
     .command("shuffle <state>")
     .description("Set shuffle to on/off, or toggle it")
-    .action(async (value: string, _options, command: Command) => {
-      const runtimeStatus = await tryRuntimeRequest("status");
-      if (runtimeStatus.connected) {
-        const current = runtimeBoolean(runtimeStatus.value, "shuffle") ?? false;
-        const enabled = value === "toggle" ? !current : booleanValue(value);
-        const result = await runtimeRequest("shuffle", { enabled });
+    .option("-d, --device <id-or-name>", "target Spotify Connect device")
+    .action(
+      async (
+        value: string,
+        options: { device?: string },
+        command: Command,
+      ) => {
+        if (options.device === undefined) {
+          // `toggle` is sent as the toggle itself so the runtime flips its own serialized state;
+          // resolving it here from a status read would race a concurrent toggle.
+          const runtime = await tryRuntimeRequest(
+            "shuffle",
+            value === "toggle"
+              ? { toggle: true }
+              : { enabled: booleanValue(value) },
+          );
+          if (runtime.connected) {
+            const enabled = runtimeBoolean(runtime.value, "shuffle") ?? false;
+            mutation(
+              command,
+              io,
+              "shuffle",
+              { source: "runtime", shuffle: enabled, state: runtime.value },
+              `Shuffle ${enabled ? "on" : "off"}.`,
+            );
+            return;
+          }
+        }
+        const { player } = await cliSession();
+        const deviceId =
+          options.device === undefined
+            ? undefined
+            : (await selectedDevice(options.device)).id;
+        const state =
+          value === "toggle"
+            ? !(await player.state("foreground"))?.shuffle_state
+            : booleanValue(value);
+        await player.setShuffle(state, deviceId);
         mutation(
           command,
           io,
           "shuffle",
-          { source: "runtime", shuffle: enabled, state: result },
-          `Shuffle ${enabled ? "on" : "off"}.`,
+          { shuffle: state, deviceId: deviceId ?? null },
+          `Shuffle ${state ? "on" : "off"}.`,
         );
-        return;
-      }
-      const { player } = await cliSession();
-      const state =
-        value === "toggle"
-          ? !(await player.state("foreground"))?.shuffle_state
-          : booleanValue(value);
-      await player.setShuffle(state);
-      mutation(
-        command,
-        io,
-        "shuffle",
-        { shuffle: state },
-        `Shuffle ${state ? "on" : "off"}.`,
-      );
-    });
+      },
+    );
 
   program
     .command("repeat <mode>")
     .description("Set repeat to off/context/track, or cycle it")
-    .action(async (value: string, _options, command: Command) => {
-      let mode: RepeatState;
-      const runtimeStatus = await tryRuntimeRequest("status");
-      if (runtimeStatus.connected) {
-        const stateValue =
-          runtimeStatus.value !== null &&
-          typeof runtimeStatus.value === "object"
-            ? (runtimeStatus.value as Record<string, unknown>)["repeat"]
-            : "off";
-        const current = REPEAT_MODES.includes(stateValue as RepeatState)
-          ? (stateValue as RepeatState)
-          : "off";
-        mode =
-          value === "cycle"
-            ? nextRepeatState(current)
-            : enumValue(REPEAT_MODES, "repeat mode")(value);
-        const result = await runtimeRequest("repeat", { mode });
+    .option("-d, --device <id-or-name>", "target Spotify Connect device")
+    .action(
+      async (
+        value: string,
+        options: { device?: string },
+        command: Command,
+      ) => {
+        let mode: RepeatState;
+        if (options.device === undefined) {
+          // `cycle` is sent as the cycle itself so the runtime advances its own serialized state;
+          // resolving it here from a status read would race a concurrent cycle.
+          const runtime = await tryRuntimeRequest(
+            "repeat",
+            {
+              mode:
+                value === "cycle"
+                  ? "cycle"
+                  : enumValue(REPEAT_MODES, "repeat mode")(value),
+            },
+          );
+          if (runtime.connected) {
+            const stateValue =
+              runtime.value !== null && typeof runtime.value === "object"
+                ? (runtime.value as Record<string, unknown>)["repeat"]
+                : "off";
+            const applied = REPEAT_MODES.includes(stateValue as RepeatState)
+              ? (stateValue as RepeatState)
+              : "off";
+            mutation(
+              command,
+              io,
+              "repeat",
+              { source: "runtime", repeat: applied, state: runtime.value },
+              `Repeat set to ${applied}.`,
+            );
+            return;
+          }
+        }
+        const { player } = await cliSession();
+        const deviceId =
+          options.device === undefined
+            ? undefined
+            : (await selectedDevice(options.device)).id;
+        if (value === "cycle")
+          mode = nextRepeatState(
+            (await player.state("foreground"))?.repeat_state ?? "off",
+          );
+        else mode = enumValue(REPEAT_MODES, "repeat mode")(value);
+        await player.setRepeat(mode, deviceId);
         mutation(
           command,
           io,
           "repeat",
-          { source: "runtime", repeat: mode, state: result },
+          { repeat: mode, deviceId: deviceId ?? null },
           `Repeat set to ${mode}.`,
         );
-        return;
-      }
-      const { player } = await cliSession();
-      if (value === "cycle")
-        mode = nextRepeatState(
-          (await player.state("foreground"))?.repeat_state ?? "off",
-        );
-      else mode = enumValue(REPEAT_MODES, "repeat mode")(value);
-      await player.setRepeat(mode);
-      mutation(
-        command,
-        io,
-        "repeat",
-        { repeat: mode },
-        `Repeat set to ${mode}.`,
-      );
-    });
+      },
+    );
 
   program
     .command("open <target>")
@@ -484,7 +560,7 @@ export function registerPlayback(
         ) {
           if (ref.kind === "show") {
             throw usageError(
-              "Spotify shows cannot be played as a context. Use an episode URI instead.",
+              "Spotify shows cannot be played as a context. Play one of its episodes instead — `spotuify show <show-uri>` lists them.",
             );
           }
           throw usageError(`Spotify ${ref.kind} resources cannot be played.`);

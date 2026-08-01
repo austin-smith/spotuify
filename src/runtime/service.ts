@@ -3,6 +3,7 @@ import { PlayerApi } from "../api/player.ts";
 import { tokenStore } from "../auth/flow.ts";
 import { resolveBootProfile } from "../auth/profile.ts";
 import { LibrespotEngine } from "../engine/librespot.ts";
+import { useDevices } from "../store/devices.ts";
 import { usePlayback } from "../store/playback.ts";
 import {
   RuntimeAlreadyRunningError,
@@ -49,6 +50,9 @@ export async function runHeadlessRuntime(onReady?: () => void): Promise<void> {
   try {
     await engine.start();
     stopPlayback = usePlayback.getState().start(player, engine, profile.id);
+    // Device transfers route the embedded receiver through librespot; the devices module is where
+    // that engine/account pairing lives, for the headless runtime exactly as for the TUI.
+    useDevices.getState().configure(player, engine, profile.id);
     await server.publish();
   } catch (error) {
     await server.close();

@@ -1,20 +1,29 @@
 import { Command, Option } from "commander";
+import { removeLibraryItems, saveLibraryItems } from "../../api/library.ts";
 import {
   addPlaylistItems,
   createPlaylist,
   movePlaylistItems,
   myPlaylists,
+  playlistDetails,
   playlistItems,
   removePlaylistItems,
   replacePlaylistItems,
   updatePlaylistDetails,
 } from "../../api/playlists.ts";
 import { artistLine } from "../../api/types.ts";
-import { usageError } from "../errors.ts";
+import { unavailable, usageError } from "../errors.ts";
 import { formatDuration, normalizeItem, type CliIo } from "../output.ts";
 import { cliSession } from "../session.ts";
 import { integer, spotifyReference } from "../values.ts";
-import { mutation, outputFor, playlistId, table } from "../support.ts";
+import {
+  mutation,
+  normalizePlaylistDetails,
+  outputFor,
+  playlistHeader,
+  playlistId,
+  table,
+} from "../support.ts";
 
 export function registerPlaylists(program: Command, io: CliIo): void {
   const playlist = program
@@ -51,25 +60,31 @@ export function registerPlaylists(program: Command, io: CliIo): void {
     .action(async (value: string, _options, command: Command) => {
       const { client } = await cliSession();
       const id = playlistId(value);
-      const entries = await playlistItems(client, id);
-      const data = entries.map((entry) => ({
-        position: entry.position,
-        isLocal: entry.isLocal,
-        item: normalizeItem(entry.track),
-      }));
+      const [details, entries] = await Promise.all([
+        playlistDetails(client, id),
+        playlistItems(client, id),
+      ]);
+      const data = {
+        playlist: normalizePlaylistDetails(details),
+        items: entries.map((entry) => ({
+          position: entry.position,
+          isLocal: entry.isLocal,
+          item: normalizeItem(entry.item),
+        })),
+      };
       outputFor(command, io).emit(
         "playlist.show",
         data,
-        table(
+        `${playlistHeader(details)}\n\n${table(
           ["#", "TITLE", "ARTIST", "TIME", "URI"],
           entries.map((entry) => [
             entry.position + 1,
-            entry.track.name,
-            artistLine(entry.track),
-            formatDuration(entry.track.duration_ms),
-            entry.track.uri,
+            entry.item.name,
+            artistLine(entry.item),
+            formatDuration(entry.item.duration_ms),
+            entry.item.uri,
           ]),
-        ),
+        )}`,
       );
     });
   playlist
@@ -100,13 +115,70 @@ export function registerPlaylists(program: Command, io: CliIo): void {
           collaborative: options.collaborative === true,
           description: options.description,
         });
-        outputFor(command, io).emit(
+        mutation(
+          command,
+          io,
           "playlist.create",
-          created,
+          { ...created },
           `Created ${created.name}.\n${created.uri}`,
         );
       },
     );
+  playlist
+    .command("delete <playlist>")
+    .description("Delete an owned playlist")
+    .action(async (value: string, _options, command: Command) => {
+      const session = await cliSession();
+      const id = playlistId(value);
+      // Spotify deletes by unfollowing, and unfollowing succeeds on any playlist — so a wrong URI
+      // would silently unfollow instead of failing. Ownership is what makes this command honest.
+      const [details, me] = await Promise.all([
+        playlistDetails(session.client, id),
+        session.profile(),
+      ]);
+      if (details.ownerId !== me.id) {
+        throw unavailable(
+          `Playlist ${details.name} belongs to ${details.ownerName}.`,
+          "Use `spotuify playlist unfollow` to remove it from your library.",
+        );
+      }
+      await removeLibraryItems(session.client, [details.uri]);
+      mutation(
+        command,
+        io,
+        "playlist.delete",
+        { playlist: details.uri, name: details.name },
+        `Deleted ${details.name}.`,
+      );
+    });
+  playlist
+    .command("follow <playlist>")
+    .description("Add a playlist to the library")
+    .action(async (value: string, _options, command: Command) => {
+      const uri = spotifyReference(value, "playlist").uri;
+      await saveLibraryItems((await cliSession()).client, [uri]);
+      mutation(
+        command,
+        io,
+        "playlist.follow",
+        { playlist: uri },
+        "Playlist added to the library.",
+      );
+    });
+  playlist
+    .command("unfollow <playlist>")
+    .description("Remove a playlist from the library")
+    .action(async (value: string, _options, command: Command) => {
+      const uri = spotifyReference(value, "playlist").uri;
+      await removeLibraryItems((await cliSession()).client, [uri]);
+      mutation(
+        command,
+        io,
+        "playlist.unfollow",
+        { playlist: uri },
+        "Playlist removed from the library.",
+      );
+    });
   playlist
     .command("edit <playlist>")
     .description("Change playlist details")

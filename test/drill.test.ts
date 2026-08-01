@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AlbumTrack } from "../src/api/catalog.ts";
+import { EMPTY_RESULTS } from "../src/api/search.ts";
 import type { SimpleAlbum } from "../src/api/types.ts";
 import {
   filterRows,
@@ -99,6 +100,7 @@ describe("toArtistRows", () => {
 
 describe("drill targets in search results", () => {
   const rows = toRows({
+    ...EMPTY_RESULTS,
     tracks: [
       {
         id: "t",
@@ -125,6 +127,7 @@ describe("drill targets in search results", () => {
 
 describe("filterRows", () => {
   const rows = toRows({
+    ...EMPTY_RESULTS,
     tracks: [
       {
         id: "1",
@@ -223,9 +226,7 @@ describe("playlist rows", () => {
   test("a search hit is openable when the owner is us", () => {
     const rows = toRows(
       {
-        tracks: [],
-        artists: [],
-        albums: [],
+        ...EMPTY_RESULTS,
         playlists: [
           { id: "s1", name: "Mine", uri: "u1", owner: { id: "me", display_name: "me" } },
           { id: "s2", name: "Theirs", uri: "u2", owner: { id: "other", display_name: "Other" } },
@@ -242,7 +243,7 @@ describe("playlist rows", () => {
   // matches lead — they are the only ones that open.
   test("the user's own matches lead the results", () => {
     const rows = toRows(
-      { tracks: [], artists: [], albums: [], playlists: [] },
+      { ...EMPTY_RESULTS },
       { meId: "me", libraryMatches: [owned] },
     );
     expect(rows[0]).toMatchObject({ kind: "header", label: "YOUR PLAYLISTS" });
@@ -252,9 +253,7 @@ describe("playlist rows", () => {
   test("does not repeat a library playlist returned by remote search", () => {
     const rows = toRows(
       {
-        tracks: [],
-        artists: [],
-        albums: [],
+        ...EMPTY_RESULTS,
         playlists: [
           {
             id: owned.id,
@@ -274,7 +273,7 @@ describe("toPlaylistRows", () => {
   const entry = (position: number, name: string) => ({
     position,
     isLocal: false,
-    track: {
+    item: {
       id: name,
       name,
       uri: `spotify:track:${name}`,

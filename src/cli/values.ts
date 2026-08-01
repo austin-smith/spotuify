@@ -154,6 +154,22 @@ export function signedPercent(value: string): {
   return { relative, percent };
 }
 
+/** Parse an ISO 8601 date-time or epoch milliseconds into epoch milliseconds. */
+export function timestampMs(value: string, label: string): number {
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const parsed = Number(trimmed);
+    if (Number.isSafeInteger(parsed)) return parsed;
+  } else {
+    const parsed = Date.parse(trimmed);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  throw usageError(
+    `Invalid ${label}: ${value}`,
+    "Use an ISO 8601 date-time such as 2026-08-01T12:00:00Z, or epoch milliseconds.",
+  );
+}
+
 export function booleanValue(value: string): boolean {
   switch (value.toLowerCase()) {
     case "on":

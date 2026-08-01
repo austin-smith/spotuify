@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SpotifyClient } from "../src/api/client.ts";
+import { removeLibraryItems, saveLibraryItems } from "../src/api/library.ts";
 import {
   addPlaylistItems,
   createPlaylist,
   movePlaylistItems,
   myPlaylists,
+  playlistDetails,
   playlistItems,
   removePlaylistItems,
   replacePlaylistItems,
@@ -74,19 +76,19 @@ describe("playlistItems", () => {
   test("reads the current `item` key", async () => {
     serve({ "/playlists/p/items": { items: [{ item: track("One") }], next: null } });
     const entries = await playlistItems(new SpotifyClient(tokens), "p");
-    expect(entries.map((e) => e.track.name)).toEqual(["One"]);
+    expect(entries.map((e) => e.item.name)).toEqual(["One"]);
   });
 
   // Older responses used `track`; it costs one line to keep reading it.
   test("falls back to the deprecated `track` key", async () => {
     serve({ "/playlists/p/items": { items: [{ track: track("Old") }], next: null } });
     const entries = await playlistItems(new SpotifyClient(tokens), "p");
-    expect(entries.map((e) => e.track.name)).toEqual(["Old"]);
+    expect(entries.map((e) => e.item.name)).toEqual(["Old"]);
   });
 
   /**
    * The reason `position` exists at all. Playing a row starts the playlist at an offset, so an entry
-   * dropped here must still consume its slot — otherwise choosing the row after a podcast starts the
+   * dropped here must still consume its slot — otherwise choosing the row after it starts the
    * wrong song.
    */
   test("keeps positions when entries are skipped", async () => {
@@ -94,17 +96,43 @@ describe("playlistItems", () => {
       "/playlists/p/items": {
         items: [
           { item: track("One") },
-          { item: { ...track("Ep"), type: "episode" } },
           { item: null },
-          { item: track("Four") },
+          { item: track("Three") },
         ],
         next: null,
       },
     });
 
     const entries = await playlistItems(new SpotifyClient(tokens), "p");
-    expect(entries.map((e) => e.track.name)).toEqual(["One", "Four"]);
-    expect(entries.map((e) => e.position)).toEqual([0, 3]);
+    expect(entries.map((e) => e.item.name)).toEqual(["One", "Three"]);
+    expect(entries.map((e) => e.position)).toEqual([0, 2]);
+  });
+
+  test("keeps episodes as playable items with their show", async () => {
+    serve({
+      "/playlists/p/items": {
+        items: [
+          { item: track("One") },
+          {
+            item: {
+              id: "ep",
+              name: "Ep",
+              uri: "spotify:episode:ep",
+              duration_ms: 100_000,
+              type: "episode",
+              show: { id: "sh", name: "A Show" },
+            },
+          },
+        ],
+        next: null,
+      },
+    });
+
+    const entries = await playlistItems(new SpotifyClient(tokens), "p");
+    expect(entries.map((e) => e.item.name)).toEqual(["One", "Ep"]);
+    expect(entries.map((e) => e.position)).toEqual([0, 1]);
+    const episode = entries[1]?.item;
+    expect(episode !== undefined && "show" in episode ? episode.show?.name : null).toBe("A Show");
   });
 
   test("follows pages and keeps positions across them", async () => {
@@ -422,5 +450,83 @@ describe("playlist management", () => {
     ).toBe("s1");
     expect(await replacePlaylistItems(new SpotifyClient(tokens), "p", [])).toBe("s2");
     expect(bodies).toEqual([{ uris: ["spotify:track:a"] }, { uris: [] }]);
+  });
+});
+
+describe("playlist lifecycle", () => {
+  test("reads details from the playlist itself with a bounded field set", async () => {
+    let request: { path: string; fields: string | null } | undefined;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const parsed = new URL(String(input));
+      request = {
+        path: parsed.pathname.replace("/v1", ""),
+        fields: parsed.searchParams.get("fields"),
+      };
+      return Response.json({
+        id: "p",
+        name: "Mix",
+        uri: "spotify:playlist:p",
+        description: "Songs",
+        public: false,
+        collaborative: false,
+        owner: { id: "me", display_name: "Me" },
+        followers: { total: 3 },
+        items: { total: 42 },
+      });
+    }) as unknown as typeof fetch;
+
+    const details = await playlistDetails(new SpotifyClient(tokens), "p");
+    expect(request?.path).toBe("/playlists/p");
+    expect(request?.fields).toContain("followers(total)");
+    expect(details).toEqual({
+      id: "p",
+      name: "Mix",
+      uri: "spotify:playlist:p",
+      description: "Songs",
+      public: false,
+      collaborative: false,
+      ownerId: "me",
+      ownerName: "Me",
+      followers: 3,
+      totalItems: 42,
+    });
+  });
+
+  test("treats an empty description and missing counts as absent", async () => {
+    globalThis.fetch = (async () =>
+      Response.json({
+        id: "p",
+        name: "Mix",
+        uri: "spotify:playlist:p",
+        description: "",
+      })) as unknown as typeof fetch;
+    const details = await playlistDetails(new SpotifyClient(tokens), "p");
+    expect(details.description).toBeNull();
+    expect(details.followers).toBeNull();
+    expect(details.totalItems).toBeNull();
+  });
+
+  test("refuses a response missing the identifying fields", async () => {
+    globalThis.fetch = (async () =>
+      Response.json({ name: "Mix" })) as unknown as typeof fetch;
+    await expect(playlistDetails(new SpotifyClient(tokens), "p")).rejects.toThrow(
+      "invalid playlist",
+    );
+  });
+
+  // Follow, unfollow, and delete write playlist URIs through the URI-based `/me/library` family —
+  // the retired `/playlists/{id}/followers` route must never come back.
+  test("follow and unfollow never touch the retired /followers route", async () => {
+    const paths: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      paths.push(`${init?.method} ${new URL(String(input)).pathname.replace("/v1", "")}`);
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const spotify = new SpotifyClient(tokens);
+    await saveLibraryItems(spotify, ["spotify:playlist:p"]);
+    await removeLibraryItems(spotify, ["spotify:playlist:p"]);
+
+    expect(paths).toEqual(["PUT /me/library", "DELETE /me/library"]);
   });
 });
