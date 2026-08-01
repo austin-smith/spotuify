@@ -57,7 +57,7 @@ export function registerPlaylists(program: Command, io: CliIo): void {
     });
   playlist
     .command("show <playlist>")
-    .description("Show an owned or collaborative playlist")
+    .description("Show an owned playlist")
     .action(async (value: string, _options, command: Command) => {
       const { client } = await cliSession();
       const id = playlistId(value);

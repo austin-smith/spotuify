@@ -116,12 +116,12 @@ describe("assertPlaylistOpenable", () => {
     ).not.toThrow();
   });
 
-  // The collaborative flag alone cannot prove membership; the doomed read is only certain for
-  // plain foreign playlists, so collaborative ones keep their chance to succeed.
-  test("passes foreign collaborative playlists through", () => {
+  // The collaborative flag changes nothing: Spotify's items read refuses every playlist the user
+  // does not own, and the TUI opens only owned playlists.
+  test("refuses foreign collaborative playlists like any other foreign playlist", () => {
     expect(() =>
       assertPlaylistOpenable(details({ collaborative: true }), "me"),
-    ).not.toThrow();
+    ).toThrow("belongs to Owner");
   });
 
   test("refuses a foreign playlist before the permanently refused items read", () => {

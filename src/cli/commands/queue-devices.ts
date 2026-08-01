@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import { artistLine } from "../../api/types.ts";
 import { runtimeRequest, tryRuntimeRequest } from "../../runtime/control.ts";
 import { unavailable, usageError } from "../errors.ts";
 import {
@@ -21,6 +20,24 @@ import {
   uniqueDevice,
 } from "../support.ts";
 
+/**
+ * The item to report as playing now.
+ *
+ * The Web queue's `currently_playing` lags native events exactly like `/me/player`, so a connected
+ * runtime's snapshot is authoritative for the current item — including when it says nothing is
+ * playing. The upcoming list exists only in the Web response and stays with it.
+ */
+export function queueCurrentItem(
+  runtime: { connected: true; value: unknown } | { connected: false },
+  webCurrent: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!runtime.connected) return webCurrent;
+  const item = normalizeRuntimePlayback(runtime.value)["item"];
+  return item !== null && typeof item === "object"
+    ? (item as Record<string, unknown>)
+    : null;
+}
+
 export function registerQueueAndDevices(program: Command, io: CliIo): void {
   const queue = program
     .command("queue")
@@ -30,14 +47,19 @@ export function registerQueueAndDevices(program: Command, io: CliIo): void {
     .description("Show the current and upcoming items")
     .action(async (_options, command: Command) => {
       const value = await (await cliSession()).player.queue();
+      const runtime = await tryRuntimeRequest("status");
+      const current = queueCurrentItem(
+        runtime,
+        normalizeItem(value.currently_playing),
+      );
       const data = {
-        current: normalizeItem(value.currently_playing),
+        current,
         items: value.queue.map(normalizeItem),
       };
-      const current =
-        value.currently_playing === null
+      const currentLine =
+        current === null
           ? "Nothing is playing."
-          : `Now  ${value.currently_playing.name} — ${artistLine(value.currently_playing)}`;
+          : `Now  ${String(current["name"] ?? "Unknown")} — ${String(current["artist"] ?? "")}`;
       const upcoming =
         value.queue.length === 0
           ? "Queue is empty."
@@ -48,7 +70,7 @@ export function registerQueueAndDevices(program: Command, io: CliIo): void {
       outputFor(command, io).emit(
         "queue.list",
         data,
-        `${current}\n\n${upcoming}`,
+        `${currentLine}\n\n${upcoming}`,
       );
     });
   queue

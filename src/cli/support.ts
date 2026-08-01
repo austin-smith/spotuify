@@ -302,19 +302,19 @@ export function normalizePlaylistDetails(
 /**
  * Refuse a playlist whose contents Spotify permanently withholds.
  *
- * `/playlists/{id}/items` answers 403 for every playlist the signed-in user neither owns nor
- * collaborates on, so the read is refused up front — with the owner named — instead of spending a
- * request on it. Collaborative playlists pass through: the flag alone cannot prove membership,
- * and a wrongful refusal would break a listing that works; the translated 403 remains the honest
- * answer for a collaborative playlist the user is not actually part of.
+ * `/playlists/{id}/items` answers 403 for every playlist the signed-in user does not own — the
+ * collaborative flag included; nothing in this codebase has ever demonstrated a foreign
+ * collaborative listing succeeding, and the TUI opens only owned playlists. The read is refused
+ * up front — with the owner named — instead of spending a request on it. If collaborative
+ * membership listing is ever proven live, this is the one gate to relax.
  */
 export function assertPlaylistOpenable(
   details: PlaylistDetails,
   meId: string,
 ): void {
-  if (details.ownerId === meId || details.collaborative) return;
+  if (details.ownerId === meId) return;
   throw unavailable(
-    `Playlist ${details.name} belongs to ${details.ownerName}; Spotify lists contents only for playlists you own or collaborate on.`,
+    `Playlist ${details.name} belongs to ${details.ownerName}; Spotify lists contents only for playlists you own.`,
     `Play it with \`spotuify play ${details.uri}\`, or drop it with \`spotuify playlist unfollow\`.`,
   );
 }

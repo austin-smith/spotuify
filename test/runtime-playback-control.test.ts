@@ -329,6 +329,35 @@ describe("runtime playback adapter", () => {
     expect(usePlayback.getState().deviceId).toBeNull();
   });
 
+  test("fails the transfer request when the requested resume fails", async () => {
+    const player = {
+      devices: async () => [],
+    } as unknown as PlayerApi;
+    const engine = {
+      getStatus: () => ({
+        state: "ready",
+        accountId: "acct",
+        deviceId: "local-dev",
+      }),
+      isActive: () => true,
+      transfer: async () => {},
+    } as unknown as LibrespotEngine;
+    useDevices.getState().configure(player, engine, "acct");
+    usePlayback.setState({
+      ready: true,
+      isPlaying: false,
+      togglePlay: async () => ({ failure: new Error("resume refused") }),
+    });
+
+    // The native transfer succeeds; the explicit play request does not. The RPC must fail.
+    await expect(
+      createPlaybackRuntimeHandler(player)("device.transfer", {
+        selector: "local-dev",
+        play: true,
+      }),
+    ).rejects.toThrow("resume refused");
+  });
+
   test("keeps Web API routing when the receiver account does not match", async () => {
     const engineTransfers: number[] = [];
     const webTransfers: { id: string; play: boolean }[] = [];

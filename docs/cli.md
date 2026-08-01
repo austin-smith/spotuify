@@ -108,8 +108,8 @@ episode URI to play or queue. `history recent` walks further back with `--before
 `history top` with `--offset`.
 
 Playlist commands use Spotify's current playlist-items API. Spotify exposes contents only for
-playlists the signed-in user owns or collaborates on. Playlists hold tracks and episodes, and both
-appear in `playlist show`.
+playlists the signed-in user owns, and `playlist show` refuses others up front with the owner
+named. Playlists hold tracks and episodes, and both appear in `playlist show`.
 
 ```sh
 spotuify playlist list --owned

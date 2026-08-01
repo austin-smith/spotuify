@@ -100,7 +100,9 @@ export async function transferPlayback(
     await native!.transfer();
     // Native transfer preserves the paused/playing state; only an explicit play request resumes.
     if (play && !usePlayback.getState().isPlaying) {
-      await usePlayback.getState().togglePlay();
+      const outcome = await usePlayback.getState().togglePlay();
+      // The transfer succeeded but the requested resume did not; callers must not report success.
+      if (outcome !== null) throw outcome.failure;
     }
     return;
   }
