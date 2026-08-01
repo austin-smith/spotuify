@@ -655,6 +655,38 @@ describe("selection transitions", () => {
     expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
   });
 
+  test("accepts the first matching context after playback was confirmed absent", async () => {
+    const contextUri = "spotify:playlist:selected";
+    const selectedState: PlaybackState = {
+      ...REMOTE_STATE,
+      context: { type: "playlist", uri: contextUri },
+    };
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return reads === 1 ? null : selectedState;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => usePlayback.getState().sessionPresence === "absent");
+    await usePlayback.getState().playSelection(
+      { contextUri },
+      { label: "Selected playlist" },
+    );
+
+    expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeFalse();
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      COMMAND_RECONCILE_MS + 500,
+    );
+    await Bun.sleep(SELECTION_RECONCILE_RETRY_MS + 100);
+    expect(reads).toBe(2);
+    expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+  });
+
   test("keeps a context-only selection through a stale item and verifies its context", async () => {
     const selectedContextUri = "spotify:playlist:selected";
     const staleState: PlaybackState = {

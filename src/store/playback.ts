@@ -580,10 +580,10 @@ function selectionRequiresFollowUp(
   confirmation: PlaybackSelectionConfirmation,
   current: Pick<PlaybackSlice, "item" | "sessionPresence">,
 ): boolean {
-  if (confirmation === null) return false;
+  if (confirmation === null || current.sessionPresence === "absent") return false;
   // Unknown playback, a context-only selection, and replaying the current URI all make an item
   // match indistinguishable from a stale pre-command snapshot. Spend the one bounded follow-up
-  // read in those cases, but not after Spotify has authoritatively confirmed an absent session.
+  // read in those cases. An absent session returns above because it has no pre-command snapshot.
   return (
     current.sessionPresence === "unknown" ||
     confirmation.kind === "context" ||
