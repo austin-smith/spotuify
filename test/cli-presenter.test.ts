@@ -174,4 +174,26 @@ describe("CLI presentation", () => {
     expect(stdout.text()).toContain("Ready with remote playback only");
     expect(stripVTControlCharacters(stdout.text())).toBe(stdout.text());
   });
+
+  test("distinguishes a completed update from an already current installation", () => {
+    const currentOutput = new CaptureStream(true);
+    const currentPresenter = new CliPresenter({
+      stdout: currentOutput,
+      stderr: new CaptureStream(true),
+      env: { TERM: "xterm-256color" },
+    });
+    const updatedOutput = new CaptureStream(true);
+    const updatedPresenter = new CliPresenter({
+      stdout: updatedOutput,
+      stderr: new CaptureStream(true),
+      env: { TERM: "xterm-256color" },
+    });
+
+    currentPresenter.finishUpdate("current");
+    updatedPresenter.finishUpdate("updated");
+
+    expect(stripVTControlCharacters(currentOutput.text())).toContain("Up to date");
+    expect(stripVTControlCharacters(updatedOutput.text())).toContain("Update complete");
+    expect(stripVTControlCharacters(updatedOutput.text())).not.toContain("Up to date");
+  });
 });

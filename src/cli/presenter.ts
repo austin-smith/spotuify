@@ -12,6 +12,7 @@ import type {
   EngineAuthenticationEvent,
   EngineAuthenticationResult,
 } from "../engine/librespot.ts";
+import type { UpdateCommandResult } from "../update-command.ts";
 
 const COMMANDS = [
   ["auth [options]", "Authorize the Web API and terminal playback"],
@@ -540,13 +541,15 @@ export class CliPresenter {
     else this.line(this.stderr, message);
   }
 
-  finishUpdate(success: boolean, updateAvailable: boolean): void {
+  finishUpdate(status: UpdateCommandResult["status"]): void {
     if (!this.richStdout) return;
-    const message = success
-      ? this.brand("Up to date")
-      : updateAvailable
-        ? this.style("yellow", "Update available", this.stdout)
-        : this.style("red", "Update did not complete", this.stdout);
+    const messages = {
+      current: () => this.brand("Up to date"),
+      updated: () => this.brand("Update complete"),
+      available: () => this.style("yellow", "Update available", this.stdout),
+      failed: () => this.style("red", "Update did not complete", this.stdout),
+    } satisfies Record<UpdateCommandResult["status"], () => string>;
+    const message = messages[status]();
     clack.outro(message, { output: this.stdout, withGuide: true });
   }
 

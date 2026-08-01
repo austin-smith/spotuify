@@ -7,7 +7,6 @@ import type { Me } from "./api/types.ts";
 import { CliCancelledError, CliPresenter } from "./cli/presenter.ts";
 import { authenticateEngine, missingEngineMessage } from "./engine/librespot.ts";
 import { runUpdateCommand } from "./update-command.ts";
-import { UPDATE_AVAILABLE_EXIT_CODE } from "./update.ts";
 import { VERSION } from "./version.ts";
 
 async function main(argv: string[], presenter: CliPresenter): Promise<number | null> {
@@ -106,14 +105,14 @@ async function main(argv: string[], presenter: CliPresenter): Promise<number | n
         return 2;
       }
       presenter.beginUpdate();
-      const code = await runUpdateCommand({
+      const result = await runUpdateCommand({
         currentVersion: VERSION,
         checkOnly: rest.includes("--check"),
         stdout: (message) => presenter.updateMessage(message),
         stderr: (message) => presenter.updateError(message),
       });
-      presenter.finishUpdate(code === 0, code === UPDATE_AVAILABLE_EXIT_CODE);
-      return code;
+      presenter.finishUpdate(result.status);
+      return result.exitCode;
     }
 
     default:

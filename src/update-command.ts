@@ -22,6 +22,12 @@ interface UpdateCommandOptions {
   stderr?: (message: string) => void;
 }
 
+export type UpdateCommandResult =
+  | { status: "current"; exitCode: 0 }
+  | { status: "updated"; exitCode: 0 }
+  | { status: "available"; exitCode: typeof UPDATE_AVAILABLE_EXIT_CODE }
+  | { status: "failed"; exitCode: number };
+
 async function runProcess(command: readonly string[]): Promise<number> {
   const child = Bun.spawn([...command], {
     stdin: "inherit",
@@ -138,7 +144,9 @@ function describeCurrent(result: Extract<UpdateCheckResult, { status: "current" 
     : `spotuify ${result.currentVersion} is up to date.`;
 }
 
-export async function runUpdateCommand(options: UpdateCommandOptions): Promise<number> {
+export async function runUpdateCommand(
+  options: UpdateCommandOptions,
+): Promise<UpdateCommandResult> {
   const source = options.source ?? installSource();
   const check = options.check ?? checkForUpdate;
   const run = options.run ?? runProcess;
@@ -157,7 +165,7 @@ export async function runUpdateCommand(options: UpdateCommandOptions): Promise<n
       // Explicit update commands do not respect the passive-check opt-out, so this is only
       // possible with an injected checker that violates the normal contract.
       stderr("The update check is disabled.");
-      return 1;
+      return { status: "failed", exitCode: 1 };
     case "unsupported":
       if (result.source === "source") {
         stderr("Source builds are updated through git; pull the repository and rebuild spotuify.");
@@ -166,37 +174,37 @@ export async function runUpdateCommand(options: UpdateCommandOptions): Promise<n
           "Direct-download builds cannot be replaced automatically. Download the latest release from https://github.com/austin-smith/spotuify/releases.",
         );
       }
-      return 1;
+      return { status: "failed", exitCode: 1 };
     case "unavailable":
       stderr(`Could not check for updates: ${result.message}`);
-      return 1;
+      return { status: "failed", exitCode: 1 };
     case "current":
       stdout(describeCurrent(result));
-      return 0;
+      return { status: "current", exitCode: 0 };
     case "available":
       stdout(
         `spotuify ${result.currentVersion} → ${result.latestVersion} is available via ${result.source}.`,
       );
       if (options.checkOnly) {
         stdout(`Run \`spotuify update\` or: ${result.command}`);
-        return UPDATE_AVAILABLE_EXIT_CODE;
+        return { status: "available", exitCode: UPDATE_AVAILABLE_EXIT_CODE };
       }
 
       if (result.source === "homebrew") {
         const updateExit = await run(["brew", "update"]);
-        if (updateExit !== 0) return updateExit;
+        if (updateExit !== 0) return { status: "failed", exitCode: updateExit };
         const upgradeExit = await run([
           "brew",
           "upgrade",
           "austin-smith/tap/spotuify",
         ]);
-        if (upgradeExit !== 0) return upgradeExit;
+        if (upgradeExit !== 0) return { status: "failed", exitCode: upgradeExit };
       } else {
         const installExit = await run(npmInvocation(result.channel));
-        if (installExit !== 0) return installExit;
+        if (installExit !== 0) return { status: "failed", exitCode: installExit };
       }
 
       stdout(`Updated spotuify to ${result.latestVersion}. Restart spotuify to use it.`);
-      return 0;
+      return { status: "updated", exitCode: 0 };
   }
 }

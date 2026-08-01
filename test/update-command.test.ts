@@ -104,7 +104,7 @@ describe("explicit update command", () => {
   test("reports an available update without mutating for --check", async () => {
     const output: string[] = [];
     let ran = false;
-    const exitCode = await runUpdateCommand({
+    const result = await runUpdateCommand({
       check: async () => available("npm"),
       checkOnly: true,
       currentVersion: "1.0.0",
@@ -115,14 +115,17 @@ describe("explicit update command", () => {
       source: "npm",
       stdout: (message) => output.push(message),
     });
-    expect(exitCode).toBe(UPDATE_AVAILABLE_EXIT_CODE);
+    expect(result).toEqual({
+      status: "available",
+      exitCode: UPDATE_AVAILABLE_EXIT_CODE,
+    });
     expect(ran).toBe(false);
     expect(output.join("\n")).toContain("spotuify update");
   });
 
   test("updates Homebrew metadata before upgrading the formula", async () => {
     const commands: string[][] = [];
-    const exitCode = await runUpdateCommand({
+    const result = await runUpdateCommand({
       check: async () => available("homebrew"),
       checkOnly: false,
       currentVersion: "1.0.0",
@@ -133,7 +136,7 @@ describe("explicit update command", () => {
       source: "homebrew",
       stdout: () => {},
     });
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({ status: "updated", exitCode: 0 });
     expect(commands).toEqual([
       ["brew", "update"],
       ["brew", "upgrade", "austin-smith/tap/spotuify"],
@@ -142,7 +145,7 @@ describe("explicit update command", () => {
 
   test("preserves the npm canary channel", async () => {
     const commands: string[][] = [];
-    const exitCode = await runUpdateCommand({
+    const result = await runUpdateCommand({
       check: async () => available("npm", "canary"),
       checkOnly: false,
       currentVersion: "1.0.0-canary.1",
@@ -154,7 +157,7 @@ describe("explicit update command", () => {
       source: "npm",
       stdout: () => {},
     });
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({ status: "updated", exitCode: 0 });
     expect(commands[0]?.slice(1)).toEqual([
       "install",
       "--global",
@@ -191,14 +194,14 @@ describe("explicit update command", () => {
       source: "npm",
       stderr: () => {},
     });
-    expect(current).toBe(0);
-    expect(unavailable).toBe(1);
+    expect(current).toEqual({ status: "current", exitCode: 0 });
+    expect(unavailable).toEqual({ status: "failed", exitCode: 1 });
     expect(runs).toBe(0);
   });
 
   test("stops when Homebrew metadata refresh fails", async () => {
     const commands: string[][] = [];
-    const exitCode = await runUpdateCommand({
+    const result = await runUpdateCommand({
       check: async () => available("homebrew"),
       checkOnly: false,
       currentVersion: "1.0.0",
@@ -209,7 +212,7 @@ describe("explicit update command", () => {
       source: "homebrew",
       stdout: () => {},
     });
-    expect(exitCode).toBe(7);
+    expect(result).toEqual({ status: "failed", exitCode: 7 });
     expect(commands).toEqual([["brew", "update"]]);
   });
 });
