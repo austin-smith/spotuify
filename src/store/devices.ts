@@ -71,6 +71,11 @@ export function withLocalDevice(devices: Device[]): Device[] {
   ];
 }
 
+/** The account-matched, ready embedded receiver's device ID, or null when it cannot be routed. */
+export function localReceiverId(): string | null {
+  return localDevice()?.id ?? null;
+}
+
 /**
  * Transfer playback to a resolved device, routing the embedded receiver through librespot.
  *

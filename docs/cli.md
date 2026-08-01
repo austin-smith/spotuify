@@ -63,8 +63,15 @@ spotuify volume -5
 Every playback command except `status` and `toggle` accepts `--device <id-or-name>` when a
 specific Spotify Connect device should receive the operation — `play`, `pause`, `open`,
 `next`, `previous`, `seek`, `volume`, `shuffle`, `repeat`, and `queue add`. Device IDs are
-unambiguous; a name is accepted only when exactly one device has that name. A targeted command
-always goes through the Web API, even when the TUI's local runtime is available.
+unambiguous; a name is accepted only when exactly one device has that name. When a local runtime
+is running, selectors resolve against its device view, which includes the embedded `spotuify`
+receiver even when Spotify's own device list omits it — and `device list` shows the same view.
+
+A selector naming the embedded receiver routes through its runtime rather than the Web API:
+`play` and `open` transfer playback there natively before starting, while the state commands
+(`pause`, `next`, `previous`, `seek`, `volume`, `shuffle`, `repeat`) require the receiver to
+already be the active device — the same commands aimed at any other idle device would fail at
+Spotify anyway. All other devices are reached through the Web API.
 
 ## Browse and manage Spotify
 

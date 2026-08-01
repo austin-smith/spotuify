@@ -222,6 +222,42 @@ describe("runtime playback adapter", () => {
     ).rejects.toThrow("not both");
   });
 
+  test("lists the merged device view with the receiver identified", async () => {
+    const player = {
+      devices: async () => [
+        {
+          id: "remote",
+          name: "Living Room",
+          type: "Speaker",
+          is_active: false,
+          is_restricted: false,
+          volume_percent: 35,
+        },
+      ],
+    } as unknown as PlayerApi;
+    const engine = {
+      getStatus: () => ({
+        state: "ready",
+        accountId: "acct",
+        deviceId: "local-dev",
+      }),
+      isActive: () => true,
+    } as unknown as LibrespotEngine;
+    useDevices.getState().configure(player, engine, "acct");
+    usePlayback.setState({ ready: true, deviceId: "local-dev" });
+
+    const result = (await createPlaybackRuntimeHandler(player)(
+      "device.list",
+      {},
+    )) as { devices: { id: string | null }[]; localDeviceId: string | null };
+
+    expect(result.localDeviceId).toBe("local-dev");
+    expect(result.devices.map((device) => device.id)).toEqual([
+      "local-dev",
+      "remote",
+    ]);
+  });
+
   test("routes a transfer to the embedded receiver through librespot", async () => {
     const engineTransfers: number[] = [];
     const webTransfers: { id: string; play: boolean }[] = [];

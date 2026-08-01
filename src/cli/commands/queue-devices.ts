@@ -6,6 +6,7 @@ import { normalizeItem, type CliIo } from "../output.ts";
 import { cliSession } from "../session.ts";
 import { spotifyReference } from "../values.ts";
 import {
+  allDevices,
   currentState,
   itemRows,
   mutation,
@@ -86,7 +87,9 @@ export function registerQueueAndDevices(program: Command, io: CliIo): void {
     .command("list")
     .description("List available devices")
     .action(async (_options, command: Command) => {
-      const devices = await (await cliSession()).player.devices();
+      // The runtime's merged view when available: it includes the embedded receiver, which
+      // Spotify's device list does not always report. The listing must match what is targetable.
+      const devices = await allDevices();
       outputFor(command, io).emit(
         "device.list",
         devices,

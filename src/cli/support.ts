@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { PlaylistDetails } from "../api/playlists.ts";
 import { artistLine, type Device, type PlayableItem } from "../api/types.ts";
+import { tryRuntimeRequest } from "../runtime/control.ts";
 import { unavailable, usageError } from "./errors.ts";
 import {
   CliOutput,
@@ -80,11 +81,89 @@ export function uniqueDevice(devices: Device[], selector: string): Device {
   );
 }
 
+function runtimeDeviceList(
+  value: unknown,
+): { devices: Device[]; localDeviceId: string | null } {
+  const record =
+    value !== null && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : {};
+  const devices = Array.isArray(record["devices"])
+    ? (record["devices"] as unknown[]).filter(
+        (device): device is Device =>
+          device !== null &&
+          typeof device === "object" &&
+          typeof (device as Device).name === "string",
+      )
+    : [];
+  const local = record["localDeviceId"];
+  return {
+    devices,
+    localDeviceId: typeof local === "string" ? local : null,
+  };
+}
+
+/**
+ * Every targetable device.
+ *
+ * A connected runtime is the authority: its list merges Spotify's remote devices with the embedded
+ * receiver, which `/me/player/devices` does not always include. Without a runtime the Web API list
+ * is all there is.
+ */
+export async function allDevices(): Promise<Device[]> {
+  const probe = await tryRuntimeRequest("device.list");
+  if (probe.connected) return runtimeDeviceList(probe.value).devices;
+  const { player } = await cliSession();
+  return await player.devices();
+}
+
 export async function selectedDevice(
   selector: string,
 ): Promise<Device & { id: string }> {
-  const { player } = await cliSession();
-  return targetDevice(await player.devices(), selector);
+  return targetDevice(await allDevices(), selector);
+}
+
+export type DeviceTarget =
+  | { route: "web"; device: Device & { id: string } }
+  | { route: "local"; id: string; name: string; active: boolean };
+
+/**
+ * Resolve a `--device` selector for a playback command.
+ *
+ * The account-matched embedded receiver must route through its runtime: a Web API command aimed at
+ * our own receiver would bypass the serialized native mutation stream and can miss the receiver
+ * entirely when Spotify omits it from the device list. Every other device is a Web API target.
+ */
+export async function resolveDeviceTarget(
+  selector: string,
+): Promise<DeviceTarget> {
+  const probe = await tryRuntimeRequest("device.list");
+  if (!probe.connected) {
+    const { player } = await cliSession();
+    return {
+      route: "web",
+      device: targetDevice(await player.devices(), selector),
+    };
+  }
+  const { devices, localDeviceId } = runtimeDeviceList(probe.value);
+  const device = targetDevice(devices, selector);
+  if (localDeviceId !== null && device.id === localDeviceId) {
+    return {
+      route: "local",
+      id: device.id,
+      name: device.name,
+      active: device.is_active === true,
+    };
+  }
+  return { route: "web", device };
+}
+
+/** The refusal for state commands aimed at an idle receiver, where the Web API would 404 anyway. */
+export function inactiveReceiver(name: string): never {
+  throw unavailable(
+    `${name} is not the active device.`,
+    `Transfer playback first: \`spotuify device transfer ${name}\`.`,
+  );
 }
 
 export function targetDevice(

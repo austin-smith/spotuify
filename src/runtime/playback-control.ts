@@ -5,7 +5,11 @@ import {
   type PlayableItem,
   type RepeatState,
 } from "../api/types.ts";
-import { transferPlayback, withLocalDevice } from "../store/devices.ts";
+import {
+  localReceiverId,
+  transferPlayback,
+  withLocalDevice,
+} from "../store/devices.ts";
 import { usePlayback } from "../store/playback.ts";
 import { asCliError, unavailable, usageError } from "../cli/errors.ts";
 import {
@@ -163,6 +167,17 @@ export function createPlaybackRuntimeHandler(
         }
         break;
       }
+      case "device.list": {
+        if (player === undefined)
+          throw unavailable("Device listing is unavailable.");
+        // The merged view is the runtime's authority: Spotify's list plus the embedded receiver,
+        // which `/me/player/devices` does not always include. `localDeviceId` lets clients route
+        // receiver-targeted commands through this runtime instead of the Web API.
+        return {
+          devices: withLocalDevice(await player.devices()),
+          localDeviceId: localReceiverId(),
+        };
+      }
       case "device.transfer": {
         if (player === undefined)
           throw unavailable("Device transfer is unavailable.");
@@ -203,7 +218,8 @@ export function createPlaybackRuntimeHandler(
     }
   };
   return (method, params) => {
-    if (method === "status") return run(method, params);
+    // Metadata reads run concurrently; only stateful commands join the serialized mutation tail.
+    if (method === "status" || method === "device.list") return run(method, params);
     const result = mutationTail.then(
       () => run(method, params),
       () => run(method, params),

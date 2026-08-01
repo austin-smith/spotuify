@@ -21,12 +21,13 @@ import {
 import {
   currentState,
   enumValue,
+  inactiveReceiver,
   mutation,
   outputFor,
+  resolveDeviceTarget,
   runtimeBoolean,
   runtimeNumber,
   runtimePlaybackText,
-  selectedDevice,
   wait,
   type RunState,
 } from "../support.ts";
@@ -148,13 +149,43 @@ export function registerPlayback(
         ) {
           throw usageError(`Spotify ${ref.kind} resources cannot be played.`);
         }
-        if (options.device === undefined) {
-          const runtimeParams =
-            ref === undefined
-              ? {}
-              : ref.kind === "track" || ref.kind === "episode"
-                ? { uris: [ref.uri] }
-                : { contextUri: ref.uri, offset: index };
+        const runtimeParams =
+          ref === undefined
+            ? {}
+            : ref.kind === "track" || ref.kind === "episode"
+              ? { uris: [ref.uri] }
+              : { contextUri: ref.uri, offset: index };
+        const message =
+          target === undefined ? "Playback resumed." : `Playing ${target}.`;
+        // A selector naming the embedded receiver routes through its runtime: transfer natively
+        // when it does not hold the session, then start playback inside the serialized stream.
+        const resolved =
+          options.device === undefined
+            ? undefined
+            : await resolveDeviceTarget(options.device);
+        if (resolved?.route === "local") {
+          if (!resolved.active) {
+            await runtimeRequest("device.transfer", {
+              selector: resolved.id,
+              play: false,
+            });
+          }
+          const state = await runtimeRequest("play", runtimeParams);
+          mutation(
+            command,
+            io,
+            "play",
+            {
+              source: "runtime",
+              target: target ?? null,
+              deviceId: resolved.id,
+              state,
+            },
+            message,
+          );
+          return;
+        }
+        if (resolved === undefined) {
           const runtime = await tryRuntimeRequest("play", runtimeParams);
           if (runtime.connected) {
             mutation(
@@ -166,16 +197,13 @@ export function registerPlayback(
                 target: target ?? null,
                 state: runtime.value,
               },
-              target === undefined ? "Playback resumed." : `Playing ${target}.`,
+              message,
             );
             return;
           }
         }
         const { player } = await cliSession();
-        const deviceId =
-          options.device === undefined
-            ? undefined
-            : (await selectedDevice(options.device)).id;
+        const deviceId = resolved?.device.id;
         if (ref === undefined) await player.play({ deviceId });
         else {
           if (ref.kind === "track" || ref.kind === "episode") {
@@ -189,7 +217,7 @@ export function registerPlayback(
           io,
           "play",
           { target: target ?? null, deviceId: deviceId ?? null },
-          target === undefined ? "Playback resumed." : `Playing ${target}.`,
+          message,
         );
       },
     );
@@ -199,7 +227,14 @@ export function registerPlayback(
     .description("Pause playback")
     .option("-d, --device <id-or-name>", "target Spotify Connect device")
     .action(async (options: { device?: string }, command: Command) => {
-      if (options.device === undefined) {
+      const resolved =
+        options.device === undefined
+          ? undefined
+          : await resolveDeviceTarget(options.device);
+      if (resolved?.route === "local" && !resolved.active) {
+        inactiveReceiver(resolved.name);
+      }
+      if (resolved === undefined || resolved.route === "local") {
         const runtime = await tryRuntimeRequest("pause");
         if (runtime.connected) {
           mutation(
@@ -213,10 +248,7 @@ export function registerPlayback(
         }
       }
       const { player } = await cliSession();
-      const deviceId =
-        options.device === undefined
-          ? undefined
-          : (await selectedDevice(options.device)).id;
+      const deviceId = resolved?.route === "web" ? resolved.device.id : undefined;
       await player.pause(deviceId);
       mutation(
         command,
@@ -269,7 +301,14 @@ export function registerPlayback(
           name === "next"
             ? "Skipped to next item."
             : "Returned to previous item.";
-        if (options.device === undefined) {
+        const resolved =
+          options.device === undefined
+            ? undefined
+            : await resolveDeviceTarget(options.device);
+        if (resolved?.route === "local" && !resolved.active) {
+          inactiveReceiver(resolved.name);
+        }
+        if (resolved === undefined || resolved.route === "local") {
           const runtime = await tryRuntimeRequest(name);
           if (runtime.connected) {
             mutation(
@@ -284,9 +323,7 @@ export function registerPlayback(
         }
         const { player } = await cliSession();
         const deviceId =
-          options.device === undefined
-            ? undefined
-            : (await selectedDevice(options.device)).id;
+          resolved?.route === "web" ? resolved.device.id : undefined;
         await player[name](deviceId);
         mutation(command, io, name, { deviceId: deviceId ?? null }, message);
       });
@@ -304,7 +341,14 @@ export function registerPlayback(
       ) => {
         const parsed = signedDurationMs(position);
         let target = parsed.milliseconds;
-        if (options.device === undefined) {
+        const resolved =
+          options.device === undefined
+            ? undefined
+            : await resolveDeviceTarget(options.device);
+        if (resolved?.route === "local" && !resolved.active) {
+          inactiveReceiver(resolved.name);
+        }
+        if (resolved === undefined || resolved.route === "local") {
           // A relative seek is sent as the raw offset: the runtime applies it inside its
           // serialized mutation, so two concurrent `seek +5s` commands both land.
           const runtime = await tryRuntimeRequest(
@@ -329,9 +373,7 @@ export function registerPlayback(
         }
         const { player } = await cliSession();
         const deviceId =
-          options.device === undefined
-            ? undefined
-            : (await selectedDevice(options.device)).id;
+          resolved?.route === "web" ? resolved.device.id : undefined;
         if (parsed.relative) {
           const state = await player.state("foreground");
           if (state === null) throw unavailable("Nothing is playing.");
@@ -364,7 +406,14 @@ export function registerPlayback(
       ) => {
         const parsed = signedPercent(level);
         let percent = parsed.percent;
-        if (options.device === undefined) {
+        const resolved =
+          options.device === undefined
+            ? undefined
+            : await resolveDeviceTarget(options.device);
+        if (resolved?.route === "local" && !resolved.active) {
+          inactiveReceiver(resolved.name);
+        }
+        if (resolved === undefined || resolved.route === "local") {
           // A relative change is sent as the raw delta and applied inside the runtime's
           // serialized mutation, so two concurrent `volume +5` commands both land.
           const runtime = await tryRuntimeRequest(
@@ -399,10 +448,7 @@ export function registerPlayback(
           }
         }
         const { player } = await cliSession();
-        const device =
-          options.device === undefined
-            ? undefined
-            : await selectedDevice(options.device);
+        const device = resolved?.route === "web" ? resolved.device : undefined;
         if (parsed.relative) {
           // A targeted device reports its own volume; only the untargeted path needs playback state.
           let current: number | null;
@@ -439,7 +485,14 @@ export function registerPlayback(
         options: { device?: string },
         command: Command,
       ) => {
-        if (options.device === undefined) {
+        const resolved =
+          options.device === undefined
+            ? undefined
+            : await resolveDeviceTarget(options.device);
+        if (resolved?.route === "local" && !resolved.active) {
+          inactiveReceiver(resolved.name);
+        }
+        if (resolved === undefined || resolved.route === "local") {
           // `toggle` is sent as the toggle itself so the runtime flips its own serialized state;
           // resolving it here from a status read would race a concurrent toggle.
           const runtime = await tryRuntimeRequest(
@@ -462,9 +515,7 @@ export function registerPlayback(
         }
         const { player } = await cliSession();
         const deviceId =
-          options.device === undefined
-            ? undefined
-            : (await selectedDevice(options.device)).id;
+          resolved?.route === "web" ? resolved.device.id : undefined;
         const state =
           value === "toggle"
             ? !(await player.state("foreground"))?.shuffle_state
@@ -491,7 +542,14 @@ export function registerPlayback(
         command: Command,
       ) => {
         let mode: RepeatState;
-        if (options.device === undefined) {
+        const resolved =
+          options.device === undefined
+            ? undefined
+            : await resolveDeviceTarget(options.device);
+        if (resolved?.route === "local" && !resolved.active) {
+          inactiveReceiver(resolved.name);
+        }
+        if (resolved === undefined || resolved.route === "local") {
           // `cycle` is sent as the cycle itself so the runtime advances its own serialized state;
           // resolving it here from a status read would race a concurrent cycle.
           const runtime = await tryRuntimeRequest(
@@ -523,9 +581,7 @@ export function registerPlayback(
         }
         const { player } = await cliSession();
         const deviceId =
-          options.device === undefined
-            ? undefined
-            : (await selectedDevice(options.device)).id;
+          resolved?.route === "web" ? resolved.device.id : undefined;
         if (value === "cycle")
           mode = nextRepeatState(
             (await player.state("foreground"))?.repeat_state ?? "off",
@@ -565,11 +621,32 @@ export function registerPlayback(
           }
           throw usageError(`Spotify ${ref.kind} resources cannot be played.`);
         }
-        if (options.device === undefined) {
-          const params =
-            ref.kind === "track" || ref.kind === "episode"
-              ? { uris: [ref.uri] }
-              : { contextUri: ref.uri };
+        const params =
+          ref.kind === "track" || ref.kind === "episode"
+            ? { uris: [ref.uri] }
+            : { contextUri: ref.uri };
+        const resolved =
+          options.device === undefined
+            ? undefined
+            : await resolveDeviceTarget(options.device);
+        if (resolved?.route === "local") {
+          if (!resolved.active) {
+            await runtimeRequest("device.transfer", {
+              selector: resolved.id,
+              play: false,
+            });
+          }
+          const state = await runtimeRequest("play", params);
+          mutation(
+            command,
+            io,
+            "open",
+            { source: "runtime", uri: ref.uri, deviceId: resolved.id, state },
+            `Playing ${ref.uri}.`,
+          );
+          return;
+        }
+        if (resolved === undefined) {
           const runtime = await tryRuntimeRequest("play", params);
           if (runtime.connected) {
             mutation(
@@ -583,10 +660,7 @@ export function registerPlayback(
           }
         }
         const { player } = await cliSession();
-        const deviceId =
-          options.device === undefined
-            ? undefined
-            : (await selectedDevice(options.device)).id;
+        const deviceId = resolved?.device.id;
         if (ref.kind === "track" || ref.kind === "episode")
           await player.play({ deviceId, uris: [ref.uri] });
         else if (["album", "artist", "playlist"].includes(ref.kind))

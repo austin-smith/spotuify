@@ -472,6 +472,178 @@ describe("local runtime control", () => {
     });
   });
 
+  test("routes receiver-targeted commands through the runtime", async () => {
+    const control = await paths();
+    const receiver = (active: boolean) => ({
+      id: "local-dev",
+      name: "spotuify",
+      type: "Computer",
+      is_active: active,
+      is_restricted: false,
+      volume_percent: 40,
+    });
+    let receiverActive = false;
+    const requests: { method: string; params: unknown }[] = [];
+    server = await startControlServer(
+      (method, params) => {
+        requests.push({ method, params });
+        if (method === "device.list") {
+          return {
+            devices: [receiver(receiverActive)],
+            localDeviceId: "local-dev",
+          };
+        }
+        if (method === "device.transfer") {
+          receiverActive = true;
+          return { device: receiver(true), play: false };
+        }
+        if (method === "play") return { isPlaying: true };
+        if (method === "volume") {
+          return { device: { ...receiver(true), volumePercent: 40 } };
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+      { paths: control },
+    );
+    const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+    const env = { ...process.env, SPOTUIFY_RUNTIME_DIR: control.directory };
+
+    // A state command aimed at the idle receiver refuses before any mutation.
+    const pause = Bun.spawn(
+      [process.execPath, cli, "--json", "pause", "--device", "spotuify"],
+      { env, stdout: "pipe", stderr: "pipe" },
+    );
+    const [pauseExit, pauseErr] = await Promise.all([
+      pause.exited,
+      new Response(pause.stderr).text(),
+    ]);
+    expect(pauseExit).toBe(4);
+    expect(JSON.parse(pauseErr)).toMatchObject({
+      error: { message: expect.stringContaining("not the active device") },
+    });
+    expect(requests.map((request) => request.method)).toEqual(["device.list"]);
+    requests.length = 0;
+
+    // `play` transfers natively first, then starts playback in the serialized stream.
+    const play = Bun.spawn(
+      [
+        process.execPath,
+        cli,
+        "--json",
+        "play",
+        "spotify:track:abc123",
+        "--device",
+        "spotuify",
+      ],
+      { env, stdout: "pipe", stderr: "pipe" },
+    );
+    const [playExit, playErr] = await Promise.all([
+      play.exited,
+      new Response(play.stderr).text(),
+    ]);
+    expect(playErr).toBe("");
+    expect(playExit).toBe(0);
+    expect(requests).toEqual([
+      { method: "device.list", params: {} },
+      {
+        method: "device.transfer",
+        params: { selector: "local-dev", play: false },
+      },
+      { method: "play", params: { uris: ["spotify:track:abc123"] } },
+    ]);
+    requests.length = 0;
+
+    // With the receiver active, a targeted state command uses the plain runtime path.
+    const volume = Bun.spawn(
+      [process.execPath, cli, "--json", "volume", "40", "--device", "spotuify"],
+      { env, stdout: "pipe", stderr: "pipe" },
+    );
+    const [volumeExit, volumeErr] = await Promise.all([
+      volume.exited,
+      new Response(volume.stderr).text(),
+    ]);
+    expect(volumeErr).toBe("");
+    expect(volumeExit).toBe(0);
+    expect(requests).toEqual([
+      { method: "device.list", params: {} },
+      { method: "volume", params: { percent: 40 } },
+    ]);
+  });
+
+  test("lists the runtime's merged devices and keeps foreign targets on the Web API", async () => {
+    const control = await paths();
+    const requests: string[] = [];
+    server = await startControlServer(
+      (method) => {
+        requests.push(method);
+        if (method === "device.list") {
+          return {
+            devices: [
+              {
+                id: "local-dev",
+                name: "spotuify",
+                type: "Computer",
+                is_active: true,
+                is_restricted: false,
+                volume_percent: 40,
+              },
+              {
+                id: "remote",
+                name: "Living Room",
+                type: "Speaker",
+                is_active: false,
+                is_restricted: false,
+                volume_percent: 20,
+              },
+            ],
+            localDeviceId: "local-dev",
+          };
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+      { paths: control },
+    );
+    const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+    const env = {
+      ...process.env,
+      SPOTUIFY_RUNTIME_DIR: control.directory,
+      XDG_CONFIG_HOME: join(control.directory, "missing-config"),
+    };
+
+    // `device list` shows the merged view, receiver included.
+    const list = Bun.spawn([process.execPath, cli, "--json", "device", "list"], {
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [listExit, listOut] = await Promise.all([
+      list.exited,
+      new Response(list.stdout).text(),
+    ]);
+    expect(listExit).toBe(0);
+    expect(JSON.parse(listOut).data.map((d: { id: string }) => d.id)).toEqual([
+      "local-dev",
+      "remote",
+    ]);
+
+    // A foreign device resolves through the same view but stays on the Web API path: with no
+    // credentials configured, that path fails with an authentication error and no mutation ever
+    // reaches the runtime.
+    const pause = Bun.spawn(
+      [process.execPath, cli, "--json", "pause", "--device", "Living Room"],
+      { env, stdout: "pipe", stderr: "pipe" },
+    );
+    const [pauseExit, pauseErr] = await Promise.all([
+      pause.exited,
+      new Response(pause.stderr).text(),
+    ]);
+    expect(pauseExit).toBe(3);
+    expect(JSON.parse(pauseErr)).toMatchObject({
+      error: { code: "authentication_required" },
+    });
+    expect(requests).toEqual(["device.list", "device.list"]);
+  });
+
   test("sends shuffle toggle and repeat cycle for the runtime to resolve", async () => {
     const control = await paths();
     const requests: { method: string; params: unknown }[] = [];
