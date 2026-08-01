@@ -22,6 +22,10 @@ export const ACTIVE_POLL_INTERVAL_MS = 30_000;
 export const IDLE_POLL_INTERVAL_MS = 60_000;
 /** Let Spotify Connect settle, then perform at most one coalesced reconciliation. */
 export const COMMAND_RECONCILE_MS = 750;
+/** One bounded follow-up read when Spotify has not exposed a just-started selection yet. */
+export const SELECTION_RECONCILE_RETRY_MS = 1_000;
+/** Let a newly connected native receiver publish playback before surfacing a stale Web failure. */
+export const NATIVE_TAKEOVER_GRACE_MS = 1_000;
 /** How often to recompute extrapolated progress for the UI. */
 const TICK_INTERVAL_MS = 250;
 /**
@@ -34,6 +38,38 @@ export const ERROR_LINGER_MS = 4_000;
 
 export type PlaybackSessionPresence = "unknown" | "absent" | "present";
 
+export interface PlaybackSelectionPreview {
+  label: string;
+  item?: PlayableItem;
+}
+
+export interface PlaybackSelectionOptions {
+  contextUri?: string;
+  uris?: string[];
+  offset?: number;
+}
+
+export type PlaybackSelectionConfirmation =
+  | { kind: "item"; uri: string }
+  | { kind: "context"; uri: string }
+  | null;
+
+export type PlaybackSelectionLane = "native" | "web";
+
+export interface PendingPlaybackSelection {
+  /** Monotonic identity so an older command cannot clear a newer selection. */
+  requestId: number;
+  label: string;
+  /** Full metadata is available for track rows and lets an empty canvas render immediately. */
+  item: PlayableItem | null;
+  /** Requested playback identity used to reject stale post-command Web snapshots. */
+  confirmation: PlaybackSelectionConfirmation;
+  /** The first matching Web snapshot is ambiguous because it could predate the command. */
+  requiresFollowUp: boolean;
+  /** The control lane whose acknowledgement is allowed to finish this transition. */
+  lane: PlaybackSelectionLane;
+}
+
 export interface PlaybackStartOptions {
   /**
    * Keep native events active while another owner performs the sole Web API recovery probe.
@@ -45,6 +81,8 @@ export interface PlaybackStartOptions {
 
 export interface PlaybackSlice {
   item: PlayableItem | null;
+  /** A user selection awaiting authoritative native or Web playback confirmation. */
+  pendingSelection: PendingPlaybackSelection | null;
   isPlaying: boolean;
   shuffle: boolean;
   repeat: RepeatState;
@@ -81,11 +119,10 @@ export interface PlaybackSlice {
   reconcileSoon: () => void;
   /** Record a successful remote-device transfer before Spotify's next playback snapshot arrives. */
   confirmDeviceTransfer: (deviceId: string, deviceName: string) => void;
-  playSelection: (options: {
-    contextUri?: string;
-    uris?: string[];
-    offset?: number;
-  }) => Promise<void>;
+  playSelection: (
+    options: PlaybackSelectionOptions,
+    preview?: PlaybackSelectionPreview,
+  ) => Promise<void>;
   togglePlay: () => Promise<void>;
   next: () => Promise<void>;
   previous: () => Promise<void>;
@@ -101,6 +138,14 @@ let native: LibrespotEngine | null = null;
 /** Verified Web API account identity. Null means native control must remain unavailable. */
 let webAccountId: string | null = null;
 let anchor: ProgressAnchor = { progressMs: 0, atMs: 0, isPlaying: false, durationMs: 0 };
+interface NativeTransportPhase {
+  uri: string;
+  isPlaying: boolean;
+  positionMs: number;
+  atMs: number;
+}
+/** Latest native transport phase, retained so metadata and phase may arrive in either order. */
+let nativeTransportPhase: NativeTransportPhase | null = null;
 /** When the current error was raised, for `ERROR_LINGER_MS`. */
 let errorAt = 0;
 let errorRevision = 0;
@@ -130,6 +175,15 @@ let latestRefreshRevision = -1;
 let latestRefreshStartedAt = Number.NEGATIVE_INFINITY;
 /** Reads before this monotonic deadline are too early to reconcile Spotify's eventual state. */
 let webReadNotBefore = Number.NEGATIVE_INFINITY;
+let selectionRequestId = 0;
+let selectionConfirmationRetries = 0;
+let pendingSelectionResolutionTimer: ReturnType<typeof setTimeout> | null = null;
+/** Web selection whose command completed while native playback owns reconciliation. */
+let settledWebSelectionRequestId: number | null = null;
+/** Pending Web selection that observed a current-run native connection or playback event. */
+let nativeSelectionActivityRequestId: number | null = null;
+/** Pending Web selection that observed current-run native metadata or transport evidence. */
+let nativeSelectionPlaybackRequestId: number | null = null;
 type OptimisticField = "playing" | "progress" | "volume" | "shuffle" | "repeat";
 interface ConfirmedPlayback {
   anchor: ProgressAnchor;
@@ -355,7 +409,7 @@ function describe(err: unknown): string {
 function fail(
   set: (patch: Partial<PlaybackSlice>) => void,
   err: unknown,
-  lifetime: "until-success" | "transient" = "until-success",
+  lifetime: "until-success" | "transient",
 ): void {
   if (err instanceof PlayerCommandRejectedError) return;
   if (err instanceof SpotifyLimitError) {
@@ -430,7 +484,7 @@ function scheduleReconciliation(
   requiredRevision: number,
   notBefore: number,
 ): void {
-  if (webReconciliationSuspended || isNativeDevice(get().deviceId)) return;
+  if (webReconciliationSuspended || nativeOwnsReconciliation(get())) return;
   const expectedRun = runId;
   const expectedApi = api;
   clearTimer(reconcileTimer);
@@ -506,6 +560,214 @@ function isNativeDevice(deviceId: string | null): boolean {
   );
 }
 
+function nativeOwnsReconciliation(
+  state: Pick<PlaybackSlice, "deviceId" | "pendingSelection">,
+): boolean {
+  if (!isNativeDevice(state.deviceId)) return false;
+  const pendingSelection = state.pendingSelection;
+  // A Web-routed selection with no native event still belongs to Web reconciliation. Device
+  // identity alone can become active before librespot publishes the requested playback.
+  return (
+    pendingSelection?.lane !== "web" ||
+    nativeSelectionPlaybackRequestId === pendingSelection.requestId
+  );
+}
+
+function selectionMatchesState(
+  selection: PendingPlaybackSelection | null,
+  state: PlaybackState | null,
+): boolean {
+  if (selection === null || selection.confirmation === null || state === null) return false;
+  return selection.confirmation.kind === "item"
+    ? state.item?.uri === selection.confirmation.uri
+    : state.context?.uri === selection.confirmation.uri;
+}
+
+function selectionConfirmationFor(
+  options: PlaybackSelectionOptions,
+  preview: PlaybackSelectionPreview | undefined,
+): PlaybackSelectionConfirmation {
+  const itemUri = preview?.item?.uri ?? options.uris?.[0];
+  if (itemUri !== undefined) return { kind: "item", uri: itemUri };
+  if (options.contextUri !== undefined) return { kind: "context", uri: options.contextUri };
+  return null;
+}
+
+function selectionRequiresFollowUp(
+  confirmation: PlaybackSelectionConfirmation,
+  current: Pick<PlaybackSlice, "item" | "sessionPresence">,
+): boolean {
+  if (confirmation === null || current.sessionPresence === "absent") return false;
+  // Unknown playback, a context-only selection, and replaying the current URI all make an item
+  // match indistinguishable from a stale pre-command snapshot. Spend the one bounded follow-up
+  // read in those cases. An absent session returns above because it has no pre-command snapshot.
+  return (
+    current.sessionPresence === "unknown" ||
+    confirmation.kind === "context" ||
+    current.item?.uri === confirmation.uri
+  );
+}
+
+function clearPendingSelection(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  requestId: number,
+): void {
+  if (get().pendingSelection?.requestId !== requestId) return;
+  resetPendingSelectionTracking(requestId);
+  set({ pendingSelection: null });
+}
+
+function resetPendingSelectionTracking(requestId: number): void {
+  clearTimer(pendingSelectionResolutionTimer);
+  pendingSelectionResolutionTimer = null;
+  if (settledWebSelectionRequestId === requestId) settledWebSelectionRequestId = null;
+  if (nativeSelectionActivityRequestId === requestId) {
+    nativeSelectionActivityRequestId = null;
+  }
+  if (nativeSelectionPlaybackRequestId === requestId) {
+    nativeSelectionPlaybackRequestId = null;
+  }
+  selectionConfirmationRetries = 0;
+}
+
+function movePendingSelectionToWeb(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  requestId: number,
+): void {
+  const pendingSelection = get().pendingSelection;
+  if (pendingSelection?.requestId !== requestId || pendingSelection.lane === "web") return;
+  set({ pendingSelection: { ...pendingSelection, lane: "web" } });
+}
+
+type NativeSelectionEvidence =
+  | { kind: "connected" }
+  | { kind: "metadata"; uri: string }
+  | { kind: "transport"; uri: string }
+  | { kind: "complete"; uri: string };
+
+function updatePendingWebSelectionFromNative(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  evidence: NativeSelectionEvidence | null,
+): void {
+  const state = get();
+  const pendingSelection = state.pendingSelection;
+  if (evidence === null || pendingSelection?.lane !== "web") return;
+  nativeSelectionActivityRequestId = pendingSelection.requestId;
+  // Receiver activation can precede the requested playback and carries no item or transport
+  // identity. Keep Web reconciliation authoritative until librespot publishes playback evidence.
+  if (evidence.kind === "connected") return;
+  nativeSelectionPlaybackRequestId = pendingSelection.requestId;
+  const commandSettled = settledWebSelectionRequestId === pendingSelection.requestId;
+  if (
+    evidence.kind === "complete" &&
+    pendingSelection.confirmation?.kind === "item" &&
+    pendingSelection.confirmation.uri === evidence.uri &&
+    (!pendingSelection.requiresFollowUp || commandSettled)
+  ) {
+    clearPendingSelection(set, get, pendingSelection.requestId);
+    return;
+  }
+  // Matching native metadata and transport are not request-specific when the same URI may have
+  // been playing before this command. Keep that ambiguity attached to the request until its Web
+  // command settles; a rejection must still own its error, while success takes the bounded native
+  // takeover path below.
+  // Do not start the grace period while the Web command can still settle normally. Remembering
+  // settlement by request keeps an older command or native event from timing out a newer preview.
+  if (!commandSettled) return;
+  // Incomplete native evidence cannot confirm the request, and even complete native playback
+  // cannot prove a context URI. Keep the preview briefly, then yield to native authority.
+  deferPendingSelectionResolution(set, get, pendingSelection.requestId, {
+    kind: "superseded",
+  });
+}
+
+function settlePendingWebSelection(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  requestId: number,
+): void {
+  const pendingSelection = get().pendingSelection;
+  if (pendingSelection?.requestId !== requestId || pendingSelection.lane !== "web") return;
+  settledWebSelectionRequestId = requestId;
+  if (nativeSelectionPlaybackRequestId === requestId) {
+    // Playback-bearing native evidence may have arrived before the Web promise settled. Bound the
+    // transition while the complementary phase/metadata event has a chance to complete it.
+    deferPendingSelectionResolution(set, get, requestId, { kind: "superseded" });
+  }
+}
+
+type PendingSelectionResolution =
+  | { kind: "superseded" }
+  | { kind: "failed"; error: unknown };
+
+function promotePendingSelectionFromNativeTransport(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  requestId: number,
+): boolean {
+  const pendingSelection = get().pendingSelection;
+  const item = pendingSelection?.requestId === requestId ? pendingSelection.item : null;
+  const transport = nativeTransportPhase;
+  if (item === null || transport?.uri !== item.uri) return false;
+
+  const now = performance.now();
+  const progressMs = extrapolate(
+    {
+      progressMs: transport.positionMs,
+      atMs: transport.atMs,
+      isPlaying: transport.isPlaying,
+      durationMs: item.duration_ms,
+    },
+    now,
+  );
+  nativeTransportPhase = null;
+  anchor = {
+    progressMs,
+    atMs: now,
+    isPlaying: transport.isPlaying,
+    durationMs: item.duration_ms,
+  };
+  confirmed.anchor = { ...anchor };
+  resetPendingSelectionTracking(requestId);
+  set({
+    item,
+    pendingSelection: null,
+    isPlaying: transport.isPlaying,
+    progressMs,
+    durationMs: item.duration_ms,
+    error: null,
+  });
+  return true;
+}
+
+function deferPendingSelectionResolution(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  requestId: number,
+  resolution: PendingSelectionResolution,
+): void {
+  // A real command failure takes precedence over a no-error supersession timer. Conversely, an
+  // unrelated native event must not erase a failure that is already waiting for matching playback.
+  if (resolution.kind === "superseded" && pendingSelectionResolutionTimer !== null) return;
+  clearTimer(pendingSelectionResolutionTimer);
+  const expectedRun = runId;
+  pendingSelectionResolutionTimer = setTimeout(() => {
+    pendingSelectionResolutionTimer = null;
+    const current = get();
+    if (runId !== expectedRun || current.pendingSelection?.requestId !== requestId) return;
+    // A complete native takeover clears this request and cancels the timer. If the same request is
+    // still pending, hydrate exact native transport from the catalog preview so missing metadata
+    // cannot drop the renderer back to the branded idle state.
+    if (promotePendingSelectionFromNativeTransport(set, get, requestId)) return;
+    // Connection or a half-complete/unrelated event sequence is not confirmation.
+    if (resolution.kind === "failed") fail(set, resolution.error, "transient");
+    clearPendingSelection(set, get, requestId);
+  }, NATIVE_TAKEOVER_GRACE_MS);
+}
+
 function nativeAccountMatches(): boolean {
   const status = native?.getStatus();
   return (
@@ -572,23 +834,41 @@ function nativeDeviceId(): string | null {
   return status?.state === "ready" ? status.deviceId : null;
 }
 
-function applyNativeEvent(set: (patch: Partial<PlaybackSlice>) => void, event: EngineEvent): void {
+function applyNativeEvent(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  event: EngineEvent,
+): NativeSelectionEvidence | null {
   const now = performance.now();
   switch (event.name) {
     case "track_changed": {
       noteNative("playing", "progress");
       const item = itemFromNative(event);
+      const transport = nativeTransportPhase?.uri === event.uri ? nativeTransportPhase : null;
+      const progressMs =
+        transport === null
+          ? 0
+          : extrapolate(
+              {
+                progressMs: transport.positionMs,
+                atMs: transport.atMs,
+                isPlaying: transport.isPlaying,
+                durationMs: item.duration_ms,
+              },
+              now,
+            );
+      nativeTransportPhase = null;
       anchor = {
-        progressMs: 0,
+        progressMs,
         atMs: now,
-        isPlaying: false,
+        isPlaying: transport?.isPlaying ?? false,
         durationMs: item.duration_ms,
       };
       confirmed.anchor = { ...anchor };
       set({
         item,
-        isPlaying: false,
-        progressMs: 0,
+        isPlaying: anchor.isPlaying,
+        progressMs: anchor.progressMs,
         durationMs: item.duration_ms,
         deviceId: nativeDeviceId(),
         deviceName: DEVICE_NAME,
@@ -596,12 +876,23 @@ function applyNativeEvent(set: (patch: Partial<PlaybackSlice>) => void, event: E
         error: null,
         ready: true,
       });
-      break;
+      return transport === null
+        ? { kind: "metadata", uri: event.uri }
+        : { kind: "complete", uri: event.uri };
     }
     case "playing":
     case "paused": {
       noteNative("playing", "progress");
       const isPlaying = event.name === "playing";
+      const hasMetadata = get().item?.uri === event.uri;
+      nativeTransportPhase = hasMetadata
+        ? null
+        : {
+            uri: event.uri,
+            isPlaying,
+            positionMs: event.position_ms,
+            atMs: now,
+          };
       anchor = {
         ...anchor,
         progressMs: event.position_ms,
@@ -618,11 +909,20 @@ function applyNativeEvent(set: (patch: Partial<PlaybackSlice>) => void, event: E
         error: null,
         ready: true,
       });
-      break;
+      return hasMetadata
+        ? { kind: "complete", uri: event.uri }
+        : { kind: "transport", uri: event.uri };
     }
     case "seeked":
     case "position_changed":
       noteNative("progress");
+      if (nativeTransportPhase?.uri === event.uri) {
+        nativeTransportPhase = {
+          ...nativeTransportPhase,
+          positionMs: event.position_ms,
+          atMs: now,
+        };
+      }
       anchor = { ...anchor, progressMs: event.position_ms, atMs: now };
       confirmed.anchor = {
         ...confirmed.anchor,
@@ -630,18 +930,20 @@ function applyNativeEvent(set: (patch: Partial<PlaybackSlice>) => void, event: E
         atMs: now,
       };
       set({ progressMs: event.position_ms });
-      break;
+      return null;
     case "end_of_track":
       noteNative("playing");
+      nativeTransportPhase = null;
       anchor = { ...materializeAnchor(anchor, now), isPlaying: false };
       confirmed.anchor = {
         ...materializeAnchor(confirmed.anchor, now),
         isPlaying: false,
       };
       set({ isPlaying: false, progressMs: anchor.progressMs });
-      break;
+      return null;
     case "stopped":
       noteNative("playing", "progress");
+      nativeTransportPhase = null;
       anchor = { progressMs: 0, atMs: now, isPlaying: false, durationMs: 0 };
       confirmed.anchor = { ...anchor };
       set({
@@ -650,26 +952,27 @@ function applyNativeEvent(set: (patch: Partial<PlaybackSlice>) => void, event: E
         progressMs: 0,
         durationMs: 0,
       });
-      break;
+      return null;
     case "volume_changed":
       noteNative("volume");
       confirmed.volumePercent = event.percent;
       set({ volumePercent: event.percent });
-      break;
+      return null;
     case "shuffle_changed":
       noteNative("shuffle");
       confirmed.shuffle = event.enabled;
       set({ shuffle: event.enabled });
-      break;
+      return null;
     case "repeat_changed": {
       noteNative("repeat");
       const repeat = event.track ? "track" : event.context ? "context" : "off";
       confirmed.repeat = repeat;
       set({ repeat });
-      break;
+      return null;
     }
     case "session_disconnected":
       noteNative("playing", "progress");
+      nativeTransportPhase = null;
       anchor = { ...materializeAnchor(anchor, now), isPlaying: false };
       confirmed.anchor = { ...anchor };
       set({
@@ -679,7 +982,7 @@ function applyNativeEvent(set: (patch: Partial<PlaybackSlice>) => void, event: E
         deviceName: null,
         sessionPresence: "unknown",
       });
-      break;
+      return null;
     case "session_connected":
       set({
         deviceId: nativeDeviceId(),
@@ -687,12 +990,13 @@ function applyNativeEvent(set: (patch: Partial<PlaybackSlice>) => void, event: E
         sessionPresence: "present",
         ready: true,
       });
-      break;
+      return { kind: "connected" };
   }
 }
 
 export const usePlayback = create<PlaybackSlice>((set, get) => ({
   item: null,
+  pendingSelection: null,
   isPlaying: false,
   shuffle: false,
   repeat: "off",
@@ -714,6 +1018,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     webAccountId = accountId;
     nativeRevision = 0;
     nativeSessionConnected = nativeAccountMatches() && (native?.isActive?.() ?? false);
+    nativeTransportPhase = null;
     remoteTransferConfirmed = false;
     disconnectedNativeDeviceId = null;
     nativeDisconnectRetryCount = 0;
@@ -723,12 +1028,17 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     latestRefreshRevision = -1;
     latestRefreshStartedAt = Number.NEGATIVE_INFINITY;
     webReadNotBefore = Number.NEGATIVE_INFINITY;
+    selectionConfirmationRetries = 0;
+    settledWebSelectionRequestId = null;
+    nativeSelectionActivityRequestId = null;
+    nativeSelectionPlaybackRequestId = null;
     const startingState = get();
     if (webReconciliationSuspended) {
       // No current-run source has authenticated retained playback state. Start empty while native
       // events remain live; account recovery will resume the Web lane when its sole probe succeeds.
       set({
         item: null,
+        pendingSelection: null,
         isPlaying: false,
         shuffle: false,
         repeat: "off",
@@ -756,7 +1066,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         durationMs: startingState.durationMs,
       };
       confirmFromStore(startingState);
-      set({ sessionPresence: "unknown", ready: false });
+      set({ sessionPresence: "unknown", ready: false, pendingSelection: null });
     }
     // An unresolved read belongs to the previous run. Its own identity guards keep it from
     // mutating this run, and the new run must issue an independent initial reconciliation.
@@ -767,7 +1077,9 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     clearTimer(pollTimer);
     clearTimer(reconcileTimer);
     clearTimer(errorClearTimer);
+    clearTimer(pendingSelectionResolutionTimer);
     errorClearTimer = null;
+    pendingSelectionResolutionTimer = null;
     errorRevision++;
     if (tickTimer !== null) clearInterval(tickTimer);
     unsubscribeNative?.();
@@ -791,7 +1103,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
             disconnectedDeviceId !== null &&
             get().deviceId === disconnectedDeviceId
           ) {
-            applyNativeEvent(set, event);
+            applyNativeEvent(set, get, event);
           }
           reconcileCompletedWebMutation(get);
           return;
@@ -818,13 +1130,16 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           return;
         }
 
-        nativeRevision++;
-        refreshController?.abort();
-        applyNativeEvent(set, event);
+        const selectionEvidence = applyNativeEvent(set, get, event);
+        updatePendingWebSelectionFromNative(set, get, selectionEvidence);
         clearTimer(pollTimer);
-        clearTimer(reconcileTimer);
         pollTimer = null;
-        reconcileTimer = null;
+        if (nativeOwnsReconciliation(get())) {
+          nativeRevision++;
+          refreshController?.abort();
+          clearTimer(reconcileTimer);
+          reconcileTimer = null;
+        }
       }) ?? null;
 
     // A synchronously replayed native snapshot is already newer and more precise than the public
@@ -848,9 +1163,14 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
       clearTimer(pollTimer);
       clearTimer(reconcileTimer);
       clearTimer(errorClearTimer);
+      clearTimer(pendingSelectionResolutionTimer);
       pollTimer = null;
       reconcileTimer = null;
       errorClearTimer = null;
+      pendingSelectionResolutionTimer = null;
+      settledWebSelectionRequestId = null;
+      nativeSelectionActivityRequestId = null;
+      nativeSelectionPlaybackRequestId = null;
       errorRevision++;
       webMutationsInFlight = 0;
       if (tickTimer !== null) clearInterval(tickTimer);
@@ -864,6 +1184,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
       native = null;
       webAccountId = null;
       nativeSessionConnected = false;
+      nativeTransportPhase = null;
       remoteTransferConfirmed = false;
       disconnectedNativeDeviceId = null;
       nativeDisconnectRetryCount = 0;
@@ -916,6 +1237,25 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         nativeDisconnectRetryCount = 0;
         pollNotBefore = 0;
         const next = applyState(state);
+        const pendingSelection = get().pendingSelection;
+        const selectionMatches = selectionMatchesState(pendingSelection, state);
+        const selectionNeedsFollowUp =
+          pendingSelection?.requiresFollowUp === true &&
+          selectionConfirmationRetries === 0;
+        if (pendingSelection !== null && selectionMatches && !selectionNeedsFollowUp) {
+          resetPendingSelectionTracking(pendingSelection.requestId);
+          next.pendingSelection = null;
+        } else if (pendingSelection !== null) {
+          if (selectionConfirmationRetries === 0) {
+            selectionConfirmationRetries++;
+            reconcileCompletedWebMutation(get, SELECTION_RECONCILE_RETRY_MS);
+          } else {
+            // The second post-command snapshot is authoritative even if Spotify chose another
+            // item, played an ad, or declined to create a session.
+            resetPendingSelectionTracking(pendingSelection.requestId);
+            next.pendingSelection = null;
+          }
+        }
         const currentError = get().error;
         if (errorIsStale(currentError)) {
           clearTimer(errorClearTimer);
@@ -943,8 +1283,10 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         ) {
           return;
         }
-        fail(set, err);
-        set({ ready: true });
+        fail(set, err, "until-success");
+        const pendingSelection = get().pendingSelection;
+        if (pendingSelection !== null) resetPendingSelectionTracking(pendingSelection.requestId);
+        set({ ready: true, pendingSelection: null });
       }
     })();
     refreshInFlight = pending;
@@ -999,6 +1341,10 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
 
   confirmDeviceTransfer(deviceId, deviceName) {
     remoteTransferConfirmed = true;
+    // This hook confirms a transfer to an external device; local transfers use the native engine
+    // directly. Any phase emitted by the receiver before the remote acknowledgment belongs to the
+    // receiver being left and must not pair with metadata from a later local reconnection.
+    nativeTransportPhase = null;
     set({
       deviceId,
       deviceName,
@@ -1008,10 +1354,32 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     get().reconcileSoon();
   },
 
-  async playSelection(options) {
+  async playSelection(options, preview) {
     if (api === null) return;
+    clearTimer(pendingSelectionResolutionTimer);
+    pendingSelectionResolutionTimer = null;
+    settledWebSelectionRequestId = null;
+    nativeSelectionActivityRequestId = null;
+    nativeSelectionPlaybackRequestId = null;
+    // A new selection is a new play instance even when it repeats the same URI. Never let an
+    // unpaired phase from the previous instance satisfy this transition.
+    nativeTransportPhase = null;
+    const requestId = ++selectionRequestId;
+    selectionConfirmationRetries = 0;
     const state = get();
     const routeNative = nativeCanHandle(state);
+    const confirmation = selectionConfirmationFor(options, preview);
+    set({
+      pendingSelection: {
+        requestId,
+        label: preview?.label ?? "selection",
+        item: preview?.item ?? null,
+        confirmation,
+        requiresFollowUp: selectionRequiresFollowUp(confirmation, state),
+        lane: routeNative ? "native" : "web",
+      },
+      error: null,
+    });
     let webMutation = routeNative ? null : beginWebMutation();
     try {
       if (
@@ -1024,15 +1392,43 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           });
         }))
       ) {
+        // Keep the transition through metadata events: native load resolves only after the player
+        // confirms it began, including when Spotify substitutes another playable item.
+        clearPendingSelection(set, get, requestId);
         return;
       }
+      // Native availability can change between route selection and command dispatch. Once this
+      // request falls back, only Web reconciliation or an authoritative native takeover owns it.
+      movePendingSelectionToWeb(set, get, requestId);
       webMutation ??= beginWebMutation();
+      // PlayerApi dispatches through SpotifyClient's serialized foreground FIFO lane, so an older
+      // selection reaches Spotify before a newer one. requestId separately prevents stale local
+      // completion or failure from overwriting the newer pending presentation.
       await api.play({
         ...options,
         ...(state.deviceId !== null ? { deviceId: state.deviceId } : {}),
       });
+      settlePendingWebSelection(set, get, requestId);
     } catch (err) {
-      fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
+      // A superseded request owns neither the visible pending state nor its error surface.
+      const current = get();
+      if (current.pendingSelection?.requestId === requestId) {
+        // A new native connection can make the in-flight Web command stale, but connection alone
+        // does not prove playback. Preserve the preview briefly; the exact native handshake cancels
+        // this failure, while the bounded timer surfaces an incomplete takeover.
+        if (
+          current.pendingSelection.lane === "web" &&
+          nativeSelectionActivityRequestId === requestId
+        ) {
+          deferPendingSelectionResolution(set, get, requestId, {
+            kind: "failed",
+            error: err,
+          });
+          return;
+        }
+        fail(set, err, isNativeDevice(current.deviceId) ? "transient" : "until-success");
+        clearPendingSelection(set, get, requestId);
+      }
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }

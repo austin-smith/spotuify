@@ -11,6 +11,8 @@ const ACCENT = "#1ed760";
 
 export const theme = {
   accent: ACCENT,
+  /** Slightly greener chartreuse derived from the supplied mark; reserved for brand art. */
+  brand: "#c1c21c",
   /** Dimmed accent for filled-but-inactive elements (e.g. the played part of a bar). */
   accentDim: "#12622f",
   /** Panel borders and separators — present but quiet. */

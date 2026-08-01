@@ -51,7 +51,13 @@ function player(failure: unknown, onState?: () => void): PlayerApi {
 let stop: (() => void) | undefined;
 
 beforeEach(() => {
-  usePlayback.setState({ error: null, ready: false, item: null, volumePercent: 50 });
+  usePlayback.setState({
+    error: null,
+    ready: false,
+    item: null,
+    pendingSelection: null,
+    volumePercent: 50,
+  });
 });
 
 afterEach(() => {
@@ -93,6 +99,17 @@ describe("declined commands", () => {
     await withFailure(new SpotifyApiError(404, "/me/player/next", "Device not found"));
     await usePlayback.getState().next();
     expect(usePlayback.getState().error).not.toBeNull();
+  });
+
+  test("a failed selection clears its pending presentation", async () => {
+    await withFailure(new SpotifyApiError(404, "/me/player/play", "Device not found"));
+    await usePlayback.getState().playSelection(
+      { uris: [STATE.item!.uri] },
+      { label: STATE.item!.name, item: STATE.item! },
+    );
+
+    expect(usePlayback.getState().pendingSelection).toBeNull();
+    expect(usePlayback.getState().error).toBe("no active device — press d to pick one");
   });
 });
 

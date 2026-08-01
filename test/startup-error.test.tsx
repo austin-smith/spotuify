@@ -5,7 +5,10 @@ import { SpotifyApiError } from "../src/api/client.ts";
 import { ReauthRequiredError } from "../src/auth/tokens.ts";
 import { MissingClientIdError } from "../src/config.ts";
 import { bootFailureFor } from "../src/ui/App.tsx";
-import { StartupErrorScreen } from "../src/ui/StartupErrorScreen.tsx";
+import {
+  startupErrorLayout,
+  StartupErrorScreen,
+} from "../src/ui/StartupErrorScreen.tsx";
 
 const SUPPORTED_SIZES = [
   [60, 20],
@@ -47,6 +50,66 @@ describe("startup failure classification", () => {
 });
 
 describe("startup error screen layout", () => {
+  test("measures wrapped heading and recovery hints before allocating branding", () => {
+    const layout = startupErrorLayout("failure", 14, 7);
+
+    expect(layout.headingLines).toEqual(["Startup", "failed."]);
+    expect(layout.footerLines).toEqual(["R to", "retry.", "Q to quit."]);
+    expect(layout.brandHeight).toBe(0);
+    expect(layout.brandGapHeight).toBe(0);
+    expect(layout.messageLines).toEqual([]);
+    expect(layout.messageGapHeight).toBe(0);
+    expect(layout.footerGapHeight).toBe(0);
+  });
+
+  test("keeps recovery actions visible when error chrome wraps", async () => {
+    setup = await createTestRenderer({ width: 14, height: 7 });
+    createRoot(setup.renderer).render(
+      <StartupErrorScreen message="failure" width={14} height={7} />,
+    );
+    await Bun.sleep(20);
+    await setup.renderOnce();
+
+    const lines = setup.captureCharFrame().split("\n");
+    const screen = lines.join("\n");
+    const copy = screen.replace(/\s+/g, " ").trim();
+
+    expect(screen).not.toContain("SPOTUIFY");
+    expect(copy).toBe("Startup failed. R to retry. Q to quit.");
+    expect(lines[5]).toContain("Q to quit.");
+
+    for (const line of lines.slice(0, 7)) {
+      expect(Bun.stringWidth(line)).toBeLessThanOrEqual(14);
+    }
+  });
+
+  test("measures wrapped diagnostics before choosing the brand treatment", () => {
+    const message = `${"Detailed diagnostic context ".repeat(16)}END-OF-DIAGNOSTIC`;
+    const layout = startupErrorLayout(message, 80, 18);
+
+    expect(layout.messageLines).toHaveLength(7);
+    expect(layout.messageLines.at(-1)).toBe("END-OF-DIAGNOSTIC");
+    expect(layout.brandHeight).toBe(1);
+  });
+
+  test("keeps a seven-row diagnostic intact at 80x18", async () => {
+    const message = `${"Detailed diagnostic context ".repeat(16)}END-OF-DIAGNOSTIC`;
+    setup = await createTestRenderer({ width: 80, height: 18 });
+    createRoot(setup.renderer).render(
+      <StartupErrorScreen message={message} width={80} height={18} />,
+    );
+    await Bun.sleep(20);
+    await setup.renderOnce();
+
+    const lines = setup.captureCharFrame().split("\n");
+    const screen = lines.join("\n");
+    expect(screen).toContain("SPOTUIFY");
+    expect(screen).not.toContain("███████╗");
+    expect(screen).toContain("END-OF-DIAGNOSTIC");
+    expect(lines[15]).toContain("R to retry.");
+    expect(lines[16]).toContain("Q to quit.");
+  });
+
   test.each(SUPPORTED_SIZES)(
     "keeps recovery actions visible at %ix%i",
     async (width, height) => {
@@ -63,7 +126,6 @@ describe("startup error screen layout", () => {
 
       const lines = setup.captureCharFrame().split("\n");
       const screen = lines.join("\n");
-      expect(screen).toContain("SPOTUIFY");
       expect(screen).toContain("Startup failed.");
       expect(screen).toContain("Spotify API 503 on /me:");
       expect(screen).not.toContain("spotuify auth");

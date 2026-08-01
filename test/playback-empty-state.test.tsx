@@ -17,7 +17,7 @@ async function renderEmptyState(
 ): Promise<string> {
   setup = await createTestRenderer({ width, height: 20 });
   createRoot(setup.renderer).render(
-    <PlaybackEmptyState ready={ready} canSearch={canSearch} height={20} />,
+    <PlaybackEmptyState ready={ready} canSearch={canSearch} width={width} height={20} />,
   );
   await Bun.sleep(10);
   await setup.renderOnce();

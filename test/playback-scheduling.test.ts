@@ -10,6 +10,8 @@ import { chooseImage } from "../src/ui/art.ts";
 import {
   COMMAND_RECONCILE_MS,
   ERROR_LINGER_MS,
+  NATIVE_TAKEOVER_GRACE_MS,
+  SELECTION_RECONCILE_RETRY_MS,
   usePlayback,
 } from "../src/store/playback.ts";
 
@@ -38,6 +40,20 @@ const REMOTE_STATE: PlaybackState = {
   },
 };
 
+const REMOTE_TRACK = (() => {
+  const item = REMOTE_STATE.item;
+  if (item === null || !isTrack(item)) throw new Error("fixture must be a track");
+  return item;
+})();
+
+const EMPTY_REMOTE_STATE: PlaybackState = {
+  ...REMOTE_STATE,
+  item: null,
+  is_playing: false,
+  progress_ms: 0,
+  currently_playing_type: "unknown",
+};
+
 let stop: (() => void) | undefined;
 
 async function eventually(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
@@ -51,6 +67,7 @@ async function eventually(predicate: () => boolean, timeoutMs = 2_000): Promise<
 beforeEach(() => {
   usePlayback.setState({
     item: null,
+    pendingSelection: null,
     isPlaying: false,
     progressMs: 0,
     durationMs: 0,
@@ -446,6 +463,330 @@ describe("playback request budget", () => {
   });
 });
 
+describe("selection transitions", () => {
+  test("holds a pending native selection through stopped until the track is confirmed", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let active = false;
+    let loadStarted = false;
+    let resolveLoad: (() => void) | undefined;
+    const loadPending = new Promise<void>((resolve) => {
+      resolveLoad = resolve;
+    });
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => active,
+      onEvent: (listener: (event: EngineEvent) => void) => {
+        events.listener = listener;
+        return () => {
+          delete events.listener;
+        };
+      },
+      activate: async () => {
+        active = true;
+        events.listener?.({ name: "session_connected" });
+      },
+      load: async () => {
+        loadStarted = true;
+        await loadPending;
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => null,
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, engine, "account");
+    await Bun.sleep(20);
+    const request = usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+
+    expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+    await eventually(() => loadStarted);
+    events.listener?.({ name: "stopped", uri: REMOTE_TRACK.uri });
+    expect(usePlayback.getState().item).toBeNull();
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+
+    events.listener?.({
+      name: "track_changed",
+      media_type: "track",
+      id: "track",
+      uri: REMOTE_TRACK.uri,
+      title: REMOTE_TRACK.name,
+      duration_ms: REMOTE_TRACK.duration_ms,
+      artists: REMOTE_TRACK.artists,
+      album: REMOTE_TRACK.album.name,
+      covers: [],
+    });
+    // Metadata can precede the command's final Playing acknowledgment. Keep the transition guard
+    // until the load itself confirms so a subsequent Stopped event cannot expose the empty state.
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    events.listener?.({ name: "playing", uri: REMOTE_TRACK.uri, position_ms: 0 });
+    resolveLoad?.();
+    await request;
+    expect(usePlayback.getState().pendingSelection).toBeNull();
+  });
+
+  test("keeps a remote selection through one stale snapshot and clears on confirmation", async () => {
+    let reads = 0;
+    const player = {
+      state: async () => (++reads < 3 ? null : REMOTE_STATE),
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => reads === 1);
+    await usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    await eventually(() => reads >= 2, COMMAND_RECONCILE_MS + 500);
+    await Bun.sleep(10);
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      SELECTION_RECONCILE_RETRY_MS + 500,
+    );
+    expect(reads).toBe(3);
+    expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+  });
+
+  test("requires a follow-up snapshot when the requested item was already current", async () => {
+    const staleState: PlaybackState = { ...REMOTE_STATE, progress_ms: 90_000 };
+    const restartedState: PlaybackState = { ...REMOTE_STATE, progress_ms: 0 };
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return reads < 3 ? staleState : restartedState;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => reads === 1);
+    await usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+
+    expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeTrue();
+    await eventually(() => reads >= 2, COMMAND_RECONCILE_MS + 500);
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    expect(usePlayback.getState().progressMs).toBeGreaterThanOrEqual(90_000);
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      SELECTION_RECONCILE_RETRY_MS + 500,
+    );
+    expect(reads).toBe(3);
+    expect(usePlayback.getState().progressMs).toBeLessThan(2_000);
+  });
+
+  test("requires a follow-up when playback was unknown before the selection", async () => {
+    const staleState: PlaybackState = { ...REMOTE_STATE, progress_ms: 90_000 };
+    const startedState: PlaybackState = { ...REMOTE_STATE, progress_ms: 0 };
+    let reads = 0;
+    let resolveInitial: ((state: PlaybackState | null) => void) | undefined;
+    const player = {
+      state: async () => {
+        reads++;
+        if (reads === 1) {
+          return await new Promise<PlaybackState | null>((resolve) => {
+            resolveInitial = resolve;
+          });
+        }
+        return reads === 2 ? staleState : startedState;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => resolveInitial !== undefined);
+    expect(usePlayback.getState().sessionPresence).toBe("unknown");
+    expect(usePlayback.getState().ready).toBeFalse();
+
+    await usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+    expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeTrue();
+
+    const finishInitial = resolveInitial;
+    if (finishInitial === undefined) throw new Error("initial playback read did not start");
+    finishInitial(staleState);
+    await eventually(() => reads >= 2, COMMAND_RECONCILE_MS + 500);
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    expect(usePlayback.getState().progressMs).toBeGreaterThanOrEqual(90_000);
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      SELECTION_RECONCILE_RETRY_MS + 500,
+    );
+    expect(reads).toBe(3);
+    expect(usePlayback.getState().progressMs).toBeLessThan(2_000);
+  });
+
+  test("accepts the first matching snapshot after playback was confirmed absent", async () => {
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return reads === 1 ? null : REMOTE_STATE;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => usePlayback.getState().sessionPresence === "absent");
+    await usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+
+    expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeFalse();
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      COMMAND_RECONCILE_MS + 500,
+    );
+    await Bun.sleep(SELECTION_RECONCILE_RETRY_MS + 100);
+    expect(reads).toBe(2);
+    expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+  });
+
+  test("accepts the first matching context after playback was confirmed absent", async () => {
+    const contextUri = "spotify:playlist:selected";
+    const selectedState: PlaybackState = {
+      ...REMOTE_STATE,
+      context: { type: "playlist", uri: contextUri },
+    };
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return reads === 1 ? null : selectedState;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => usePlayback.getState().sessionPresence === "absent");
+    await usePlayback.getState().playSelection(
+      { contextUri },
+      { label: "Selected playlist" },
+    );
+
+    expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeFalse();
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      COMMAND_RECONCILE_MS + 500,
+    );
+    await Bun.sleep(SELECTION_RECONCILE_RETRY_MS + 100);
+    expect(reads).toBe(2);
+    expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+  });
+
+  test("keeps a context-only selection through a stale item and verifies its context", async () => {
+    const selectedContextUri = "spotify:playlist:selected";
+    const staleState: PlaybackState = {
+      ...REMOTE_STATE,
+      context: { type: "playlist", uri: "spotify:playlist:previous" },
+    };
+    const selectedState: PlaybackState = {
+      ...REMOTE_STATE,
+      item: { ...REMOTE_TRACK, id: "selected", uri: "spotify:track:selected" },
+      context: { type: "playlist", uri: selectedContextUri },
+    };
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return reads < 3 ? staleState : selectedState;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => reads === 1);
+    await usePlayback.getState().playSelection(
+      { contextUri: selectedContextUri },
+      { label: "Selected playlist" },
+    );
+
+    await eventually(() => reads >= 2, COMMAND_RECONCILE_MS + 500);
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      SELECTION_RECONCILE_RETRY_MS + 500,
+    );
+    expect(reads).toBe(3);
+    expect(usePlayback.getState().item?.uri).toBe("spotify:track:selected");
+  });
+
+  test("requires a follow-up snapshot for a context that was already active", async () => {
+    const contextUri = "spotify:playlist:selected";
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return { ...REMOTE_STATE, context: { type: "playlist", uri: contextUri } };
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => reads === 1);
+    await usePlayback.getState().playSelection(
+      { contextUri },
+      { label: "Selected playlist" },
+    );
+
+    await eventually(() => reads >= 2, COMMAND_RECONCILE_MS + 500);
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      SELECTION_RECONCILE_RETRY_MS + 500,
+    );
+    expect(reads).toBe(3);
+  });
+
+  test("a failed superseded request cannot clear or fault the newer selection", async () => {
+    const plays: Array<{
+      resolve: () => void;
+      reject: (error: Error) => void;
+    }> = [];
+    const player = {
+      state: async () => null,
+      play: async () =>
+        await new Promise<void>((resolve, reject) => {
+          plays.push({ resolve, reject });
+        }),
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await Bun.sleep(20);
+    const first = usePlayback.getState().playSelection(
+      { uris: ["spotify:track:first"] },
+      { label: "First" },
+    );
+    await eventually(() => plays.length === 1);
+    const second = usePlayback.getState().playSelection(
+      { uris: ["spotify:track:second"] },
+      { label: "Second" },
+    );
+    await eventually(() => plays.length === 2);
+
+    plays[0]?.reject(new Error("first failed late"));
+    await first;
+    expect(usePlayback.getState().pendingSelection?.label).toBe("Second");
+    expect(usePlayback.getState().error).toBeNull();
+
+    plays[1]?.resolve();
+    await second;
+  });
+});
+
 describe("native receiver routing", () => {
   test("a replayed startup snapshot wins without a Web API read", async () => {
     let reads = 0;
@@ -487,6 +828,592 @@ describe("native receiver routing", () => {
     expect(usePlayback.getState().item?.uri).toBe("spotify:track:native-track");
     expect(usePlayback.getState().isPlaying).toBe(true);
     expect(usePlayback.getState().progressMs).toBe(4_000);
+  });
+
+  test.each(["playing", "paused"] as const)(
+    "native %s retains a Web preview until track metadata arrives",
+    async (eventName) => {
+      const events: { listener?: (event: EngineEvent) => void } = {};
+      let rejectPlay: ((error: Error) => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => false,
+        onEvent: (next: (event: EngineEvent) => void) => {
+          events.listener = next;
+          return () => {
+            delete events.listener;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => EMPTY_REMOTE_STATE,
+        play: async () =>
+          await new Promise<void>((_resolve, reject) => {
+            rejectPlay = reject;
+          }),
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => usePlayback.getState().deviceId === "remote");
+      const request = usePlayback.getState().playSelection(
+        { uris: [REMOTE_TRACK.uri] },
+        { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+      );
+      await eventually(() => rejectPlay !== undefined);
+      expect(usePlayback.getState().pendingSelection?.lane).toBe("web");
+
+      events.listener?.({ name: "session_connected" });
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().item).toBeNull();
+
+      rejectPlay?.(new Error("superseded Web command failed during takeover"));
+      await request;
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().error).toBeNull();
+
+      events.listener?.({ name: eventName, uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().item).toBeNull();
+      expect(usePlayback.getState().isPlaying).toBe(eventName === "playing");
+
+      if (eventName === "playing") await Bun.sleep(30);
+
+      events.listener?.({
+        name: "track_changed",
+        media_type: "track",
+        id: REMOTE_TRACK.id ?? undefined,
+        uri: REMOTE_TRACK.uri,
+        title: REMOTE_TRACK.name,
+        duration_ms: REMOTE_TRACK.duration_ms,
+        artists: REMOTE_TRACK.artists,
+        album: REMOTE_TRACK.album.name,
+        covers: [],
+      });
+
+      expect(usePlayback.getState().pendingSelection).toBeNull();
+      expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().deviceId).toBe("native");
+      expect(usePlayback.getState().isPlaying).toBe(eventName === "playing");
+      if (eventName === "playing") {
+        expect(usePlayback.getState().progressMs).toBeGreaterThanOrEqual(2_020);
+        expect(usePlayback.getState().progressMs).toBeLessThan(2_200);
+      } else {
+        expect(usePlayback.getState().progressMs).toBe(2_000);
+      }
+
+      // The paired phase belongs to this play instance only. A later replay of the same URI must
+      // wait for its own transport event instead of inheriting the previous position and phase.
+      events.listener?.({
+        name: "track_changed",
+        media_type: "track",
+        id: REMOTE_TRACK.id ?? undefined,
+        uri: REMOTE_TRACK.uri,
+        title: REMOTE_TRACK.name,
+        duration_ms: REMOTE_TRACK.duration_ms,
+        artists: REMOTE_TRACK.artists,
+        album: REMOTE_TRACK.album.name,
+        covers: [],
+      });
+      expect(usePlayback.getState().isPlaying).toBeFalse();
+      expect(usePlayback.getState().progressMs).toBe(0);
+    },
+  );
+
+  test("incomplete native events give a failed Web takeover only a bounded grace period", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let rejectPlay: ((error: Error) => void) | undefined;
+    let reads = 0;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => false,
+      onEvent: (next: (event: EngineEvent) => void) => {
+        events.listener = next;
+        return () => {
+          delete events.listener;
+        };
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => {
+        reads++;
+        return EMPTY_REMOTE_STATE;
+      },
+      play: async () =>
+        await new Promise<void>((_resolve, reject) => {
+          rejectPlay = reject;
+        }),
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, engine, "account");
+    await eventually(() => usePlayback.getState().deviceId === "remote");
+    const request = usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+    await eventually(() => rejectPlay !== undefined);
+
+    events.listener?.({ name: "session_connected" });
+    events.listener?.({
+      name: "track_changed",
+      media_type: "track",
+      id: "other",
+      uri: "spotify:track:other",
+      title: "Other Track",
+      duration_ms: REMOTE_TRACK.duration_ms,
+      artists: REMOTE_TRACK.artists,
+      album: REMOTE_TRACK.album.name,
+      covers: [],
+    });
+    events.listener?.({ name: "playing", uri: "spotify:track:other", position_ms: 9_000 });
+    expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    let errorTimer: ReturnType<typeof setTimeout> | undefined;
+    let runErrorClear: (() => void) | undefined;
+    globalThis.setTimeout = ((
+      callback: (...args: unknown[]) => void,
+      delay?: number,
+      ...args: unknown[]
+    ) => {
+      if (runErrorClear === undefined && delay === ERROR_LINGER_MS) {
+        errorTimer = realSetTimeout(() => {}, ERROR_LINGER_MS);
+        runErrorClear = () => {
+          if (errorTimer !== undefined) realClearTimeout(errorTimer);
+          callback(...args);
+        };
+        return errorTimer;
+      }
+      return realSetTimeout(callback, delay, ...args);
+    }) as typeof setTimeout;
+
+    try {
+      rejectPlay?.(new Error("Web playback failed"));
+      await request;
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().error).toBeNull();
+
+      await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
+      expect(usePlayback.getState().pendingSelection).toBeNull();
+      expect(usePlayback.getState().error).toBe("Web playback failed");
+      expect(runErrorClear).toBeFunction();
+      expect(reads).toBe(1);
+
+      runErrorClear?.();
+      expect(usePlayback.getState().error).toBeNull();
+      expect(reads).toBe(1);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      if (errorTimer !== undefined) realClearTimeout(errorTimer);
+    }
+  });
+
+  test.each(["native-before-web", "web-before-native"] as const)(
+    "a successful Web command bounds an incomplete %s takeover and retains its track preview",
+    async (eventOrder) => {
+      const events: { listener?: (event: EngineEvent) => void } = {};
+      let resolvePlay: (() => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => false,
+        onEvent: (next: (event: EngineEvent) => void) => {
+          events.listener = next;
+          return () => {
+            delete events.listener;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => EMPTY_REMOTE_STATE,
+        play: async () =>
+          await new Promise<void>((resolve) => {
+            resolvePlay = resolve;
+          }),
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => usePlayback.getState().deviceId === "remote");
+      const request = usePlayback.getState().playSelection(
+        { uris: [REMOTE_TRACK.uri] },
+        { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+      );
+      await eventually(() => resolvePlay !== undefined);
+
+      const publishIncompleteTakeover = () => {
+        events.listener?.({ name: "session_connected" });
+        events.listener?.({ name: "playing", uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+      };
+      if (eventOrder === "native-before-web") {
+        publishIncompleteTakeover();
+        await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
+        // Native evidence alone must not time out a command that is still in flight.
+        expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+        resolvePlay?.();
+        await request;
+      } else {
+        resolvePlay?.();
+        await request;
+        publishIncompleteTakeover();
+      }
+
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
+      const state = usePlayback.getState();
+      expect(state.pendingSelection).toBeNull();
+      expect(state.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(state.isPlaying).toBeTrue();
+      expect(state.progressMs).toBeGreaterThanOrEqual(2_000);
+      expect(state.error).toBeNull();
+    },
+  );
+
+  test("an unverifiable context takeover yields to complete native playback after a grace period", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let resolvePlay: (() => void) | undefined;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => false,
+      onEvent: (next: (event: EngineEvent) => void) => {
+        events.listener = next;
+        return () => {
+          delete events.listener;
+        };
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => EMPTY_REMOTE_STATE,
+      play: async () =>
+        await new Promise<void>((resolve) => {
+          resolvePlay = resolve;
+        }),
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, engine, "account");
+    await eventually(() => usePlayback.getState().deviceId === "remote");
+    const request = usePlayback.getState().playSelection(
+      { contextUri: "spotify:playlist:mix" },
+      { label: "Mix" },
+    );
+    await eventually(() => resolvePlay !== undefined);
+
+    events.listener?.({ name: "session_connected" });
+    events.listener?.({
+      name: "track_changed",
+      media_type: "track",
+      id: REMOTE_TRACK.id ?? undefined,
+      uri: REMOTE_TRACK.uri,
+      title: REMOTE_TRACK.name,
+      duration_ms: REMOTE_TRACK.duration_ms,
+      artists: REMOTE_TRACK.artists,
+      album: REMOTE_TRACK.album.name,
+      covers: [],
+    });
+    events.listener?.({ name: "playing", uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+    expect(usePlayback.getState().pendingSelection?.confirmation).toEqual({
+      kind: "context",
+      uri: "spotify:playlist:mix",
+    });
+
+    resolvePlay?.();
+    await request;
+    await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
+    expect(usePlayback.getState().pendingSelection).toBeNull();
+    expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+    expect(usePlayback.getState().error).toBeNull();
+  });
+
+  test.each([
+    ["native-before-web", "playing"],
+    ["native-before-web", "paused"],
+    ["web-before-native", "playing"],
+    ["web-before-native", "paused"],
+  ] as const)(
+    "repeated-URI %s native %s preserves command ordering",
+    async (eventOrder, eventName) => {
+      const events: { listener?: (event: EngineEvent) => void } = {};
+      let resolvePlay: (() => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => false,
+        onEvent: (next: (event: EngineEvent) => void) => {
+          events.listener = next;
+          return () => {
+            delete events.listener;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => REMOTE_STATE,
+        play: async () =>
+          await new Promise<void>((resolve) => {
+            resolvePlay = resolve;
+          }),
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => usePlayback.getState().deviceId === "remote");
+      const request = usePlayback.getState().playSelection(
+        { uris: [REMOTE_TRACK.uri] },
+        { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+      );
+      await eventually(() => resolvePlay !== undefined);
+
+      const publishTakeover = () => {
+        events.listener?.({ name: "session_connected" });
+        events.listener?.({ name: eventName, uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+      };
+      if (eventOrder === "native-before-web") {
+        publishTakeover();
+        expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeTrue();
+      }
+
+      resolvePlay?.();
+      await request;
+      if (eventOrder === "native-before-web") {
+        expect(usePlayback.getState().pendingSelection).not.toBeNull();
+        await eventually(
+          () => usePlayback.getState().pendingSelection === null,
+          NATIVE_TAKEOVER_GRACE_MS + 500,
+        );
+      } else {
+        expect(usePlayback.getState().pendingSelection).not.toBeNull();
+        publishTakeover();
+        expect(usePlayback.getState().pendingSelection).toBeNull();
+      }
+      expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().isPlaying).toBe(eventName === "playing");
+      expect(usePlayback.getState().error).toBeNull();
+    },
+  );
+
+  test.each(["playing", "paused"] as const)(
+    "repeated-URI native %s cannot hide a rejected Web command",
+    async (eventName) => {
+      const events: { listener?: (event: EngineEvent) => void } = {};
+      let rejectPlay: ((error: Error) => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => false,
+        onEvent: (next: (event: EngineEvent) => void) => {
+          events.listener = next;
+          return () => {
+            delete events.listener;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => REMOTE_STATE,
+        play: async () =>
+          await new Promise<void>((_resolve, reject) => {
+            rejectPlay = reject;
+          }),
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => usePlayback.getState().deviceId === "remote");
+      const request = usePlayback.getState().playSelection(
+        { uris: [REMOTE_TRACK.uri] },
+        { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+      );
+      await eventually(() => rejectPlay !== undefined);
+
+      events.listener?.({ name: "session_connected" });
+      events.listener?.({ name: eventName, uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+      expect(usePlayback.getState().pendingSelection?.requiresFollowUp).toBeTrue();
+
+      rejectPlay?.(new Error("Web restart failed"));
+      await request;
+      expect(usePlayback.getState().pendingSelection).not.toBeNull();
+      expect(usePlayback.getState().error).toBeNull();
+
+      await eventually(
+        () => usePlayback.getState().pendingSelection === null,
+        NATIVE_TAKEOVER_GRACE_MS + 500,
+      );
+      expect(usePlayback.getState().error).toBe("Web restart failed");
+    },
+  );
+
+  test.each(["native-before-web", "web-before-native"] as const)(
+    "a %s connection without playback evidence keeps Web reconciliation",
+    async (eventOrder) => {
+      const selectedTrack = {
+        ...REMOTE_TRACK,
+        id: "selected",
+        name: "Selected",
+        uri: "spotify:track:selected",
+      };
+      const nativeDevice = { ...REMOTE_STATE.device, id: "native", name: "spotuify" };
+      let nativeActive = false;
+      let reads = 0;
+      let nativeListener: ((event: EngineEvent) => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => nativeActive,
+        onEvent: (listener: (event: EngineEvent) => void) => {
+          nativeListener = listener;
+          return () => {
+            nativeListener = undefined;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => {
+          reads++;
+          return reads === 1
+            ? { ...REMOTE_STATE, device: nativeDevice }
+            : { ...REMOTE_STATE, item: selectedTrack, progress_ms: 0, device: nativeDevice };
+        },
+        play: async () => {
+          if (eventOrder === "native-before-web") {
+            // Spotify can activate the receiver before librespot publishes playback events.
+            nativeActive = true;
+            nativeListener?.({ name: "session_connected" });
+          }
+        },
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => reads === 1);
+      await usePlayback.getState().playSelection(
+        { uris: [selectedTrack.uri] },
+        { label: selectedTrack.name, item: selectedTrack },
+      );
+      if (eventOrder === "web-before-native") {
+        // The command's reconciliation is already armed when receiver activation arrives.
+        nativeActive = true;
+        nativeListener?.({ name: "session_connected" });
+      }
+
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(selectedTrack.uri);
+      await eventually(() => reads === 2, COMMAND_RECONCILE_MS + 500);
+      expect(usePlayback.getState().pendingSelection).toBeNull();
+      expect(usePlayback.getState().item?.uri).toBe(selectedTrack.uri);
+      expect(usePlayback.getState().error).toBeNull();
+    },
+  );
+
+  test.each(["playing", "paused"] as const)(
+    "native metadata before %s keeps the Web transition until transport is confirmed",
+    async (eventName) => {
+      const events: { listener?: (event: EngineEvent) => void } = {};
+      let resolvePlay: (() => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => false,
+        onEvent: (next: (event: EngineEvent) => void) => {
+          events.listener = next;
+          return () => {
+            delete events.listener;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => EMPTY_REMOTE_STATE,
+        play: async () =>
+          await new Promise<void>((resolve) => {
+            resolvePlay = resolve;
+          }),
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => usePlayback.getState().deviceId === "remote");
+      const request = usePlayback.getState().playSelection(
+        { uris: [REMOTE_TRACK.uri] },
+        { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+      );
+      await eventually(() => resolvePlay !== undefined);
+
+      events.listener?.({ name: "session_connected" });
+      events.listener?.({
+        name: "track_changed",
+        media_type: "track",
+        id: REMOTE_TRACK.id ?? undefined,
+        uri: REMOTE_TRACK.uri,
+        title: REMOTE_TRACK.name,
+        duration_ms: REMOTE_TRACK.duration_ms,
+        artists: REMOTE_TRACK.artists,
+        album: REMOTE_TRACK.album.name,
+        covers: [],
+      });
+      expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().isPlaying).toBeFalse();
+
+      events.listener?.({ name: eventName, uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+      expect(usePlayback.getState().pendingSelection).toBeNull();
+      expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().isPlaying).toBe(eventName === "playing");
+      expect(usePlayback.getState().progressMs).toBe(2_000);
+
+      resolvePlay?.();
+      await request;
+      expect(usePlayback.getState().error).toBeNull();
+    },
+  );
+
+  test("a native phase for another URI cannot complete the Web transition", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let resolvePlay: (() => void) | undefined;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => false,
+      onEvent: (next: (event: EngineEvent) => void) => {
+        events.listener = next;
+        return () => {
+          delete events.listener;
+        };
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => EMPTY_REMOTE_STATE,
+      play: async () =>
+        await new Promise<void>((resolve) => {
+          resolvePlay = resolve;
+        }),
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, engine, "account");
+    await eventually(() => usePlayback.getState().deviceId === "remote");
+    const request = usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+    await eventually(() => resolvePlay !== undefined);
+
+    events.listener?.({ name: "session_connected" });
+    events.listener?.({ name: "playing", uri: "spotify:track:other", position_ms: 9_000 });
+    events.listener?.({
+      name: "track_changed",
+      media_type: "track",
+      id: REMOTE_TRACK.id ?? undefined,
+      uri: REMOTE_TRACK.uri,
+      title: REMOTE_TRACK.name,
+      duration_ms: REMOTE_TRACK.duration_ms,
+      artists: REMOTE_TRACK.artists,
+      album: REMOTE_TRACK.album.name,
+      covers: [],
+    });
+
+    expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+    expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+    expect(usePlayback.getState().isPlaying).toBeFalse();
+    expect(usePlayback.getState().progressMs).toBe(0);
+
+    events.listener?.({ name: "paused", uri: REMOTE_TRACK.uri, position_ms: 3_000 });
+    expect(usePlayback.getState().pendingSelection).toBeNull();
+    expect(usePlayback.getState().progressMs).toBe(3_000);
+
+    resolvePlay?.();
+    await request;
   });
 
   test("suspending Web reconciliation leaves native playback authoritative", async () => {
@@ -916,6 +1843,11 @@ describe("native receiver routing", () => {
 
     stop = usePlayback.getState().start(player, engine, "account");
     await Bun.sleep(20);
+    events.listener?.({
+      name: "playing",
+      uri: "spotify:track:native-track",
+      position_ms: 4_000,
+    });
     usePlayback.getState().confirmDeviceTransfer("remote", "Living Room");
 
     const residualEvents: EngineEvent[] = [
@@ -965,6 +1897,8 @@ describe("native receiver routing", () => {
       artists: [],
       covers: [],
     });
+    expect(usePlayback.getState().isPlaying).toBeFalse();
+    expect(usePlayback.getState().progressMs).toBe(0);
     events.listener?.({
       name: "playing",
       uri: "spotify:track:native-track",
