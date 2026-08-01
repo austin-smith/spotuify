@@ -63,7 +63,7 @@ describe("startup error screen layout", () => {
 
       const lines = setup.captureCharFrame().split("\n");
       const screen = lines.join("\n");
-      expect(screen).toContain("SPOTUIFY");
+      expect(screen).toContain(width >= 80 ? "███████╗" : "SPOTUIFY");
       expect(screen).toContain("Startup failed.");
       expect(screen).toContain("Spotify API 503 on /me:");
       expect(screen).not.toContain("spotuify auth");

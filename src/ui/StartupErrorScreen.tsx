@@ -1,3 +1,4 @@
+import { BrandLockup } from "./Brand.tsx";
 import { theme } from "./theme.ts";
 
 export function StartupErrorScreen({
@@ -18,9 +19,10 @@ export function StartupErrorScreen({
       paddingY={1}
       overflow="hidden"
     >
-      <text fg={theme.accent} flexShrink={0}>
-        <strong>SPOTUIFY</strong>
-      </text>
+      <BrandLockup
+        width={Math.max(1, width - 4)}
+        maxHeight={Math.max(1, height - 12)}
+      />
 
       <box flexDirection="column" flexShrink={1} minHeight={1} marginTop={1} overflow="hidden">
         <text fg={theme.error} flexShrink={0}>

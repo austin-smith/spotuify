@@ -1,4 +1,5 @@
 import { engineSetupCommand } from "../engine/librespot.ts";
+import { BrandLockup } from "./Brand.tsx";
 import { theme } from "./theme.ts";
 
 export function SetupScreen({
@@ -22,9 +23,10 @@ export function SetupScreen({
       overflow="hidden"
     >
       <box flexDirection="column" flexShrink={1} minHeight={1} overflow="hidden">
-        <text fg={theme.accent} flexShrink={0}>
-          <strong>SPOTUIFY</strong>
-        </text>
+        <BrandLockup
+          width={Math.max(1, width - 4)}
+          maxHeight={Math.max(1, height - 12)}
+        />
         <box flexDirection="column" flexShrink={0} marginTop={1}>
           <text fg={theme.text}>Setup required.</text>
           <text fg={theme.label} marginTop={1}>

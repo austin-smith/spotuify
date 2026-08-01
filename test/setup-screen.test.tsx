@@ -43,7 +43,7 @@ describe("setup screen layout", () => {
       const lines = await render(width, height, true);
       const screen = lines.join("\n");
 
-      expect(screen).toContain("SPOTUIFY");
+      expect(screen).toContain(width >= 80 ? "███████╗" : "SPOTUIFY");
       expect(screen).toContain("Setup required.");
       expect(screen).toContain("Run spotuify auth to get started.");
       expect(screen).not.toContain("developer.spotify.com");

@@ -22,6 +22,8 @@ export const ACTIVE_POLL_INTERVAL_MS = 30_000;
 export const IDLE_POLL_INTERVAL_MS = 60_000;
 /** Let Spotify Connect settle, then perform at most one coalesced reconciliation. */
 export const COMMAND_RECONCILE_MS = 750;
+/** One bounded follow-up read when Spotify has not exposed a just-started selection yet. */
+export const SELECTION_RECONCILE_RETRY_MS = 1_000;
 /** How often to recompute extrapolated progress for the UI. */
 const TICK_INTERVAL_MS = 250;
 /**
@@ -34,6 +36,19 @@ export const ERROR_LINGER_MS = 4_000;
 
 export type PlaybackSessionPresence = "unknown" | "absent" | "present";
 
+export interface PlaybackSelectionPreview {
+  label: string;
+  item?: PlayableItem;
+}
+
+export interface PendingPlaybackSelection {
+  /** Monotonic identity so an older command cannot clear a newer selection. */
+  requestId: number;
+  label: string;
+  /** Full metadata is available for track rows and lets an empty canvas render immediately. */
+  item: PlayableItem | null;
+}
+
 export interface PlaybackStartOptions {
   /**
    * Keep native events active while another owner performs the sole Web API recovery probe.
@@ -45,6 +60,8 @@ export interface PlaybackStartOptions {
 
 export interface PlaybackSlice {
   item: PlayableItem | null;
+  /** A user selection awaiting authoritative native or Web playback confirmation. */
+  pendingSelection: PendingPlaybackSelection | null;
   isPlaying: boolean;
   shuffle: boolean;
   repeat: RepeatState;
@@ -85,7 +102,7 @@ export interface PlaybackSlice {
     contextUri?: string;
     uris?: string[];
     offset?: number;
-  }) => Promise<void>;
+  }, preview?: PlaybackSelectionPreview) => Promise<void>;
   togglePlay: () => Promise<void>;
   next: () => Promise<void>;
   previous: () => Promise<void>;
@@ -130,6 +147,8 @@ let latestRefreshRevision = -1;
 let latestRefreshStartedAt = Number.NEGATIVE_INFINITY;
 /** Reads before this monotonic deadline are too early to reconcile Spotify's eventual state. */
 let webReadNotBefore = Number.NEGATIVE_INFINITY;
+let selectionRequestId = 0;
+let selectionConfirmationRetries = 0;
 type OptimisticField = "playing" | "progress" | "volume" | "shuffle" | "repeat";
 interface ConfirmedPlayback {
   anchor: ProgressAnchor;
@@ -506,6 +525,24 @@ function isNativeDevice(deviceId: string | null): boolean {
   );
 }
 
+function selectionMatchesItem(
+  selection: PendingPlaybackSelection | null,
+  item: PlayableItem | null,
+): boolean {
+  if (selection === null || item === null) return false;
+  return selection.item === null || selection.item.uri === item.uri;
+}
+
+function clearPendingSelection(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  requestId: number,
+): void {
+  if (get().pendingSelection?.requestId !== requestId) return;
+  selectionConfirmationRetries = 0;
+  set({ pendingSelection: null });
+}
+
 function nativeAccountMatches(): boolean {
   const status = native?.getStatus();
   return (
@@ -693,6 +730,7 @@ function applyNativeEvent(set: (patch: Partial<PlaybackSlice>) => void, event: E
 
 export const usePlayback = create<PlaybackSlice>((set, get) => ({
   item: null,
+  pendingSelection: null,
   isPlaying: false,
   shuffle: false,
   repeat: "off",
@@ -723,12 +761,14 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     latestRefreshRevision = -1;
     latestRefreshStartedAt = Number.NEGATIVE_INFINITY;
     webReadNotBefore = Number.NEGATIVE_INFINITY;
+    selectionConfirmationRetries = 0;
     const startingState = get();
     if (webReconciliationSuspended) {
       // No current-run source has authenticated retained playback state. Start empty while native
       // events remain live; account recovery will resume the Web lane when its sole probe succeeds.
       set({
         item: null,
+        pendingSelection: null,
         isPlaying: false,
         shuffle: false,
         repeat: "off",
@@ -756,7 +796,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         durationMs: startingState.durationMs,
       };
       confirmFromStore(startingState);
-      set({ sessionPresence: "unknown", ready: false });
+      set({ sessionPresence: "unknown", ready: false, pendingSelection: null });
     }
     // An unresolved read belongs to the previous run. Its own identity guards keep it from
     // mutating this run, and the new run must issue an independent initial reconciliation.
@@ -916,6 +956,21 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         nativeDisconnectRetryCount = 0;
         pollNotBefore = 0;
         const next = applyState(state);
+        const pendingSelection = get().pendingSelection;
+        if (selectionMatchesItem(pendingSelection, state?.item ?? null)) {
+          selectionConfirmationRetries = 0;
+          next.pendingSelection = null;
+        } else if (pendingSelection !== null) {
+          if (selectionConfirmationRetries === 0) {
+            selectionConfirmationRetries++;
+            reconcileCompletedWebMutation(get, SELECTION_RECONCILE_RETRY_MS);
+          } else {
+            // The second post-command snapshot is authoritative even if Spotify chose another
+            // item, played an ad, or declined to create a session.
+            selectionConfirmationRetries = 0;
+            next.pendingSelection = null;
+          }
+        }
         const currentError = get().error;
         if (errorIsStale(currentError)) {
           clearTimer(errorClearTimer);
@@ -944,7 +999,8 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           return;
         }
         fail(set, err);
-        set({ ready: true });
+        selectionConfirmationRetries = 0;
+        set({ ready: true, pendingSelection: null });
       }
     })();
     refreshInFlight = pending;
@@ -1008,8 +1064,18 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     get().reconcileSoon();
   },
 
-  async playSelection(options) {
+  async playSelection(options, preview) {
     if (api === null) return;
+    const requestId = ++selectionRequestId;
+    selectionConfirmationRetries = 0;
+    set({
+      pendingSelection: {
+        requestId,
+        label: preview?.label ?? "selection",
+        item: preview?.item ?? null,
+      },
+      error: null,
+    });
     const state = get();
     const routeNative = nativeCanHandle(state);
     let webMutation = routeNative ? null : beginWebMutation();
@@ -1024,6 +1090,9 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           });
         }))
       ) {
+        // Native load resolves only after the player confirms it began. The matching track event
+        // normally clears this first; this also handles Spotify substituting another playable item.
+        clearPendingSelection(set, get, requestId);
         return;
       }
       webMutation ??= beginWebMutation();
@@ -1032,7 +1101,11 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         ...(state.deviceId !== null ? { deviceId: state.deviceId } : {}),
       });
     } catch (err) {
-      fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
+      // A superseded request owns neither the visible pending state nor its error surface.
+      if (get().pendingSelection?.requestId === requestId) {
+        fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
+        clearPendingSelection(set, get, requestId);
+      }
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }

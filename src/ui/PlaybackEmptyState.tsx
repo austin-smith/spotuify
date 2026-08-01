@@ -1,4 +1,4 @@
-import { theme } from "./theme.ts";
+import { BrandSplash } from "./Brand.tsx";
 
 export function playbackEmptyStateText(ready: boolean, canSearch: boolean): string {
   if (!ready) return "LOADING…";
@@ -10,15 +10,19 @@ export function playbackEmptyStateText(ready: boolean, canSearch: boolean): stri
 export function PlaybackEmptyState({
   ready,
   canSearch,
+  width,
   height,
 }: {
   ready: boolean;
   canSearch: boolean;
+  width: number;
   height: number;
 }) {
   return (
-    <box position="absolute" left={2} top={Math.floor(height / 2)} zIndex={2}>
-      <text fg={theme.muted}>{playbackEmptyStateText(ready, canSearch)}</text>
-    </box>
+    <BrandSplash
+      message={playbackEmptyStateText(ready, canSearch)}
+      width={width}
+      height={height}
+    />
   );
 }

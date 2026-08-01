@@ -31,6 +31,8 @@ interface HudProps {
   volumePercent: number | null;
   deviceName: string | null;
   isLocalDevice: boolean;
+  /** A selected item is visible while playback waits for authoritative confirmation. */
+  starting?: boolean;
   width: number;
   height: number;
 }
@@ -51,6 +53,7 @@ export function Hud({
   volumePercent,
   deviceName,
   isLocalDevice,
+  starting = false,
   width,
   height,
 }: HudProps) {
@@ -64,7 +67,13 @@ export function Hud({
   // the default, so printing this terminal's own device name every time is noise.
   const elsewhere = deviceName !== null && !isLocalDevice;
   const meta = [
-    elsewhere ? `PLAYING ON ${deviceName.toUpperCase()}` : isPlaying ? "PLAYING" : "PAUSED",
+    starting
+      ? "STARTING"
+      : elsewhere
+        ? `PLAYING ON ${deviceName.toUpperCase()}`
+        : isPlaying
+          ? "PLAYING"
+          : "PAUSED",
     shuffle ? "SHUFFLE" : null,
     repeat === "off" ? null : `REPEAT ${REPEAT_LABEL[repeat]}`,
     volumePercent === null ? null : `VOL ${volumePercent}%`,
@@ -88,7 +97,9 @@ export function Hud({
       <text fg={theme.scrimText}>{isTrack(item) ? truncate(item.album.name, inner) : ""}</text>
 
       <box marginTop={1} flexDirection="row" gap={1}>
-        <text fg={isPlaying ? theme.accent : theme.muted}>{isPlaying ? "▶" : "❚❚"}</text>
+        <text fg={isPlaying || starting ? theme.accent : theme.muted}>
+          {starting ? "…" : isPlaying ? "▶" : "❚❚"}
+        </text>
         <text fg={theme.text}>{formatDuration(progressMs).padStart(5)}</text>
         <text>
           <span fg={theme.accent}>{bar.slice(0, filled)}</span>

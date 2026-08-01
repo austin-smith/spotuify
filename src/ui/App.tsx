@@ -26,6 +26,7 @@ import {
   type AvailableUpdate,
 } from "../update.ts";
 import { ActionsMenu } from "./ActionsMenu.tsx";
+import { BrandSplash } from "./Brand.tsx";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { DevicePicker } from "./DevicePicker.tsx";
 import { FeedbackBanner, feedbackTopAboveHud } from "./FeedbackBanner.tsx";
@@ -33,13 +34,13 @@ import { LyricsView } from "./LyricsView.tsx";
 import { QueueView } from "./QueueView.tsx";
 import { SetupScreen } from "./SetupScreen.tsx";
 import { StartupErrorScreen } from "./StartupErrorScreen.tsx";
-import { Hud, HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
+import { HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
 import { KeyHints, KEY_HINT_ROWS } from "./KeyHints.tsx";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
 import { OVERLAY_PADDING_X, overlayListHeight } from "./Overlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
 import { PlaylistPicker, PLAYLIST_PROMPT_ROW } from "./PlaylistPicker.tsx";
-import { PlaybackEmptyState } from "./PlaybackEmptyState.tsx";
+import { PlaybackStage, playbackDisplayItem } from "./PlaybackStage.tsx";
 import { theme } from "./theme.ts";
 
 type Boot =
@@ -103,6 +104,7 @@ export function App({ version }: { version: string }) {
   const activatedDevice = useRef<string | null>(null);
 
   const item = usePlayback((s) => s.item);
+  const pendingSelection = usePlayback((s) => s.pendingSelection);
   const isPlaying = usePlayback((s) => s.isPlaying);
   const progressMs = usePlayback((s) => s.progressMs);
   const durationMs = usePlayback((s) => s.durationMs);
@@ -243,6 +245,7 @@ export function App({ version }: { version: string }) {
       // the same Retry-After deadline and make the two lanes compete for scarce quota.
       usePlayback.setState({
         item: null,
+        pendingSelection: null,
         isPlaying: false,
         shuffle: false,
         repeat: "off",
@@ -501,9 +504,11 @@ export function App({ version }: { version: string }) {
           return;
         }
 
-        void (async () => {
-          await usePlayback.getState().playSelection(row.play);
-        })();
+        const preview =
+          row.actionItem === undefined
+            ? { label: row.label }
+            : { label: row.label, item: row.actionItem };
+        void usePlayback.getState().playSelection(row.play, preview);
         palette.closePalette();
       }
       return;
@@ -652,8 +657,8 @@ export function App({ version }: { version: string }) {
 
   if (boot.phase === "loading") {
     return (
-      <box padding={2}>
-        <text fg={theme.label}>Connecting to Spotify…</text>
+      <box width={width} height={height} position="relative">
+        <BrandSplash message="Connecting to Spotify…" width={width} height={height} />
       </box>
     );
   }
@@ -676,7 +681,10 @@ export function App({ version }: { version: string }) {
     );
   }
 
-  const images = item !== null && isTrack(item) ? item.album.images : null;
+  // Keep real playback authoritative. A preview fills only the genuinely empty gap between search
+  // dismissal and the first confirmed native/Web state.
+  const displayItem = playbackDisplayItem(item, pendingSelection);
+  const images = displayItem !== null && isTrack(displayItem) ? displayItem.album.images : null;
 
   // Row the HUD's darkened band starts at. The keybind strip draws over the cover on the final row,
   // so the scrim has to reach the very bottom.
@@ -716,32 +724,28 @@ export function App({ version }: { version: string }) {
         />
       ) : null}
 
-      {item !== null && !overlayOpen ? (
-        <Hud
-          item={item}
-          progressMs={progressMs}
-          durationMs={durationMs}
-          isPlaying={isPlaying}
-          shuffle={shuffle}
-          repeat={repeat}
-          volumePercent={volumePercent}
-          deviceName={deviceName}
-          isLocalDevice={
-            engine.state === "ready" &&
-            bootAccountId !== null &&
-            engine.accountId === bootAccountId &&
-            deviceId === engine.deviceId
-          }
-          width={width}
-          height={contentHeight}
-        />
-      ) : overlayOpen ? null : (
-        <PlaybackEmptyState
-          ready={ready}
-          canSearch={boot.me !== null}
-          height={height}
-        />
-      )}
+      <PlaybackStage
+        item={item}
+        pendingSelection={pendingSelection}
+        progressMs={progressMs}
+        durationMs={durationMs}
+        isPlaying={isPlaying}
+        shuffle={shuffle}
+        repeat={repeat}
+        volumePercent={volumePercent}
+        deviceName={deviceName}
+        isLocalDevice={
+          engine.state === "ready" &&
+          bootAccountId !== null &&
+          engine.accountId === bootAccountId &&
+          deviceId === engine.deviceId
+        }
+        ready={ready}
+        canSearch={boot.me !== null}
+        overlayOpen={overlayOpen}
+        width={width}
+        height={contentHeight}
+      />
 
       {feedback !== null &&
       !actionsOpen &&
