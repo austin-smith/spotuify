@@ -942,6 +942,66 @@ describe("native receiver routing", () => {
     expect(usePlayback.getState().error).toBe("Web playback failed");
   });
 
+  test.each(["native-before-web", "web-before-native"] as const)(
+    "a successful Web command bounds an incomplete %s takeover and retains its track preview",
+    async (eventOrder) => {
+      const events: { listener?: (event: EngineEvent) => void } = {};
+      let resolvePlay: (() => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => false,
+        onEvent: (next: (event: EngineEvent) => void) => {
+          events.listener = next;
+          return () => {
+            delete events.listener;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => EMPTY_REMOTE_STATE,
+        play: async () =>
+          await new Promise<void>((resolve) => {
+            resolvePlay = resolve;
+          }),
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => usePlayback.getState().deviceId === "remote");
+      const request = usePlayback.getState().playSelection(
+        { uris: [REMOTE_TRACK.uri] },
+        { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+      );
+      await eventually(() => resolvePlay !== undefined);
+
+      const publishIncompleteTakeover = () => {
+        events.listener?.({ name: "session_connected" });
+        events.listener?.({ name: "playing", uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+      };
+      if (eventOrder === "native-before-web") {
+        publishIncompleteTakeover();
+        await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
+        // Native evidence alone must not time out a command that is still in flight.
+        expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+        resolvePlay?.();
+        await request;
+      } else {
+        resolvePlay?.();
+        await request;
+        publishIncompleteTakeover();
+      }
+
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
+      const state = usePlayback.getState();
+      expect(state.pendingSelection).toBeNull();
+      expect(state.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(state.isPlaying).toBeTrue();
+      expect(state.progressMs).toBeGreaterThanOrEqual(2_000);
+      expect(state.error).toBeNull();
+    },
+  );
+
   test("an unverifiable context takeover yields to complete native playback after a grace period", async () => {
     const events: { listener?: (event: EngineEvent) => void } = {};
     let resolvePlay: (() => void) | undefined;
