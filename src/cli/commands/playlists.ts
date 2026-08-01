@@ -19,6 +19,7 @@ import { integer, spotifyReference } from "../values.ts";
 import {
   mutation,
   normalizePlaylistDetails,
+  openablePlaylistDetails,
   outputFor,
   playlistHeader,
   playlistId,
@@ -60,10 +61,10 @@ export function registerPlaylists(program: Command, io: CliIo): void {
     .action(async (value: string, _options, command: Command) => {
       const { client } = await cliSession();
       const id = playlistId(value);
-      const [details, entries] = await Promise.all([
-        playlistDetails(client, id),
-        playlistItems(client, id),
-      ]);
+      // Ownership first: the items read is permanently refused for foreign playlists, so it must
+      // not be spent before the metadata proves it can succeed.
+      const details = await openablePlaylistDetails(id);
+      const entries = await playlistItems(client, id);
       const data = {
         playlist: normalizePlaylistDetails(details),
         items: entries.map((entry) => ({

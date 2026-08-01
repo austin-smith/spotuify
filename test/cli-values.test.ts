@@ -6,7 +6,8 @@ import {
   spotifyReference,
   timestampMs,
 } from "../src/cli/values.ts";
-import { targetDevice } from "../src/cli/support.ts";
+import { assertPlaylistOpenable, targetDevice } from "../src/cli/support.ts";
+import type { PlaylistDetails } from "../src/api/playlists.ts";
 
 describe("CLI values", () => {
   test("normalizes Spotify URIs, URLs, international URLs, and typed IDs", () => {
@@ -91,5 +92,41 @@ describe("timestampMs", () => {
 
   test("rejects text that is neither, naming the option", () => {
     expect(() => timestampMs("yesterday", "before")).toThrow("Invalid before");
+  });
+});
+
+describe("assertPlaylistOpenable", () => {
+  const details = (over: Partial<PlaylistDetails> = {}): PlaylistDetails => ({
+    id: "p",
+    name: "Mix",
+    uri: "spotify:playlist:p",
+    description: null,
+    public: true,
+    collaborative: false,
+    ownerId: "owner",
+    ownerName: "Owner",
+    followers: null,
+    totalItems: null,
+    ...over,
+  });
+
+  test("passes owned playlists through", () => {
+    expect(() =>
+      assertPlaylistOpenable(details({ ownerId: "me" }), "me"),
+    ).not.toThrow();
+  });
+
+  // The collaborative flag alone cannot prove membership; the doomed read is only certain for
+  // plain foreign playlists, so collaborative ones keep their chance to succeed.
+  test("passes foreign collaborative playlists through", () => {
+    expect(() =>
+      assertPlaylistOpenable(details({ collaborative: true }), "me"),
+    ).not.toThrow();
+  });
+
+  test("refuses a foreign playlist before the permanently refused items read", () => {
+    expect(() => assertPlaylistOpenable(details(), "me")).toThrow(
+      "belongs to Owner",
+    );
   });
 });

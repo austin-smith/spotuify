@@ -8,7 +8,7 @@ import {
   showEpisodes,
 } from "../../api/catalog.ts";
 import { fetchLyrics } from "../../api/lyrics.ts";
-import { playlistDetails, playlistItems } from "../../api/playlists.ts";
+import { playlistItems } from "../../api/playlists.ts";
 import { search, type SearchType } from "../../api/search.ts";
 import {
   artistLine,
@@ -30,6 +30,7 @@ import { cliSession } from "../session.ts";
 import { integer, spotifyReference, timestampMs } from "../values.ts";
 import {
   normalizePlaylistDetails,
+  openablePlaylistDetails,
   outputFor,
   playlistHeader,
   table,
@@ -312,10 +313,10 @@ export function registerDiscovery(program: Command, io: CliIo): void {
           break;
         }
         case "playlist": {
-          const [details, entries] = await Promise.all([
-            playlistDetails(client, ref.id),
-            playlistItems(client, ref.id),
-          ]);
+          // Ownership first: the items read is permanently refused for foreign playlists, so it
+          // must not be spent before the metadata proves it can succeed.
+          const details = await openablePlaylistDetails(ref.id);
+          const entries = await playlistItems(client, ref.id);
           data = {
             playlist: normalizePlaylistDetails(details),
             items: entries.map((entry) => ({
