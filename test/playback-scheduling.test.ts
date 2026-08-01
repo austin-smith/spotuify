@@ -10,6 +10,7 @@ import { chooseImage } from "../src/ui/art.ts";
 import {
   COMMAND_RECONCILE_MS,
   ERROR_LINGER_MS,
+  NATIVE_TAKEOVER_GRACE_MS,
   SELECTION_RECONCILE_RETRY_MS,
   usePlayback,
 } from "../src/store/playback.ts";
@@ -44,6 +45,14 @@ const REMOTE_TRACK = (() => {
   if (item === null || !isTrack(item)) throw new Error("fixture must be a track");
   return item;
 })();
+
+const EMPTY_REMOTE_STATE: PlaybackState = {
+  ...REMOTE_STATE,
+  item: null,
+  is_playing: false,
+  progress_ms: 0,
+  currently_playing_type: "unknown",
+};
 
 let stop: (() => void) | undefined;
 
@@ -789,7 +798,97 @@ describe("native receiver routing", () => {
     expect(usePlayback.getState().progressMs).toBe(4_000);
   });
 
-  test("authoritative native takeover clears a pending Web selection", async () => {
+  test.each(["playing", "paused"] as const)(
+    "native %s retains a Web preview until track metadata arrives",
+    async (eventName) => {
+      const events: { listener?: (event: EngineEvent) => void } = {};
+      let rejectPlay: ((error: Error) => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => false,
+        onEvent: (next: (event: EngineEvent) => void) => {
+          events.listener = next;
+          return () => {
+            delete events.listener;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => EMPTY_REMOTE_STATE,
+        play: async () =>
+          await new Promise<void>((_resolve, reject) => {
+            rejectPlay = reject;
+          }),
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => usePlayback.getState().deviceId === "remote");
+      const request = usePlayback.getState().playSelection(
+        { uris: [REMOTE_TRACK.uri] },
+        { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+      );
+      await eventually(() => rejectPlay !== undefined);
+      expect(usePlayback.getState().pendingSelection?.lane).toBe("web");
+
+      events.listener?.({ name: "session_connected" });
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().item).toBeNull();
+
+      rejectPlay?.(new Error("superseded Web command failed during takeover"));
+      await request;
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().error).toBeNull();
+
+      events.listener?.({ name: eventName, uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().item).toBeNull();
+      expect(usePlayback.getState().isPlaying).toBe(eventName === "playing");
+
+      if (eventName === "playing") await Bun.sleep(30);
+
+      events.listener?.({
+        name: "track_changed",
+        media_type: "track",
+        id: REMOTE_TRACK.id ?? undefined,
+        uri: REMOTE_TRACK.uri,
+        title: REMOTE_TRACK.name,
+        duration_ms: REMOTE_TRACK.duration_ms,
+        artists: REMOTE_TRACK.artists,
+        album: REMOTE_TRACK.album.name,
+        covers: [],
+      });
+
+      expect(usePlayback.getState().pendingSelection).toBeNull();
+      expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().deviceId).toBe("native");
+      expect(usePlayback.getState().isPlaying).toBe(eventName === "playing");
+      if (eventName === "playing") {
+        expect(usePlayback.getState().progressMs).toBeGreaterThanOrEqual(2_020);
+        expect(usePlayback.getState().progressMs).toBeLessThan(2_200);
+      } else {
+        expect(usePlayback.getState().progressMs).toBe(2_000);
+      }
+
+      // The paired phase belongs to this play instance only. A later replay of the same URI must
+      // wait for its own transport event instead of inheriting the previous position and phase.
+      events.listener?.({
+        name: "track_changed",
+        media_type: "track",
+        id: REMOTE_TRACK.id ?? undefined,
+        uri: REMOTE_TRACK.uri,
+        title: REMOTE_TRACK.name,
+        duration_ms: REMOTE_TRACK.duration_ms,
+        artists: REMOTE_TRACK.artists,
+        album: REMOTE_TRACK.album.name,
+        covers: [],
+      });
+      expect(usePlayback.getState().isPlaying).toBeFalse();
+      expect(usePlayback.getState().progressMs).toBe(0);
+    },
+  );
+
+  test("incomplete native events give a failed Web takeover only a bounded grace period", async () => {
     const events: { listener?: (event: EngineEvent) => void } = {};
     let rejectPlay: ((error: Error) => void) | undefined;
     const engine = {
@@ -804,7 +903,7 @@ describe("native receiver routing", () => {
       },
     } as unknown as LibrespotEngine;
     const player = {
-      state: async () => REMOTE_STATE,
+      state: async () => EMPTY_REMOTE_STATE,
       play: async () =>
         await new Promise<void>((_resolve, reject) => {
           rejectPlay = reject;
@@ -818,7 +917,60 @@ describe("native receiver routing", () => {
       { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
     );
     await eventually(() => rejectPlay !== undefined);
-    expect(usePlayback.getState().pendingSelection?.lane).toBe("web");
+
+    events.listener?.({ name: "session_connected" });
+    events.listener?.({
+      name: "track_changed",
+      media_type: "track",
+      id: "other",
+      uri: "spotify:track:other",
+      title: "Other Track",
+      duration_ms: REMOTE_TRACK.duration_ms,
+      artists: REMOTE_TRACK.artists,
+      album: REMOTE_TRACK.album.name,
+      covers: [],
+    });
+    events.listener?.({ name: "playing", uri: "spotify:track:other", position_ms: 9_000 });
+    expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+    rejectPlay?.(new Error("Web playback failed"));
+    await request;
+    expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+    expect(usePlayback.getState().error).toBeNull();
+
+    await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
+    expect(usePlayback.getState().pendingSelection).toBeNull();
+    expect(usePlayback.getState().error).toBe("Web playback failed");
+  });
+
+  test("an unverifiable context takeover yields to complete native playback after a grace period", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let resolvePlay: (() => void) | undefined;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => false,
+      onEvent: (next: (event: EngineEvent) => void) => {
+        events.listener = next;
+        return () => {
+          delete events.listener;
+        };
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => EMPTY_REMOTE_STATE,
+      play: async () =>
+        await new Promise<void>((resolve) => {
+          resolvePlay = resolve;
+        }),
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, engine, "account");
+    await eventually(() => usePlayback.getState().deviceId === "remote");
+    const request = usePlayback.getState().playSelection(
+      { contextUri: "spotify:playlist:mix" },
+      { label: "Mix" },
+    );
+    await eventually(() => resolvePlay !== undefined);
 
     events.listener?.({ name: "session_connected" });
     events.listener?.({
@@ -833,13 +985,178 @@ describe("native receiver routing", () => {
       covers: [],
     });
     events.listener?.({ name: "playing", uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+    expect(usePlayback.getState().pendingSelection?.confirmation).toEqual({
+      kind: "context",
+      uri: "spotify:playlist:mix",
+    });
 
-    expect(usePlayback.getState().pendingSelection).toBeNull();
-    expect(usePlayback.getState().deviceId).toBe("native");
-    expect(usePlayback.getState().isPlaying).toBeTrue();
-    rejectPlay?.(new Error("superseded Web command failed late"));
+    resolvePlay?.();
     await request;
+    await Bun.sleep(NATIVE_TAKEOVER_GRACE_MS + 50);
+    expect(usePlayback.getState().pendingSelection).toBeNull();
+    expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
     expect(usePlayback.getState().error).toBeNull();
+  });
+
+  test.each(["playing", "paused"] as const)(
+    "native %s completes a Web takeover when matching metadata already exists",
+    async (eventName) => {
+      const events: { listener?: (event: EngineEvent) => void } = {};
+      let resolvePlay: (() => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => false,
+        onEvent: (next: (event: EngineEvent) => void) => {
+          events.listener = next;
+          return () => {
+            delete events.listener;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => REMOTE_STATE,
+        play: async () =>
+          await new Promise<void>((resolve) => {
+            resolvePlay = resolve;
+          }),
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => usePlayback.getState().deviceId === "remote");
+      const request = usePlayback.getState().playSelection(
+        { uris: [REMOTE_TRACK.uri] },
+        { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+      );
+      await eventually(() => resolvePlay !== undefined);
+
+      events.listener?.({ name: "session_connected" });
+      expect(usePlayback.getState().pendingSelection).not.toBeNull();
+      events.listener?.({ name: eventName, uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+      expect(usePlayback.getState().pendingSelection).toBeNull();
+
+      resolvePlay?.();
+      await request;
+      expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().isPlaying).toBe(eventName === "playing");
+    },
+  );
+
+  test.each(["playing", "paused"] as const)(
+    "native metadata before %s keeps the Web transition until transport is confirmed",
+    async (eventName) => {
+      const events: { listener?: (event: EngineEvent) => void } = {};
+      let resolvePlay: (() => void) | undefined;
+      const engine = {
+        getStatus: () =>
+          ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+        isActive: () => false,
+        onEvent: (next: (event: EngineEvent) => void) => {
+          events.listener = next;
+          return () => {
+            delete events.listener;
+          };
+        },
+      } as unknown as LibrespotEngine;
+      const player = {
+        state: async () => EMPTY_REMOTE_STATE,
+        play: async () =>
+          await new Promise<void>((resolve) => {
+            resolvePlay = resolve;
+          }),
+      } as unknown as PlayerApi;
+
+      stop = usePlayback.getState().start(player, engine, "account");
+      await eventually(() => usePlayback.getState().deviceId === "remote");
+      const request = usePlayback.getState().playSelection(
+        { uris: [REMOTE_TRACK.uri] },
+        { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+      );
+      await eventually(() => resolvePlay !== undefined);
+
+      events.listener?.({ name: "session_connected" });
+      events.listener?.({
+        name: "track_changed",
+        media_type: "track",
+        id: REMOTE_TRACK.id ?? undefined,
+        uri: REMOTE_TRACK.uri,
+        title: REMOTE_TRACK.name,
+        duration_ms: REMOTE_TRACK.duration_ms,
+        artists: REMOTE_TRACK.artists,
+        album: REMOTE_TRACK.album.name,
+        covers: [],
+      });
+      expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().isPlaying).toBeFalse();
+
+      events.listener?.({ name: eventName, uri: REMOTE_TRACK.uri, position_ms: 2_000 });
+      expect(usePlayback.getState().pendingSelection).toBeNull();
+      expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+      expect(usePlayback.getState().isPlaying).toBe(eventName === "playing");
+      expect(usePlayback.getState().progressMs).toBe(2_000);
+
+      resolvePlay?.();
+      await request;
+      expect(usePlayback.getState().error).toBeNull();
+    },
+  );
+
+  test("a native phase for another URI cannot complete the Web transition", async () => {
+    const events: { listener?: (event: EngineEvent) => void } = {};
+    let resolvePlay: (() => void) | undefined;
+    const engine = {
+      getStatus: () =>
+        ({ state: "ready", pid: 1, deviceId: "native", accountId: "account" }) as const,
+      isActive: () => false,
+      onEvent: (next: (event: EngineEvent) => void) => {
+        events.listener = next;
+        return () => {
+          delete events.listener;
+        };
+      },
+    } as unknown as LibrespotEngine;
+    const player = {
+      state: async () => EMPTY_REMOTE_STATE,
+      play: async () =>
+        await new Promise<void>((resolve) => {
+          resolvePlay = resolve;
+        }),
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, engine, "account");
+    await eventually(() => usePlayback.getState().deviceId === "remote");
+    const request = usePlayback.getState().playSelection(
+      { uris: [REMOTE_TRACK.uri] },
+      { label: REMOTE_TRACK.name, item: REMOTE_TRACK },
+    );
+    await eventually(() => resolvePlay !== undefined);
+
+    events.listener?.({ name: "session_connected" });
+    events.listener?.({ name: "playing", uri: "spotify:track:other", position_ms: 9_000 });
+    events.listener?.({
+      name: "track_changed",
+      media_type: "track",
+      id: REMOTE_TRACK.id ?? undefined,
+      uri: REMOTE_TRACK.uri,
+      title: REMOTE_TRACK.name,
+      duration_ms: REMOTE_TRACK.duration_ms,
+      artists: REMOTE_TRACK.artists,
+      album: REMOTE_TRACK.album.name,
+      covers: [],
+    });
+
+    expect(usePlayback.getState().pendingSelection?.item?.uri).toBe(REMOTE_TRACK.uri);
+    expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
+    expect(usePlayback.getState().isPlaying).toBeFalse();
+    expect(usePlayback.getState().progressMs).toBe(0);
+
+    events.listener?.({ name: "paused", uri: REMOTE_TRACK.uri, position_ms: 3_000 });
+    expect(usePlayback.getState().pendingSelection).toBeNull();
+    expect(usePlayback.getState().progressMs).toBe(3_000);
+
+    resolvePlay?.();
+    await request;
   });
 
   test("suspending Web reconciliation leaves native playback authoritative", async () => {

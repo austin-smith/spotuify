@@ -20,7 +20,7 @@ const PENDING: PendingPlaybackSelection = {
   item: TRACK,
   confirmation: { kind: "item", uri: TRACK.uri },
   requiresFollowUp: false,
-  lane: "native",
+  lane: "web",
 };
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
@@ -69,8 +69,8 @@ test("empty → starting → playing never returns to the empty surface", async 
   expect(starting).toContain("STARTING");
   expect(starting).not.toContain("NOTHING PLAYING");
 
-  // Native metadata arrives before the load's final Playing acknowledgment. It is still a
-  // transition, not a paused track and not an empty canvas.
+  // Metadata can arrive before the transition's final acknowledgment. It is still a transition,
+  // not a paused track and not an empty canvas.
   root.render(stage(TRACK, PENDING));
   await Bun.sleep(20);
   await setup.renderOnce();
