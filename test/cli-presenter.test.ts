@@ -3,9 +3,9 @@ import { Writable } from "node:stream";
 import { describe, expect, test } from "bun:test";
 import {
   CliPresenter,
-  PLAIN_HELP,
   supportsRichOutput,
 } from "../src/cli/presenter.ts";
+import { runCli } from "../src/cli/program.ts";
 
 class CaptureStream extends Writable {
   readonly chunks: string[] = [];
@@ -37,38 +37,133 @@ describe("CLI presentation", () => {
     expect(supportsRichOutput(new CaptureStream(false), { TERM: "xterm-256color" })).toBe(false);
     expect(supportsRichOutput(new CaptureStream(true), { TERM: "dumb" })).toBe(false);
     expect(
+      supportsRichOutput(new CaptureStream(true), {
+        TERM: "xterm-256color",
+        NO_COLOR: "1",
+      }),
+    ).toBe(true);
+    expect(
       supportsRichOutput(new CaptureStream(true), { TERM: "xterm-256color", CI: "true" }),
     ).toBe(false);
   });
 
-  test("keeps piped help stable and free of terminal control sequences", () => {
-    const stdout = new CaptureStream(false);
-    const presenter = new CliPresenter({ stdout, stderr: new CaptureStream(false) });
+  test("keeps the Clack layout while honoring NO_COLOR", async () => {
+    const stdout = new CaptureStream(true);
+    const exitCode = await runCli(["--help"], {
+      io: {
+        stdout,
+        stderr: new CaptureStream(true),
+        env: { TERM: "xterm-256color", NO_COLOR: "1" },
+      },
+    });
 
-    presenter.showHelp();
-
-    expect(stdout.text()).toBe(PLAIN_HELP);
+    expect(exitCode).toBe(0);
+    expect(stdout.text()).toContain("┌  spotuify spotify in ur terminal");
     expect(stripVTControlCharacters(stdout.text())).toBe(stdout.text());
   });
 
-  test("renders restrained Clack help with commands, options, and the redirect URI", () => {
+  test("groups commands and output controls in the branded Clack help", async () => {
     const stdout = new CaptureStream(true);
-    const presenter = new CliPresenter({
-      stdout,
-      stderr: new CaptureStream(true),
-      env: { TERM: "xterm-256color" },
+    const stderr = new CaptureStream(true);
+    const exitCode = await runCli(["--help"], {
+      io: {
+        stdout,
+        stderr,
+        env: { TERM: "xterm-256color" },
+      },
     });
 
-    presenter.showHelp();
+    const output = stripVTControlCharacters(stdout.text());
+    expect(exitCode).toBe(0);
+    expect(output).toContain("┌  spotuify spotify in ur terminal");
+    expect(output).toContain("Playback");
+    expect(output).toContain("Browse");
+    expect(output).toContain("Library");
+    expect(output).toContain("Setup & system");
+    expect(output).toContain("General options");
+    expect(output).toContain("Output");
+    expect(output).toContain("Composition");
+    expect(output).not.toContain("--color");
+    expect(output).toContain("playlist");
+    expect(output).toContain("--output <mode>");
+    expect(output).toContain("spotuify help output");
+    expect(output).not.toContain("Get started with spotuify auth");
+    expect(output.indexOf("Playback")).toBeLessThan(output.indexOf("Browse"));
+    expect(output.indexOf("Browse")).toBeLessThan(output.indexOf("Library"));
+    expect(output.indexOf("General options")).toBeLessThan(
+      output.indexOf("Output"),
+    );
+    expect(output.indexOf("Output")).toBeLessThan(
+      output.indexOf("Composition"),
+    );
+    expect(stdout.text()).toContain("\u001b[");
+    expect(stderr.text()).toBe("");
+  });
+
+  test("renders focused output and composition help", async () => {
+    const stdout = new CaptureStream(true);
+    const stderr = new CaptureStream(true);
+    const exitCode = await runCli(["help", "output"], {
+      io: {
+        stdout,
+        stderr,
+        env: { TERM: "xterm-256color" },
+      },
+    });
 
     const output = stripVTControlCharacters(stdout.text());
-    expect(output).toContain("spotuify spotify in ur terminal");
-    expect(output).toContain("Commands");
-    expect(output).toContain("auth [options]");
-    expect(output).toContain("--force-engine");
-    expect(output).toContain("http://127.0.0.1:8989/callback");
-    expect(output).toContain("Get started with spotuify auth");
+    expect(exitCode).toBe(0);
+    expect(output).toContain("┌  spotuify output");
+    expect(output).toContain("spotuify <command> [output options]");
+    expect(output).toContain("Output");
+    expect(output).toContain("Composition");
+    expect(output).toContain("Examples");
+    expect(output).toContain("spotuify status --field item.uri");
+    expect(stderr.text()).toBe("");
   });
+
+  test("renders subcommand help from live command metadata", async () => {
+    const stdout = new CaptureStream(true);
+    const exitCode = await runCli(["playlist", "--help"], {
+      io: {
+        stdout,
+        stderr: new CaptureStream(true),
+        env: { TERM: "xterm-256color" },
+      },
+    });
+
+    const output = stripVTControlCharacters(stdout.text());
+    expect(exitCode).toBe(0);
+    expect(output).toContain("spotuify playlist");
+    expect(output).toContain("add <playlist> <items...>");
+    expect(output).toContain("replace <playlist> [items...]");
+  });
+
+  test.each([
+    { outputOptions: ["--plain"] },
+    { outputOptions: ["--output", "plain"] },
+  ])(
+    "keeps explicitly plain parser errors undecorated on a TTY",
+    async ({ outputOptions }) => {
+      const stderr = new CaptureStream(true);
+      const exitCode = await runCli(
+        [...outputOptions, "not-a-command"],
+        {
+          io: {
+            stdout: new CaptureStream(true),
+            stderr,
+            env: { TERM: "xterm-256color" },
+          },
+        },
+      );
+
+      expect(exitCode).toBe(2);
+      expect(stderr.text()).toBe(
+        "error: unknown command 'not-a-command'\nRun 'spotuify --help' for usage.\n",
+      );
+      expect(stripVTControlCharacters(stderr.text())).toBe(stderr.text());
+    },
+  );
 
   test("renders both independent Spotify logins as one coherent auth flow", () => {
     const stdout = new CaptureStream(true);

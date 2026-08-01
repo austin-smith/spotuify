@@ -37,19 +37,6 @@ brew install austin-smith/tap/spotuify
 macOS, Linux, and Windows builds are available from
 [GitHub Releases](https://github.com/austin-smith/spotuify/releases).
 
-## Update
-
-### npm and Homebrew
-
-```sh
-spotuify update
-spotuify update --check
-```
-
-### Direct download
-
-Manually download the latest version from [GitHub Releases](https://github.com/austin-smith/spotuify/releases).
-
 ## First-time setup
 
 Requirements:
@@ -59,9 +46,47 @@ Requirements:
 
 Run the guided setup:
 
-```bash
+```sh
 spotuify auth
 ```
+
+## TUI
+
+Launch the interactive player:
+
+```sh
+spotuify
+```
+
+## CLI
+
+Use the CLI to control playback, search the catalog, manage your library and playlists, view and add
+to the queue, and switch devices. For scripts, add `--json` to get machine-readable output.
+
+Some examples:
+
+```sh
+spotuify status
+spotuify play
+spotuify search "laura marling"
+spotuify playlist list
+spotuify queue list
+spotuify device list
+spotuify status --json
+```
+
+Run `spotuify --help` for all commands and options. See the [CLI guide](docs/cli.md) for scripting,
+output formats, exit codes, and the playback service.
+
+## Update
+
+```sh
+spotuify update
+spotuify update --check
+```
+
+Direct-download installations can be updated from
+[GitHub Releases](https://github.com/austin-smith/spotuify/releases).
 
 ## Development
 

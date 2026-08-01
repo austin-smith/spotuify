@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SpotifyClient } from "../src/api/client.ts";
-import { addPlaylistItems, myPlaylists, playlistItems } from "../src/api/playlists.ts";
+import {
+  addPlaylistItems,
+  createPlaylist,
+  movePlaylistItems,
+  myPlaylists,
+  playlistItems,
+  removePlaylistItems,
+  replacePlaylistItems,
+  updatePlaylistDetails,
+} from "../src/api/playlists.ts";
 import type { TokenStore } from "../src/auth/tokens.ts";
 
 const realFetch = globalThis.fetch;
@@ -273,5 +282,145 @@ describe("addPlaylistItems", () => {
       ),
     ).rejects.toThrow("at most 100");
     expect(requested).toBe(false);
+  });
+});
+
+describe("playlist management", () => {
+  test("creates playlists on the current /me route", async () => {
+    let request: { path: string; method: string | undefined; body: unknown } | undefined;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      request = {
+        path: new URL(String(input)).pathname.replace("/v1", ""),
+        method: init?.method,
+        body: JSON.parse(String(init?.body)),
+      };
+      return Response.json({
+        id: "p",
+        name: "Road trip",
+        uri: "spotify:playlist:p",
+        public: false,
+        collaborative: true,
+        description: "Drive",
+        snapshot_id: "s1",
+      }, { status: 201 });
+    }) as unknown as typeof fetch;
+    const created = await createPlaylist(new SpotifyClient(tokens), {
+      name: "Road trip",
+      public: false,
+      collaborative: true,
+      description: "Drive",
+    });
+    expect(request).toEqual({
+      path: "/me/playlists",
+      method: "POST",
+      body: { name: "Road trip", public: false, collaborative: true, description: "Drive" },
+    });
+    expect(created.snapshotId).toBe("s1");
+  });
+
+  test("rejects an impossible public collaborative playlist locally", async () => {
+    await expect(
+      createPlaylist(new SpotifyClient(tokens), {
+        name: "Nope",
+        public: true,
+        collaborative: true,
+      }),
+    ).rejects.toThrow("must be private");
+  });
+
+  test("makes collaborative playlist creation explicitly private by default", async () => {
+    let body: unknown;
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({
+        id: "p",
+        name: "Shared",
+        uri: "spotify:playlist:p",
+        public: false,
+        collaborative: true,
+        description: null,
+        snapshot_id: "s1",
+      });
+    }) as unknown as typeof fetch;
+
+    await createPlaylist(new SpotifyClient(tokens), {
+      name: "Shared",
+      collaborative: true,
+    });
+    expect(body).toEqual({
+      name: "Shared",
+      public: false,
+      collaborative: true,
+    });
+  });
+
+  test("updates details without sending omitted fields", async () => {
+    let body: unknown;
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+    await updatePlaylistDetails(new SpotifyClient(tokens), "p", { description: "New" });
+    expect(body).toEqual({ description: "New" });
+  });
+
+  test("removes items using the current /items body and snapshot", async () => {
+    let request: { path: string; method: string | undefined; body: unknown } | undefined;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      request = {
+        path: new URL(String(input)).pathname.replace("/v1", ""),
+        method: init?.method,
+        body: JSON.parse(String(init?.body)),
+      };
+      return Response.json({ snapshot_id: "s2" });
+    }) as unknown as typeof fetch;
+    expect(
+      await removePlaylistItems(
+        new SpotifyClient(tokens),
+        "p",
+        ["spotify:track:a"],
+        "s1",
+      ),
+    ).toBe("s2");
+    expect(request).toEqual({
+      path: "/playlists/p/items",
+      method: "DELETE",
+      body: { items: [{ uri: "spotify:track:a" }], snapshot_id: "s1" },
+    });
+  });
+
+  test("reorders a contiguous range without replacing playlist items", async () => {
+    let body: unknown;
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ snapshot_id: "s3" });
+    }) as unknown as typeof fetch;
+    expect(
+      await movePlaylistItems(new SpotifyClient(tokens), "p", {
+        from: 4,
+        before: 1,
+        length: 2,
+        snapshotId: "s2",
+      }),
+    ).toBe("s3");
+    expect(body).toEqual({
+      range_start: 4,
+      insert_before: 1,
+      range_length: 2,
+      snapshot_id: "s2",
+    });
+  });
+
+  test("replaces or clears items through the shared update endpoint", async () => {
+    const bodies: unknown[] = [];
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ snapshot_id: `s${bodies.length}` });
+    }) as unknown as typeof fetch;
+    expect(
+      await replacePlaylistItems(new SpotifyClient(tokens), "p", ["spotify:track:a"]),
+    ).toBe("s1");
+    expect(await replacePlaylistItems(new SpotifyClient(tokens), "p", [])).toBe("s2");
+    expect(bodies).toEqual([{ uris: ["spotify:track:a"] }, { uris: [] }]);
   });
 });

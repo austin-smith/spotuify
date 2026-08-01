@@ -1,50 +1,76 @@
 import * as clack from "@clack/prompts";
 import ansiEscapes from "ansi-escapes";
+import type { Command, Help, Option } from "commander";
 import { createInterface } from "node:readline/promises";
-import type { Readable, Writable } from "node:stream";
-import { styleText, type InspectColor } from "node:util";
+import { Writable, type Readable } from "node:stream";
+import {
+  stripVTControlCharacters,
+  styleText,
+  type InspectColor,
+} from "node:util";
 import terminalHyperlinks from "supports-hyperlinks";
 import type { Me } from "../api/types.ts";
 import type { AuthenticationEvent } from "../auth/flow.ts";
 import type { ClientIdSetupEvent } from "../auth/setup.ts";
-import { REDIRECT_URI } from "../config.ts";
 import type {
   EngineAuthenticationEvent,
   EngineAuthenticationResult,
 } from "../engine/librespot.ts";
 import type { UpdateCommandResult } from "../update-command.ts";
 
-const COMMANDS = [
-  ["auth [options]", "Authorize the Web API and terminal playback"],
-  ["whoami", "Show the authenticated Spotify account"],
-  ["licenses", "Show software licenses and third-party notices"],
-  ["update [--check]", "Install an update, or only check for one"],
-  ["-v, --version", "Show the product version"],
-] as const;
-
-const AUTH_USAGE = "spotuify auth [--force] [--force-engine] [--reset]";
-const UPDATE_USAGE = "spotuify update [--check]";
-
-export const PLAIN_HELP = `spotuify — spotify in ur terminal
-
-Usage:
-  spotuify                   Launch the TUI
-  spotuify auth [options]    Authorize with Spotify
-  spotuify whoami            Show the authenticated account
-  spotuify licenses          Show software licenses and third-party notices
-  spotuify update [--check]  Install an available update
-  spotuify -v, --version     Show the product version
-
-Auth options:
-  --force                    Reauthorize the Web API
-  --force-engine             Reauthorize terminal playback
-  --reset                    Replace the configured Spotify Client ID
-
-Redirect URI to register in your Spotify app:
-  ${REDIRECT_URI}
-`;
-
 type TtyWritable = Writable & { isTTY?: boolean; columns?: number };
+
+class PresentationBuffer extends Writable {
+  readonly chunks: string[] = [];
+  readonly isTTY = true;
+
+  constructor(readonly columns: number) {
+    super();
+  }
+
+  override _write(
+    chunk: string | Uint8Array,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.chunks.push(chunk.toString());
+    callback();
+  }
+
+  text(): string {
+    return this.chunks.join("");
+  }
+
+  getColorDepth(): number {
+    return 8;
+  }
+
+  hasColors(): boolean {
+    return true;
+  }
+}
+
+class NoColorWritable extends Writable {
+  readonly isTTY: boolean;
+  readonly columns?: number;
+
+  constructor(private readonly target: Writable) {
+    super();
+    const terminal = target as TtyWritable;
+    this.isTTY = terminal.isTTY === true;
+    this.columns = terminal.columns;
+  }
+
+  override _write(
+    chunk: string | Uint8Array,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.target.write(stripVTControlCharacters(chunk.toString()), callback);
+  }
+}
+
+export type HumanPresentation = "detail" | "success" | "stream";
 
 export interface CliPresenterOptions {
   input?: Readable;
@@ -52,6 +78,7 @@ export interface CliPresenterOptions {
   stderr?: Writable;
   env?: NodeJS.ProcessEnv;
   hyperlinks?: boolean;
+  rich?: boolean;
 }
 
 export class CliCancelledError extends Error {
@@ -77,8 +104,25 @@ export function supportsRichOutput(
   );
 }
 
+function supportsColorOutput(
+  output: Writable,
+  environment: NodeJS.ProcessEnv,
+): boolean {
+  return (
+    supportsRichOutput(output, environment) &&
+    environment["NO_COLOR"] === undefined
+  );
+}
+
 function ensureNewline(message: string): string {
   return message.endsWith("\n") ? message : `${message}\n`;
+}
+
+function terminalSafe(value: string): string {
+  return stripVTControlCharacters(value).replace(
+    /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g,
+    "",
+  );
 }
 
 function accountName(me: Me): string {
@@ -106,6 +150,8 @@ export class CliPresenter {
   readonly stderr: Writable;
   readonly richStdout: boolean;
   readonly richStderr: boolean;
+  readonly colorStdout: boolean;
+  readonly colorStderr: boolean;
   readonly hyperlinks: boolean;
 
   constructor({
@@ -114,13 +160,22 @@ export class CliPresenter {
     stderr = process.stderr,
     env = process.env,
     hyperlinks = terminalHyperlinks.stdout,
+    rich = true,
   }: CliPresenterOptions = {}) {
     this.input = input;
-    this.stdout = stdout;
-    this.stderr = stderr;
-    this.richStdout = supportsRichOutput(stdout, env);
-    this.richStderr = supportsRichOutput(stderr, env);
-    this.hyperlinks = hyperlinks;
+    this.richStdout = rich && supportsRichOutput(stdout, env);
+    this.richStderr = rich && supportsRichOutput(stderr, env);
+    this.colorStdout = rich && supportsColorOutput(stdout, env);
+    this.colorStderr = rich && supportsColorOutput(stderr, env);
+    this.stdout =
+      this.richStdout && !this.colorStdout
+        ? new NoColorWritable(stdout)
+        : stdout;
+    this.stderr =
+      this.richStderr && !this.colorStderr
+        ? new NoColorWritable(stderr)
+        : stderr;
+    this.hyperlinks = hyperlinks && this.colorStdout;
   }
 
   private style(format: InspectColor | readonly InspectColor[], text: string, output: Writable) {
@@ -180,83 +235,250 @@ export class CliPresenter {
     this.line(this.stdout, url);
   }
 
-  showHelp(output: Writable = this.stdout): void {
-    const rich = output === this.stderr ? this.richStderr : this.richStdout;
-    if (!rich) {
-      output.write(PLAIN_HELP);
-      return;
-    }
-
-    this.intro("spotify in ur terminal", output);
-    this.guidedMessage(
-      [
-        this.bold("Commands", output),
-        "",
-        `  ${this.brand("spotuify", output)}             Launch the TUI`,
-        ...COMMANDS.map(
-          ([command, description]) =>
-            `  ${this.brand(command.padEnd(21), output)} ${description}`,
-        ),
-      ],
-      output,
+  private helpRows(
+    entries: { term: string; description: string }[],
+    helper: Help,
+    output: Writable,
+  ): string[] {
+    if (entries.length === 0) return [];
+    const termWidth = Math.max(
+      ...entries.map(({ term }) => helper.displayWidth(term)),
     );
-    this.guidedMessage(
-      [
-        this.bold("Auth options", output),
-        "",
-        `  ${this.brand("--force".padEnd(21), output)} Reauthorize the Web API`,
-        `  ${this.brand("--force-engine".padEnd(21), output)} Reauthorize terminal playback`,
-        `  ${this.brand("--reset".padEnd(21), output)} Replace the Spotify Client ID`,
-      ],
-      output,
+    return entries.flatMap(({ term, description }) =>
+      helper
+        .formatItem(
+          this.brand(term, output),
+          termWidth,
+          this.dim(description, output),
+          helper,
+        )
+        .split("\n"),
     );
-    this.guidedMessage(
-      [this.bold("Spotify redirect URI", output), "", `  ${REDIRECT_URI}`],
-      output,
-    );
-    clack.outro(`Get started with ${this.brand("spotuify auth", output)}`, {
-      output,
-      withGuide: true,
-    });
   }
 
-  usageError(message: string, command: "auth" | "update" | "unknown"): void {
-    const usage = command === "auth" ? AUTH_USAGE : command === "update" ? UPDATE_USAGE : null;
-    if (!this.richStderr) {
-      this.line(this.stderr, message);
-      if (usage !== null) this.line(this.stderr, `Usage: ${usage}`);
-      else {
-        this.line(this.stderr);
-        this.stderr.write(PLAIN_HELP);
+  private helpSection(
+    title: string,
+    rows: string[],
+    output: Writable,
+  ): void {
+    if (rows.length === 0) return;
+    this.guidedMessage([this.bold(title, output), "", ...rows], output);
+  }
+
+  private groupedHelpSections<T extends Command | Option>(
+    unsorted: T[],
+    visible: T[],
+    groupFor: (item: T) => string,
+    rowFor: (item: T) => { term: string; description: string },
+    helper: Help,
+    output: Writable,
+  ): void {
+    const groups = helper.groupItems(unsorted, visible, groupFor);
+    for (const [title, items] of groups) {
+      this.helpSection(
+        title.replace(/:$/, ""),
+        this.helpRows(items.map(rowFor), helper, output),
+        output,
+      );
+    }
+  }
+
+  /** Render Commander metadata using the same Clack language as auth and update. */
+  formatHelp(command: Command, helper: Help): string {
+    const columns = Math.max(
+      52,
+      Math.min((this.stdout as TtyWritable).columns ?? 88, 120),
+    );
+    const output = new PresentationBuffer(columns);
+    helper.helpWidth = columns - 6;
+    const root = command.parent === null;
+    this.intro(root ? "spotify in ur terminal" : command.name(), output);
+
+    const usage = helper.commandUsage(command);
+    const description = helper.commandDescription(command);
+    this.guidedMessage(
+      [
+        ...(description.length > 0 && !root
+          ? [this.bold(description, output), ""]
+          : []),
+        `${this.dim("Usage", output)}  ${this.brand(usage, output)}`,
+      ],
+      output,
+      0,
+    );
+
+    const arguments_ = helper.visibleArguments(command).map((argument) => ({
+      term: helper.argumentTerm(argument),
+      description: helper.argumentDescription(argument),
+    }));
+    this.helpSection(
+      "Arguments",
+      this.helpRows(arguments_, helper, output),
+      output,
+    );
+
+    this.groupedHelpSections(
+      [...command.commands],
+      helper.visibleCommands(command),
+      (child) => child.helpGroup() || "Commands",
+      (child) => ({
+        term: helper.subcommandTerm(child),
+        description: helper.subcommandDescription(child),
+      }),
+      helper,
+      output,
+    );
+
+    this.groupedHelpSections(
+      [...command.options],
+      helper.visibleOptions(command),
+      (option) => option.helpGroupHeading ?? "Options",
+      (option) => ({
+        term: helper.optionTerm(option),
+        description: helper.optionDescription(option),
+      }),
+      helper,
+      output,
+    );
+
+    if (!root) {
+      const inheritedOptions = [];
+      for (
+        let ancestor = command.parent;
+        ancestor !== null;
+        ancestor = ancestor.parent
+      ) {
+        inheritedOptions.push(...ancestor.options);
       }
-      return;
+      this.groupedHelpSections(
+        inheritedOptions,
+        helper.visibleGlobalOptions(command),
+        (option) => option.helpGroupHeading ?? "Global options",
+        (option) => ({
+          term: helper.optionTerm(option),
+          description: helper.optionDescription(option),
+        }),
+        helper,
+        output,
+      );
     }
 
-    this.intro("command error", this.stderr);
-    clack.log.error(message, { output: this.stderr, withGuide: true });
-    if (usage === null) {
-      this.guidedMessage(`Run ${this.bold("spotuify --help", this.stderr)} to see every command.`, this.stderr, 0);
-    } else {
-      this.guidedMessage(`${this.dim("Usage", this.stderr)}  ${usage}`, this.stderr, 0);
+    if (root) {
+      this.guidedMessage(
+        [
+          this.bold("More about structured output", output),
+          "",
+          this.brand("spotuify help output", output),
+        ],
+        output,
+      );
     }
-    clack.outro("Nothing changed", { output: this.stderr, withGuide: true });
+
+    clack.outro("", { output, withGuide: true });
+    return output.text();
   }
 
-  showAccount(me: Me): void {
-    if (!this.richStdout) {
-      const details = [me.product, me.country].filter((value) => value !== undefined);
-      const suffix = details.length > 0 ? ` (${details.join(", ")})` : "";
-      this.line(this.stdout, `${accountName(me)}${suffix}`);
-      return;
+  /** Render the structured-output help topic from the root option metadata. */
+  formatOutputHelp(command: Command, helper: Help): string {
+    const columns = Math.max(
+      52,
+      Math.min((this.stdout as TtyWritable).columns ?? 88, 120),
+    );
+    const output = new PresentationBuffer(columns);
+    helper.helpWidth = columns - 6;
+    this.intro("output", output);
+    this.guidedMessage(
+      [
+        `${this.dim("Usage", output)}  ${this.brand(
+          "spotuify <command> [output options]",
+          output,
+        )}`,
+      ],
+      output,
+      0,
+    );
+
+    for (const title of ["Output", "Composition"]) {
+      const options = command.options.filter(
+        (option) => option.helpGroupHeading === title && !option.hidden,
+      );
+      this.helpSection(
+        title,
+        this.helpRows(
+          options.map((option) => ({
+            term: helper.optionTerm(option),
+            description: helper.optionDescription(option),
+          })),
+          helper,
+          output,
+        ),
+        output,
+      );
     }
 
-    this.intro("whoami");
-    clack.log.success(`Signed in as ${this.bold(accountName(me))}`, {
-      output: this.stdout,
+    this.helpSection(
+      "Examples",
+      [
+        "spotuify status --json",
+        "spotuify queue list --output json",
+        "spotuify status --field item.uri",
+        "spotuify status --template '{item.name} — {item.artist}'",
+        "spotuify pause --quiet",
+      ].map((example) => this.brand(example, output)),
+      output,
+    );
+    clack.outro("", { output, withGuide: true });
+    return output.text();
+  }
+
+  showResult(
+    command: string,
+    message: string,
+    presentation: Exclude<HumanPresentation, "stream"> = "detail",
+  ): void {
+    if (!this.richStdout) {
+      this.line(this.stdout, message);
+      return;
+    }
+    this.intro(command.replaceAll(".", " "));
+    if (presentation === "success") {
+      clack.log.success(message, {
+        output: this.stdout,
+        withGuide: true,
+      });
+    } else {
+      const lines = message.split("\n");
+      const first = lines.findIndex((line) => line.length > 0);
+      if (first >= 0) lines[first] = this.bold(lines[first]!);
+      this.guidedMessage(lines, this.stdout, 0);
+    }
+    clack.outro("", { output: this.stdout, withGuide: true });
+  }
+
+  showCommandError(message: string, hint?: string): void {
+    message = terminalSafe(message);
+    hint = hint === undefined ? undefined : terminalSafe(hint);
+    if (!this.richStderr) {
+      this.line(this.stderr, `Error: ${message}`);
+      if (hint !== undefined) this.line(this.stderr, `Hint: ${hint}`);
+      return;
+    }
+    this.intro("error", this.stderr);
+    clack.log.error(message, {
+      output: this.stderr,
       withGuide: true,
     });
-    this.guidedMessage(accountDetails(me).map((detail) => this.dim(detail)), this.stdout, 0);
-    clack.outro(this.brand("Authenticated"), { output: this.stdout, withGuide: true });
+    if (hint !== undefined) {
+      this.guidedMessage(
+        `${this.dim("Hint", this.stderr)}  ${hint}`,
+        this.stderr,
+        0,
+      );
+    }
+    clack.outro("Command failed", {
+      output: this.stderr,
+      withGuide: true,
+    });
   }
 
   beginAuth(): void {
@@ -555,12 +777,6 @@ export class CliPresenter {
 
   fatal(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
-    if (!this.richStderr) {
-      this.line(this.stderr, message);
-      return;
-    }
-    this.intro("error", this.stderr);
-    clack.log.error(message, { output: this.stderr, withGuide: true });
-    clack.outro("Command failed", { output: this.stderr, withGuide: true });
+    this.showCommandError(message);
   }
 }

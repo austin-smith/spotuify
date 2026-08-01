@@ -89,6 +89,8 @@ export interface PlaybackSlice {
   volumePercent: number | null;
   deviceId: string | null;
   deviceName: string | null;
+  /** Last context confirmed by the Web API or selected through this client. */
+  contextUri: string | null;
   /**
    * Whether a successful source has established that a Spotify playback session exists.
    *
@@ -335,6 +337,7 @@ function applyState(state: PlaybackState | null): Partial<PlaybackSlice> {
       durationMs: 0,
       deviceId: null,
       deviceName: null,
+      contextUri: null,
       sessionPresence: "absent",
       ready: true,
     };
@@ -363,6 +366,7 @@ function applyState(state: PlaybackState | null): Partial<PlaybackSlice> {
     volumePercent: state.device?.volume_percent ?? null,
     deviceId: state.device?.id ?? null,
     deviceName: state.device?.name ?? null,
+    contextUri: state.context?.uri ?? null,
     sessionPresence: "present",
     progressMs: anchor.progressMs,
     durationMs,
@@ -951,6 +955,7 @@ function applyNativeEvent(
         isPlaying: false,
         progressMs: 0,
         durationMs: 0,
+        contextUri: null,
       });
       return null;
     case "volume_changed":
@@ -1003,6 +1008,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
   volumePercent: null,
   deviceId: null,
   deviceName: null,
+  contextUri: null,
   sessionPresence: "unknown",
   progressMs: 0,
   durationMs: 0,
@@ -1045,6 +1051,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         volumePercent: null,
         deviceId: null,
         deviceName: null,
+        contextUri: null,
         sessionPresence: "unknown",
         progressMs: 0,
         durationMs: 0,
@@ -1066,7 +1073,12 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         durationMs: startingState.durationMs,
       };
       confirmFromStore(startingState);
-      set({ sessionPresence: "unknown", ready: false, pendingSelection: null });
+      set({
+        contextUri: null,
+        sessionPresence: "unknown",
+        ready: false,
+        pendingSelection: null,
+      });
     }
     // An unresolved read belongs to the previous run. Its own identity guards keep it from
     // mutating this run, and the new run must issue an independent initial reconciliation.
@@ -1378,6 +1390,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         requiresFollowUp: selectionRequiresFollowUp(confirmation, state),
         lane: routeNative ? "native" : "web",
       },
+      contextUri: options.contextUri ?? null,
       error: null,
     });
     let webMutation = routeNative ? null : beginWebMutation();

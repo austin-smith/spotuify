@@ -75,6 +75,26 @@ interface PlaylistMutation {
   snapshot_id?: unknown;
 }
 
+export interface CreatedPlaylist {
+  id: string;
+  name: string;
+  uri: string;
+  public: boolean | null;
+  collaborative: boolean;
+  description: string | null;
+  snapshotId: string;
+}
+
+interface RawCreatedPlaylist {
+  id?: unknown;
+  name?: unknown;
+  uri?: unknown;
+  public?: unknown;
+  collaborative?: unknown;
+  description?: unknown;
+  snapshot_id?: unknown;
+}
+
 function toPlaylist(raw: RawPlaylist, meId: string): Playlist {
   const ownerId = raw.owner?.id ?? "";
   return {
@@ -193,6 +213,134 @@ export async function addPlaylistItems(
     throw new Error("spotify did not confirm the playlist update");
   }
   return response.snapshot_id;
+}
+
+function confirmedSnapshot(response: PlaylistMutation | null): string {
+  if (typeof response?.snapshot_id !== "string" || response.snapshot_id.length === 0) {
+    throw new Error("spotify did not confirm the playlist update");
+  }
+  return response.snapshot_id;
+}
+
+/** Create an empty playlist for the current user using Spotify's current `/me/playlists` route. */
+export async function createPlaylist(
+  client: SpotifyClient,
+  options: {
+    name: string;
+    public?: boolean;
+    collaborative?: boolean;
+    description?: string;
+  },
+): Promise<CreatedPlaylist> {
+  const name = options.name.trim();
+  if (name.length === 0) throw new Error("playlist name cannot be empty");
+  if (options.collaborative === true && options.public === true) {
+    throw new Error("a collaborative playlist must be private");
+  }
+  const visibility = options.collaborative === true ? false : options.public;
+  const response = await client.request<RawCreatedPlaylist>("/me/playlists", {
+    method: "POST",
+    body: {
+      name,
+      ...(visibility !== undefined ? { public: visibility } : {}),
+      ...(options.collaborative !== undefined ? { collaborative: options.collaborative } : {}),
+      ...(options.description !== undefined ? { description: options.description } : {}),
+    },
+  });
+  if (
+    typeof response?.id !== "string" ||
+    typeof response.name !== "string" ||
+    typeof response.uri !== "string" ||
+    typeof response.snapshot_id !== "string"
+  ) {
+    throw new Error("spotify returned an invalid created playlist");
+  }
+  return {
+    id: response.id,
+    name: response.name,
+    uri: response.uri,
+    public: typeof response.public === "boolean" ? response.public : null,
+    collaborative: response.collaborative === true,
+    description: typeof response.description === "string" ? response.description : null,
+    snapshotId: response.snapshot_id,
+  };
+}
+
+/** Change playlist details. Omitted fields are left untouched. */
+export async function updatePlaylistDetails(
+  client: SpotifyClient,
+  playlistId: string,
+  changes: {
+    name?: string;
+    public?: boolean;
+    collaborative?: boolean;
+    description?: string;
+  },
+): Promise<void> {
+  if (Object.keys(changes).length === 0) throw new Error("at least one playlist change is required");
+  if (changes.name !== undefined && changes.name.trim().length === 0) {
+    throw new Error("playlist name cannot be empty");
+  }
+  if (changes.collaborative === true && changes.public === true) {
+    throw new Error("a collaborative playlist must be private");
+  }
+  await client.request(`/playlists/${playlistId}`, { method: "PUT", body: changes });
+}
+
+/** Remove every occurrence of each URI, optionally guarded by a playlist snapshot. */
+export async function removePlaylistItems(
+  client: SpotifyClient,
+  playlistId: string,
+  uris: readonly string[],
+  snapshotId?: string,
+): Promise<string> {
+  if (uris.length === 0) throw new Error("at least one playlist item is required");
+  if (uris.length > 100) throw new Error("spotify accepts at most 100 playlist items per request");
+  const response = await client.request<PlaylistMutation>(`/playlists/${playlistId}/items`, {
+    method: "DELETE",
+    body: {
+      items: uris.map((uri) => ({ uri })),
+      ...(snapshotId !== undefined ? { snapshot_id: snapshotId } : {}),
+    },
+  });
+  return confirmedSnapshot(response);
+}
+
+/** Move a contiguous range inside a playlist without replacing any items. */
+export async function movePlaylistItems(
+  client: SpotifyClient,
+  playlistId: string,
+  options: { from: number; before: number; length?: number; snapshotId?: string },
+): Promise<string> {
+  if (!Number.isInteger(options.from) || options.from < 0) throw new Error("from must be at least 0");
+  if (!Number.isInteger(options.before) || options.before < 0) throw new Error("before must be at least 0");
+  if (options.length !== undefined && (!Number.isInteger(options.length) || options.length < 1)) {
+    throw new Error("length must be at least 1");
+  }
+  const response = await client.request<PlaylistMutation>(`/playlists/${playlistId}/items`, {
+    method: "PUT",
+    body: {
+      range_start: options.from,
+      insert_before: options.before,
+      ...(options.length !== undefined ? { range_length: options.length } : {}),
+      ...(options.snapshotId !== undefined ? { snapshot_id: options.snapshotId } : {}),
+    },
+  });
+  return confirmedSnapshot(response);
+}
+
+/** Replace every playlist item atomically, or clear the playlist with an empty URI array. */
+export async function replacePlaylistItems(
+  client: SpotifyClient,
+  playlistId: string,
+  uris: readonly string[],
+): Promise<string> {
+  if (uris.length > 100) throw new Error("spotify accepts at most 100 replacement items");
+  const response = await client.request<PlaylistMutation>(`/playlists/${playlistId}/items`, {
+    method: "PUT",
+    body: { uris: [...uris] },
+  });
+  return confirmedSnapshot(response);
 }
 
 /**
