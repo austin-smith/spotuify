@@ -545,6 +545,70 @@ describe("selection transitions", () => {
     expect(usePlayback.getState().item?.uri).toBe(REMOTE_TRACK.uri);
   });
 
+  test("keeps a context-only selection through a stale item and verifies its context", async () => {
+    const selectedContextUri = "spotify:playlist:selected";
+    const staleState: PlaybackState = {
+      ...REMOTE_STATE,
+      context: { type: "playlist", uri: "spotify:playlist:previous" },
+    };
+    const selectedState: PlaybackState = {
+      ...REMOTE_STATE,
+      item: { ...REMOTE_TRACK, id: "selected", uri: "spotify:track:selected" },
+      context: { type: "playlist", uri: selectedContextUri },
+    };
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return reads < 3 ? staleState : selectedState;
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => reads === 1);
+    await usePlayback.getState().playSelection(
+      { contextUri: selectedContextUri },
+      { label: "Selected playlist" },
+    );
+
+    await eventually(() => reads >= 2, COMMAND_RECONCILE_MS + 500);
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      SELECTION_RECONCILE_RETRY_MS + 500,
+    );
+    expect(reads).toBe(3);
+    expect(usePlayback.getState().item?.uri).toBe("spotify:track:selected");
+  });
+
+  test("requires a follow-up snapshot for a context that was already active", async () => {
+    const contextUri = "spotify:playlist:selected";
+    let reads = 0;
+    const player = {
+      state: async () => {
+        reads++;
+        return { ...REMOTE_STATE, context: { type: "playlist", uri: contextUri } };
+      },
+      play: async () => {},
+    } as unknown as PlayerApi;
+
+    stop = usePlayback.getState().start(player, undefined, "account");
+    await eventually(() => reads === 1);
+    await usePlayback.getState().playSelection(
+      { contextUri },
+      { label: "Selected playlist" },
+    );
+
+    await eventually(() => reads >= 2, COMMAND_RECONCILE_MS + 500);
+    expect(usePlayback.getState().pendingSelection).not.toBeNull();
+    await eventually(
+      () => usePlayback.getState().pendingSelection === null,
+      SELECTION_RECONCILE_RETRY_MS + 500,
+    );
+    expect(reads).toBe(3);
+  });
+
   test("a failed superseded request cannot clear or fault the newer selection", async () => {
     const plays: Array<{
       resolve: () => void;

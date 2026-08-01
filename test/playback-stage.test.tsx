@@ -18,6 +18,7 @@ const PENDING: PendingPlaybackSelection = {
   requestId: 1,
   label: TRACK.name,
   item: TRACK,
+  confirmation: { kind: "item", uri: TRACK.uri },
 };
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
@@ -89,7 +90,12 @@ test("empty → starting → playing never returns to the empty surface", async 
 test("a context without track metadata gets a restrained starting surface", async () => {
   setup = await createTestRenderer({ width: 80, height: 24 });
   createRoot(setup.renderer).render(
-    stage(null, { requestId: 2, label: "Daily Mix", item: null }),
+    stage(null, {
+      requestId: 2,
+      label: "Daily Mix",
+      item: null,
+      confirmation: { kind: "context", uri: "spotify:playlist:daily-mix" },
+    }),
   );
   await Bun.sleep(20);
   await setup.renderOnce();

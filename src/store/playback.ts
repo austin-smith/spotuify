@@ -41,12 +41,25 @@ export interface PlaybackSelectionPreview {
   item?: PlayableItem;
 }
 
+export interface PlaybackSelectionOptions {
+  contextUri?: string;
+  uris?: string[];
+  offset?: number;
+}
+
+export type PlaybackSelectionConfirmation =
+  | { kind: "item"; uri: string }
+  | { kind: "context"; uri: string }
+  | null;
+
 export interface PendingPlaybackSelection {
   /** Monotonic identity so an older command cannot clear a newer selection. */
   requestId: number;
   label: string;
   /** Full metadata is available for track rows and lets an empty canvas render immediately. */
   item: PlayableItem | null;
+  /** Requested playback identity used to reject stale post-command Web snapshots. */
+  confirmation: PlaybackSelectionConfirmation;
 }
 
 export interface PlaybackStartOptions {
@@ -98,11 +111,10 @@ export interface PlaybackSlice {
   reconcileSoon: () => void;
   /** Record a successful remote-device transfer before Spotify's next playback snapshot arrives. */
   confirmDeviceTransfer: (deviceId: string, deviceName: string) => void;
-  playSelection: (options: {
-    contextUri?: string;
-    uris?: string[];
-    offset?: number;
-  }, preview?: PlaybackSelectionPreview) => Promise<void>;
+  playSelection: (
+    options: PlaybackSelectionOptions,
+    preview?: PlaybackSelectionPreview,
+  ) => Promise<void>;
   togglePlay: () => Promise<void>;
   next: () => Promise<void>;
   previous: () => Promise<void>;
@@ -525,12 +537,24 @@ function isNativeDevice(deviceId: string | null): boolean {
   );
 }
 
-function selectionMatchesItem(
+function selectionMatchesState(
   selection: PendingPlaybackSelection | null,
-  item: PlayableItem | null,
+  state: PlaybackState | null,
 ): boolean {
-  if (selection === null || item === null) return false;
-  return selection.item === null || selection.item.uri === item.uri;
+  if (selection === null || selection.confirmation === null || state === null) return false;
+  return selection.confirmation.kind === "item"
+    ? state.item?.uri === selection.confirmation.uri
+    : state.context?.uri === selection.confirmation.uri;
+}
+
+function selectionConfirmationFor(
+  options: PlaybackSelectionOptions,
+  preview: PlaybackSelectionPreview | undefined,
+): PlaybackSelectionConfirmation {
+  const itemUri = preview?.item?.uri ?? options.uris?.[0];
+  if (itemUri !== undefined) return { kind: "item", uri: itemUri };
+  if (options.contextUri !== undefined) return { kind: "context", uri: options.contextUri };
+  return null;
 }
 
 function clearPendingSelection(
@@ -957,7 +981,13 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         pollNotBefore = 0;
         const next = applyState(state);
         const pendingSelection = get().pendingSelection;
-        if (selectionMatchesItem(pendingSelection, state?.item ?? null)) {
+        const selectionMatches = selectionMatchesState(pendingSelection, state);
+        // A context-only command has no expected item with which to distinguish a fresh response
+        // from a stale snapshot of the same context. Always require its one bounded follow-up read.
+        const contextNeedsFollowUp =
+          pendingSelection?.confirmation?.kind === "context" &&
+          selectionConfirmationRetries === 0;
+        if (selectionMatches && !contextNeedsFollowUp) {
           selectionConfirmationRetries = 0;
           next.pendingSelection = null;
         } else if (pendingSelection !== null) {
@@ -1073,6 +1103,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         requestId,
         label: preview?.label ?? "selection",
         item: preview?.item ?? null,
+        confirmation: selectionConfirmationFor(options, preview),
       },
       error: null,
     });
