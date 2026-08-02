@@ -35,6 +35,9 @@ export function isPlainShortcut(
   );
 }
 
+/** What this keyboard labels the modifier next to the spacebar; the key itself is the same. */
+const OPTION_KEY = process.platform === "darwin" ? "opt" : "alt";
+
 /**
  * The full keymap, as shown by `?`.
  *
@@ -69,39 +72,27 @@ export const KEYMAP: KeyGroup[] = [
     ],
   },
   {
-    label: "IN SEARCH",
+    // Shared by every list overlay; repeating these per view overflowed an 80×24 card. Home/End
+    // also jump to the edges but are absent from laptop keyboards, so the option chord is shown.
+    label: "LISTS",
     bindings: [
-      { key: "tab / ⇧tab", action: "next / previous scope" },
-      { key: "↑/↓", action: "move" },
+      { key: "↑/↓", action: "move / scroll" },
       { key: "ctrl+p/n", action: "move" },
-      { key: "pgup/pgdn", action: "move a page" },
-      // Home/End also work but are absent from laptop keyboards, so the advertised chord is the
-      // one every keyboard can press: Option on Mac, Alt elsewhere.
-      { key: "opt/alt+↑/↓", action: "top / bottom" },
-      { key: "↵", action: "play / open" },
-      { key: "ctrl+↵", action: "queue it" },
-      { key: "ctrl+space", action: "actions" },
+      { key: "pgup/pgdn", action: "a page" },
+      { key: `${OPTION_KEY}+↑/↓`, action: "top / bottom" },
+      { key: "f", action: "follow lyrics" },
+      { key: "r", action: "refresh queue" },
       { key: "esc", action: "back / close" },
     ],
   },
   {
-    label: "IN LYRICS",
+    label: "SEARCH",
     bindings: [
-      { key: "↑/↓", action: "scroll" },
-      { key: "pgup/pgdn", action: "scroll a page" },
-      { key: "opt/alt+↑/↓", action: "top / bottom" },
-      { key: "f", action: "follow along" },
-      { key: "esc", action: "close" },
-    ],
-  },
-  {
-    label: "IN QUEUE",
-    bindings: [
-      { key: "↑/↓", action: "scroll" },
-      { key: "pgup/pgdn", action: "scroll a page" },
-      { key: "opt/alt+↑/↓", action: "top / bottom" },
-      { key: "r", action: "refresh" },
-      { key: "esc", action: "close" },
+      // Spelled out: the ⇧ glyph has ambiguous terminal width and can misalign the column.
+      { key: "tab / shift+tab", action: "next / previous scope" },
+      { key: "↵", action: "play / open" },
+      { key: "ctrl+↵", action: "queue it" },
+      { key: "ctrl+space", action: "actions" },
     ],
   },
   {
