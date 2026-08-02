@@ -48,6 +48,8 @@ export interface LyricsSlice {
   /** Load the new track's lyric if the overlay is open and the track actually changed. */
   follow: (item: PlayableItem | null) => void;
   scrollBy: (delta: number, viewport: number) => void;
+  /** Jump straight to either end of the lyric, which counts as taking over like any hand scroll. */
+  scrollToEdge: (edge: "top" | "bottom", viewport: number) => void;
   /** Programmatic scroll, which does not count as taking over. */
   scrollTo: (offset: number) => void;
   setFollowing: (following: boolean) => void;
@@ -175,6 +177,12 @@ export const useLyrics = create<LyricsSlice>((set, get) => ({
     const max = Math.max(0, total - viewport);
     // Scrolling by hand is how the reader says they want to look somewhere else.
     set({ offset: Math.min(max, Math.max(0, offset + delta)), following: false });
+  },
+
+  scrollToEdge(edge, viewport) {
+    const { total } = get();
+    const max = Math.max(0, total - viewport);
+    set({ offset: edge === "top" ? 0 : max, following: false });
   },
 
   scrollTo(offset) {

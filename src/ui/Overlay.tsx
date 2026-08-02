@@ -40,6 +40,20 @@ export function overlayListHeight(height: number, extraRows = 0): number {
   return Math.max(1, height - CHROME_ROWS - extraRows);
 }
 
+/**
+ * Rows a wheel/trackpad event asks to move by, signed, or null for non-scroll mouse input.
+ *
+ * Shared by every overlay that accepts wheel input so a tick means the same distance everywhere.
+ * What that movement does — shift a scroll offset or walk a selection — stays with the overlay,
+ * because those are different models and only the overlay knows which one it has.
+ */
+export function scrollSteps(event: MouseEvent): number | null {
+  const direction = event.scroll?.direction;
+  if (direction !== "up" && direction !== "down") return null;
+  const rows = Math.max(1, Math.trunc(event.scroll?.delta ?? 1));
+  return direction === "up" ? -rows : rows;
+}
+
 /** The `◈ TITLE` header most overlays use. */
 export function OverlayTitle({ glyph, title }: { glyph: string; title: string }) {
   return (

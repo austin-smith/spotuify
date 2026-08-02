@@ -1,7 +1,8 @@
+import type { MouseEvent } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { afterEach, describe, expect, test } from "bun:test";
-import { Overlay, overlayListHeight } from "../src/ui/Overlay.tsx";
+import { Overlay, overlayListHeight, scrollSteps } from "../src/ui/Overlay.tsx";
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
 
@@ -83,5 +84,29 @@ describe("overlayListHeight", () => {
   test("never promises a negative number of rows", () => {
     expect(overlayListHeight(1)).toBeGreaterThanOrEqual(1);
     expect(overlayListHeight(0)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/** Only the scroll fields matter to the helper; the rest of the renderer event is irrelevant. */
+function wheel(scroll: { direction: string; delta?: number } | undefined): MouseEvent {
+  return { scroll } as unknown as MouseEvent;
+}
+
+describe("scrollSteps", () => {
+  test("signs the rows by direction", () => {
+    expect(scrollSteps(wheel({ direction: "up", delta: 3 }))).toBe(-3);
+    expect(scrollSteps(wheel({ direction: "down", delta: 3 }))).toBe(3);
+  });
+
+  test("a tick without a usable delta still moves one row", () => {
+    expect(scrollSteps(wheel({ direction: "down" }))).toBe(1);
+    expect(scrollSteps(wheel({ direction: "up", delta: 0 }))).toBe(-1);
+    // Trackpads report fractional deltas; a partial tick is still a deliberate scroll.
+    expect(scrollSteps(wheel({ direction: "down", delta: 0.4 }))).toBe(1);
+  });
+
+  test("ignores non-scroll mouse input", () => {
+    expect(scrollSteps(wheel(undefined))).toBeNull();
+    expect(scrollSteps(wheel({ direction: "left", delta: 2 }))).toBeNull();
   });
 });

@@ -1,7 +1,14 @@
+import type { MouseEvent } from "@opentui/core";
 import { useSearch } from "../store/search.ts";
 import { windowStart, type Row } from "../store/rows.ts";
 import { SEARCH_SCOPE_LABEL } from "../api/search.ts";
-import { Overlay, OVERLAY_TOP, overlayInnerWidth, overlayListHeight } from "./Overlay.tsx";
+import {
+  Overlay,
+  OVERLAY_TOP,
+  overlayInnerWidth,
+  overlayListHeight,
+  scrollSteps,
+} from "./Overlay.tsx";
 import { padColumns, truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
@@ -132,6 +139,7 @@ export function Palette({ width, height }: { width: number; height: number }) {
   const error = useSearch((s) => s.error);
   const scope = useSearch((s) => s.scope);
   const setQuery = useSearch((s) => s.setQuery);
+  const move = useSearch((s) => s.move);
   const showingHome = useSearch((s) => s.showingHome);
   const showingReference = useSearch((s) => s.showingReference);
 
@@ -180,6 +188,15 @@ export function Palette({ width, height }: { width: number; height: number }) {
     return "";
   })();
 
+  // The palette has no free scroll position — the viewport is derived from the selection — so the
+  // wheel walks the selection exactly as the arrow keys do and the window follows it.
+  const handleMouseScroll = (event: MouseEvent) => {
+    const rows = scrollSteps(event);
+    if (rows === null) return;
+    move(rows);
+    event.stopPropagation();
+  };
+
   const hints = (() => {
     if (drilled) return "type to filter · ↑↓ move · ↵ play · esc back";
     if (showingReference) return "↑↓ move · ↵ open · esc close";
@@ -195,6 +212,7 @@ export function Palette({ width, height }: { width: number; height: number }) {
       status={status}
       isError={error !== null}
       hints={hints}
+      onMouseScroll={handleMouseScroll}
       header={
         <box flexDirection="row" gap={1}>
           <text fg={theme.accent}>

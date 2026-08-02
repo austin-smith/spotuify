@@ -75,6 +75,9 @@ export const KEYMAP: KeyGroup[] = [
       { key: "↑/↓", action: "move" },
       { key: "ctrl+p/n", action: "move" },
       { key: "pgup/pgdn", action: "move a page" },
+      // Home/End also work but are absent from laptop keyboards, so the advertised chord is the
+      // one every keyboard can press: Option on Mac, Alt elsewhere.
+      { key: "opt/alt+↑/↓", action: "top / bottom" },
       { key: "↵", action: "play / open" },
       { key: "ctrl+↵", action: "queue it" },
       { key: "ctrl+space", action: "actions" },
@@ -86,7 +89,18 @@ export const KEYMAP: KeyGroup[] = [
     bindings: [
       { key: "↑/↓", action: "scroll" },
       { key: "pgup/pgdn", action: "scroll a page" },
+      { key: "opt/alt+↑/↓", action: "top / bottom" },
       { key: "f", action: "follow along" },
+      { key: "esc", action: "close" },
+    ],
+  },
+  {
+    label: "IN QUEUE",
+    bindings: [
+      { key: "↑/↓", action: "scroll" },
+      { key: "pgup/pgdn", action: "scroll a page" },
+      { key: "opt/alt+↑/↓", action: "top / bottom" },
+      { key: "r", action: "refresh" },
       { key: "esc", action: "close" },
     ],
   },

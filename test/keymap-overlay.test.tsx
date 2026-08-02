@@ -117,7 +117,9 @@ describe("keymap engine status", () => {
     const screen = lines.join("\n");
 
     expect(screen).toContain("IN LYRICS");
-    expect(screen).toContain("pgup/pgdn   scroll a page");
+    // The gap encodes the key column width, which is derived from the longest shortcut in the
+    // column — currently `opt/alt+↑/↓` at 11 cells plus the 2-cell gap.
+    expect(screen).toContain("pgup/pgdn    scroll a page");
     expect(screen).not.toContain("look again");
     expect(screen).not.toContain("↑/↓LYRICscroll");
     for (const line of lines.slice(0, 32)) {
