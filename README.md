@@ -18,7 +18,8 @@
 </p>
 
 <p align="center">
-  <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="90%" />
+  <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="49%" />
+  <img src="./docs/screenshots/lyrics.png" alt="Lyrics" width="49%" />
 </p>
 
 ## Install
