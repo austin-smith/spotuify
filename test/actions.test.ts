@@ -491,3 +491,50 @@ describe("add to playlist", () => {
     });
   });
 });
+
+describe("action list movement", () => {
+  const drillEntry = (id: string): ActionEntry => ({
+    id,
+    kind: "drill",
+    label: id,
+    detail: "",
+    disabled: false,
+    drill: { kind: "artist", id, name: id },
+  });
+
+  const loadingEntry: ActionEntry = {
+    id: "library-loading",
+    kind: "library-loading",
+    label: "…",
+    detail: "",
+    disabled: true,
+  };
+
+  function withEntries(entries: ActionEntry[], selected: number): void {
+    useActions.setState({ open: true, mode: "actions", entries, selected });
+  }
+
+  // The wheel reports multi-row deltas; reducing them to their sign made this the one list that
+  // lagged behind an identical gesture in the palette, lyrics, and queue.
+  test("moves by the full delta, not its sign", () => {
+    withEntries(["a", "b", "c", "d", "e"].map(drillEntry), 0);
+    useActions.getState().move(3);
+    expect(useActions.getState().selected).toBe(3);
+    useActions.getState().move(-2);
+    expect(useActions.getState().selected).toBe(1);
+  });
+
+  test("disabled entries are skipped, not counted", () => {
+    withEntries([drillEntry("a"), loadingEntry, drillEntry("b"), drillEntry("c")], 0);
+    useActions.getState().move(2);
+    expect(useActions.getState().selected).toBe(3);
+  });
+
+  test("stops at the ends without wrapping", () => {
+    withEntries(["a", "b", "c"].map(drillEntry), 1);
+    useActions.getState().move(10);
+    expect(useActions.getState().selected).toBe(2);
+    useActions.getState().move(-10);
+    expect(useActions.getState().selected).toBe(0);
+  });
+});
