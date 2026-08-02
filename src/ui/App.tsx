@@ -16,6 +16,7 @@ import { MissingClientIdError } from "../config.ts";
 import { LibrespotEngine, type EngineStatus } from "../engine/librespot.ts";
 import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
+import { failureMessage } from "../store/error.ts";
 import { useLyrics } from "../store/lyrics.ts";
 import { usePlayback } from "../store/playback.ts";
 import { playbackContextDrill } from "../store/playback-context.ts";
@@ -702,7 +703,7 @@ export function App({ version }: { version: string }) {
           }
           actions.notify({
             kind: "error",
-            message: error instanceof Error ? error.message : String(error),
+            message: failureMessage("open current context", error),
           });
         } finally {
           if (playbackContextController.current === controller) {
