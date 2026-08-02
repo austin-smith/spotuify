@@ -25,6 +25,7 @@ export function PlaybackStage({
   isLocalDevice,
   ready,
   canSearch,
+  startupMessageVisible,
   overlayOpen,
   width,
   height,
@@ -41,6 +42,7 @@ export function PlaybackStage({
   isLocalDevice: boolean;
   ready: boolean;
   canSearch: boolean;
+  startupMessageVisible: boolean;
   overlayOpen: boolean;
   width: number;
   height: number;
@@ -85,6 +87,7 @@ export function PlaybackStage({
     <PlaybackEmptyState
       ready={ready}
       canSearch={canSearch}
+      startupMessageVisible={startupMessageVisible}
       width={width}
       height={height}
     />

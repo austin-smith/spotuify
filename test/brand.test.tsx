@@ -26,7 +26,7 @@ describe("responsive brand lockup", () => {
   });
 
   test("measures wrapped guidance before choosing the brand treatment", () => {
-    const message = playbackEmptyStateText(true, true);
+    const message = playbackEmptyStateText(true, true, true);
     expect(brandSplashLayout(message, 24, 5)).toEqual({
       innerWidth: 20,
       messageLines: ["NOTHING PLAYING —", "press / to find", "something"],
@@ -82,7 +82,7 @@ describe("responsive brand lockup", () => {
   test("keeps wrapped empty-state guidance visible in a narrow splash", async () => {
     const width = 24;
     const height = 5;
-    const message = playbackEmptyStateText(true, true);
+    const message = playbackEmptyStateText(true, true, true);
     setup = await createTestRenderer({ width, height });
     createRoot(setup.renderer).render(
       <box width={width} height={height} position="relative">
