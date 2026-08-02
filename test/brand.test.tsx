@@ -1,7 +1,10 @@
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { afterEach, describe, expect, test } from "bun:test";
-import { playbackEmptyStateText } from "../src/ui/PlaybackEmptyState.tsx";
+import {
+  playbackEmptyStateText,
+  STARTUP_MESSAGE,
+} from "../src/ui/PlaybackEmptyState.tsx";
 import {
   BrandLockup,
   BrandSplash,
@@ -69,6 +72,50 @@ describe("responsive brand lockup", () => {
       }
     },
   );
+
+  test.each([[24], [40], [80], [120]] as const)(
+    "anchors the wordmark on one row across every startup message at width %i",
+    (width) => {
+      const height = 19;
+      const layouts = [
+        "",
+        STARTUP_MESSAGE,
+        playbackEmptyStateText(true, true, true),
+        playbackEmptyStateText(true, false, true),
+      ].map((message) => brandSplashLayout(message, width, height));
+
+      const tops = new Set(layouts.map((layout) => layout.top));
+      const brandHeights = new Set(layouts.map((layout) => layout.brandHeight));
+      expect(tops.size).toBe(1);
+      expect(brandHeights.size).toBe(1);
+    },
+  );
+
+  test("keeps the wordmark stationary as startup messages come and go", async () => {
+    const width = 24;
+    const height = 19;
+    setup = await createTestRenderer({ width, height });
+    const root = createRoot(setup.renderer);
+
+    const wordmarkRow = async (message: string) => {
+      root.render(
+        <box width={width} height={height} position="relative">
+          <BrandSplash message={message} width={width} height={height} />
+        </box>,
+      );
+      await Bun.sleep(20);
+      await setup!.renderOnce();
+      return setup!
+        .captureCharFrame()
+        .split("\n")
+        .findIndex((line) => line.includes("SPOTUIFY"));
+    };
+
+    const blankRow = await wordmarkRow("");
+    expect(blankRow).toBeGreaterThan(0);
+    expect(await wordmarkRow(STARTUP_MESSAGE)).toBe(blankRow);
+    expect(await wordmarkRow(playbackEmptyStateText(true, true, true))).toBe(blankRow);
+  });
 
   test("falls back to readable plain text in a tiny region", async () => {
     setup = await createTestRenderer({ width: 24, height: 5 });
