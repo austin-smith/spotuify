@@ -57,8 +57,7 @@ describe("queue scrolling", () => {
     expect(useQueue.getState().offset).toBe(0);
   });
 
-  // A refresh can shrink the queue underneath a scrolled view; the view reports its height back so
-  // the position lands inside whatever remains rather than on blank rows.
+  // A refresh can shrink the queue under a scrolled view; clamping lands inside what remains.
   test("clamping after a shrink keeps the position inside the list", () => {
     useQueue.getState().scrollToEdge("bottom", 10);
     expect(useQueue.getState().offset).toBe(20);

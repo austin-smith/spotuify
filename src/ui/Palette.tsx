@@ -188,8 +188,7 @@ export function Palette({ width, height }: { width: number; height: number }) {
     return "";
   })();
 
-  // The palette has no free scroll position — the viewport is derived from the selection — so the
-  // wheel walks the selection exactly as the arrow keys do and the window follows it.
+  // The viewport is derived from the selection, so the wheel walks the selection like the arrows.
   const handleMouseScroll = (event: MouseEvent) => {
     const rows = scrollSteps(event);
     if (rows === null) return;

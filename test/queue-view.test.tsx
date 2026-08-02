@@ -60,11 +60,8 @@ async function fill(
 const SIZES: number[] = [20, 24, 32, 40];
 
 /**
- * `queueListHeight` checked against the renderer, the same way `overlayListHeight` is pinned.
- *
- * The helper counts the now-playing block and the `UP NEXT` header by hand, and the keyboard
- * handler pages and clamps by its answer. If a row is added to the view without updating the
- * count, scrolling diverges from the screen — the old code clipped its last item exactly this way.
+ * `queueListHeight` checked against the renderer, the way `overlayListHeight` is pinned: its
+ * hand-counted rows drift silently when the view changes — the old code clipped its last item.
  */
 describe("queueListHeight", () => {
   test.each(SIZES)("every item it promises at height %i is drawn", async (height) => {

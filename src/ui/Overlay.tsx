@@ -41,11 +41,8 @@ export function overlayListHeight(height: number, extraRows = 0): number {
 }
 
 /**
- * Rows a wheel/trackpad event asks to move by, signed, or null for non-scroll mouse input.
- *
- * Shared by every overlay that accepts wheel input so a tick means the same distance everywhere.
- * What that movement does — shift a scroll offset or walk a selection — stays with the overlay,
- * because those are different models and only the overlay knows which one it has.
+ * Rows a wheel event asks to move by, signed; null for non-scroll mouse input. Whether a row means
+ * a scroll offset or a selection step is the overlay's call.
  */
 export function scrollSteps(event: MouseEvent): number | null {
   const direction = event.scroll?.direction;

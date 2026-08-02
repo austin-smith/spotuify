@@ -212,12 +212,7 @@ function firstEnabled(entries: readonly ActionEntry[]): number {
   return entries.findIndex((entry) => !entry.disabled);
 }
 
-/**
- * Move the selection by `delta` enabled entries, stopping at the ends.
- *
- * Walks the full magnitude rather than one step: the wheel reports multi-row deltas, and reducing
- * them to their sign made this the one list that lagged behind an identical gesture elsewhere.
- */
+/** Move by `delta` enabled entries, stopping at the ends; the wheel sends multi-row deltas. */
 function moveEnabled(entries: readonly ActionEntry[], selected: number, delta: number): number {
   if (entries.length === 0) return -1;
   const step = delta > 0 ? 1 : -1;

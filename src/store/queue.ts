@@ -92,8 +92,7 @@ export const useQueue = create<QueueSlice>((set, get) => ({
 
   scrollBy(delta, viewport) {
     const { offset, upNext } = get();
-    // Never scroll the last item off the top: past the end there is nothing to read, and a blank
-    // list looks like the queue emptied.
+    // Stop once the last item reaches the bottom; a blank list reads as an emptied queue.
     const max = Math.max(0, upNext.length - Math.max(1, viewport));
     set({ offset: Math.min(max, Math.max(0, offset + delta)) });
   },

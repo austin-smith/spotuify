@@ -514,8 +514,7 @@ describe("action list movement", () => {
     useActions.setState({ open: true, mode: "actions", entries, selected });
   }
 
-  // The wheel reports multi-row deltas; reducing them to their sign made this the one list that
-  // lagged behind an identical gesture in the palette, lyrics, and queue.
+  // The wheel reports multi-row deltas; sign-only movement lagged behind the other lists.
   test("moves by the full delta, not its sign", () => {
     withEntries(["a", "b", "c", "d", "e"].map(drillEntry), 0);
     useActions.getState().move(3);

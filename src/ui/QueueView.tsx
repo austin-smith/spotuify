@@ -19,12 +19,7 @@ const NOW_PLAYING_ROWS = 3;
 /** The `UP NEXT` header row, which sits inside the list area but is not an item. */
 const UP_NEXT_HEADER_ROWS = 1;
 
-/**
- * Rows available to up-next items.
- *
- * Shared with the keyboard handler so paging and clamping move by exactly the rows on screen; the
- * two drifting apart is how a page ends up scrolling one row short or past the end.
- */
+/** Rows available to up-next items; shared with the keyboard handler so paging matches the screen. */
 export function queueListHeight(
   height: number,
   state: { nowPlaying: PlayableItem | null; upNext: PlayableItem[] },
@@ -82,8 +77,7 @@ export function QueueView({ width, height }: { width: number; height: number }) 
   const listHeight = queueListHeight(height, { nowPlaying, upNext });
   const scrollable = upNext.length > listHeight;
 
-  // Clamping lives in the store, which cannot know how many rows the terminal offers until the view
-  // has laid out for this height. Runs after a refresh shrinks the queue and after a resize.
+  // Re-clamp after a refresh shrinks the queue or a resize changes the viewport.
   useEffect(() => {
     clampOffset(listHeight);
   }, [upNext.length, listHeight, clampOffset]);

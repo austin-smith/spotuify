@@ -20,9 +20,8 @@ export function paletteNavigationCommand(
   if (key.name === "tab" && canChangeScope) {
     return { kind: "scope", delta: key.shift ? -1 : 1 };
   }
-  // Option turns the arrows into edge jumps, so checked first. The accelerated variant lives on
-  // the arrows themselves because laptop keyboards have no Home/End and printable keys are off
-  // limits — they type into the query.
+  // Checked before the plain arrows. Edge jumps live on the arrows because laptop keyboards lack
+  // Home/End and printable keys type into the query.
   if (key.option === true && key.name === "up") return { kind: "edge", edge: "first" };
   if (key.option === true && key.name === "down") return { kind: "edge", edge: "last" };
   if (key.name === "up" || (key.ctrl && key.name === "p")) {
