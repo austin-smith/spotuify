@@ -15,7 +15,7 @@ use librespot_playback::{
 };
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use std::{ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
+use std::{ffi::OsString, fmt::Write as _, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     sync::{mpsc, watch},
@@ -843,7 +843,12 @@ async fn wait_for_activation(mut active: watch::Receiver<bool>) -> Result<()> {
 }
 
 fn device_id_for_name(name: &str) -> String {
-    format!("{:x}", Sha1::digest(name.as_bytes()))
+    let digest = Sha1::digest(name.as_bytes());
+    let mut device_id = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut device_id, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    device_id
 }
 
 fn session_config_for_name(name: &str) -> SessionConfig {
