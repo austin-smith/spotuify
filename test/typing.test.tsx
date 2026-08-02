@@ -1,10 +1,11 @@
 import { createMockKeys, createTestRenderer } from "@opentui/core/testing";
-import { createRoot } from "@opentui/react";
+import { createRoot, useKeyboard } from "@opentui/react";
 import { afterEach, describe, expect, test } from "bun:test";
 import { SpotifyClient } from "../src/api/client.ts";
 import type { TokenStore } from "../src/auth/tokens.ts";
 import { useSearch } from "../src/store/search.ts";
 import { Palette } from "../src/ui/Palette.tsx";
+import { applyPaletteNavigation } from "../src/ui/palette-navigation.ts";
 
 /**
  * Drives the palette through real keystrokes.
@@ -57,12 +58,29 @@ function stubApi(options: { playlistGate?: Promise<void> } = {}) {
         next: null,
       });
     }
-    if (path.includes("/search")) return json({ tracks: { items: [track("S", "SEARCH TRACK")] } });
+    if (path.includes("/search")) {
+      return json({
+        tracks: {
+          items: [track("S", "SEARCH TRACK"), track("S2", "SECOND SEARCH TRACK")],
+        },
+      });
+    }
     return json({});
   }) as unknown as typeof fetch;
 }
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
+
+function InteractivePalette() {
+  useKeyboard((key) => {
+    const palette = useSearch.getState();
+    applyPaletteNavigation(key, palette, {
+      canChangeScope: palette.depth() === 1 && !palette.showingReference,
+      pageSize: 10,
+    });
+  });
+  return <Palette width={90} height={20} />;
+}
 
 afterEach(() => {
   setup?.renderer.destroy();
@@ -75,7 +93,7 @@ async function openAndType(text: string) {
   stubApi();
   setup = await createTestRenderer({ width: 90, height: 20 });
   const keys = createMockKeys(setup.renderer);
-  createRoot(setup.renderer).render(<Palette width={90} height={20} />);
+  createRoot(setup.renderer).render(<InteractivePalette />);
 
   useSearch.getState().configure(new SpotifyClient(tokens), "US", "me");
   useSearch.getState().openPalette();
@@ -112,6 +130,35 @@ describe("typing into the palette", () => {
     expect(current?.play).toEqual({ uris: ["spotify:track:S"] });
   });
 
+  test("keeps typing active while arrow keys navigate results", async () => {
+    await openAndType("jk");
+    const keys = createMockKeys(setup!.renderer);
+
+    keys.pressArrow("down");
+    await Bun.sleep(20);
+    expect(useSearch.getState().current()?.label).toBe("SECOND SEARCH TRACK");
+    expect(useSearch.getState().query).toBe("jk");
+
+    await keys.typeText("j");
+    expect(useSearch.getState().query).toBe("jkj");
+  });
+
+  test("Tab changes scope directly without taking focus from the query", async () => {
+    await openAndType("search");
+    const keys = createMockKeys(setup!.renderer);
+
+    keys.pressTab();
+    await Bun.sleep(20);
+    expect(useSearch.getState()).toMatchObject({ scope: "track", query: "search" });
+
+    await keys.typeText("k");
+    expect(useSearch.getState().query).toBe("searchk");
+
+    keys.pressTab({ shift: true });
+    await Bun.sleep(20);
+    expect(useSearch.getState().scope).toBe("all");
+  });
+
   test("the home view is what shows before typing", async () => {
     const screen = await openAndType("");
     expect(screen).toContain("HOME TRACK");
@@ -134,7 +181,7 @@ describe("typing into the palette", () => {
 
     setup = await createTestRenderer({ width: 90, height: 20 });
     const keys = createMockKeys(setup.renderer);
-    createRoot(setup.renderer).render(<Palette width={90} height={20} />);
+    createRoot(setup.renderer).render(<InteractivePalette />);
 
     useSearch.getState().configure(new SpotifyClient(tokens), "US", "me");
     useSearch.getState().openPalette();

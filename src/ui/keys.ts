@@ -8,6 +8,33 @@ export interface KeyGroup {
   bindings: Binding[];
 }
 
+interface ShortcutKey {
+  name: string;
+  shift: boolean;
+  ctrl: boolean;
+  meta: boolean;
+  option?: boolean;
+  super?: boolean;
+  hyper?: boolean;
+}
+
+/** Match a literal letter shortcut without stealing modified terminal/application commands. */
+export function isPlainShortcut(
+  key: ShortcutKey,
+  name: string,
+  options: { allowShift?: boolean } = {},
+): boolean {
+  return (
+    key.name === name &&
+    (options.allowShift === true || !key.shift) &&
+    !key.ctrl &&
+    !key.meta &&
+    !key.option &&
+    !key.super &&
+    !key.hyper
+  );
+}
+
 /**
  * The full keymap, as shown by `?`.
  *
@@ -35,6 +62,8 @@ export const KEYMAP: KeyGroup[] = [
       { key: "f", action: "save / unsave" },
       { key: "l", action: "lyrics" },
       { key: "u", action: "queue" },
+      { key: "c", action: "current context" },
+      { key: "y / Y", action: "copy URI / link" },
       { key: "d", action: "device" },
       { key: "r", action: "resync" },
     ],
@@ -42,7 +71,10 @@ export const KEYMAP: KeyGroup[] = [
   {
     label: "IN SEARCH",
     bindings: [
+      { key: "tab / ⇧tab", action: "next / previous scope" },
       { key: "↑/↓", action: "move" },
+      { key: "ctrl+p/n", action: "move" },
+      { key: "pgup/pgdn", action: "move a page" },
       { key: "↵", action: "play / open" },
       { key: "ctrl+↵", action: "queue it" },
       { key: "ctrl+space", action: "actions" },

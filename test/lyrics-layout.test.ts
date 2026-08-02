@@ -7,13 +7,21 @@ import {
   followOffset,
   layoutLyrics,
 } from "../src/ui/LyricsView.tsx";
-import { truncate, wrap } from "../src/ui/text.ts";
+import { padColumns, truncate, wrap } from "../src/ui/text.ts";
 
 describe("truncate", () => {
   test("truncates by terminal columns without splitting graphemes", () => {
     const value = truncate("你好世界", 5);
     expect(value).toBe("你好…");
     expect(Bun.stringWidth(value)).toBe(5);
+  });
+});
+
+describe("padColumns", () => {
+  test("pads by terminal cells rather than UTF-16 length", () => {
+    const value = padColumns("你好", 6);
+    expect(Bun.stringWidth(value)).toBe(6);
+    expect(value).toBe("你好  ");
   });
 });
 

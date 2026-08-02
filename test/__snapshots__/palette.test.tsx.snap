@@ -3,22 +3,19 @@
 exports[`palette layout at 100x32 1`] = `
 "                                                                                                    
                                                                                                     
-    › oliver tree                                                                                   
+    › [ALL] oliver tree                                                                             
                                                                                                     
     ────────────────────────────────────────────────────────────────────────────────────────────    
                                                                                                     
     TRACKS                                                                                          
-    ▌ Miss You - Bonus Track                        Oliver Tree, Robin Schulz      3:26             
-      Life Goes On                                  Oliver Tree                    2:41             
-                                                                                                    
+    ▌ Miss You - Bonus Track Oliver Tree, Robin Schulz   3:26                                       
+      Life Goes On           Oliver Tree                 2:41                                       
     ARTISTS                                                                                         
       Oliver Tree                                                                                   
-                                                                                                    
     ALBUMS                                                                                          
-      Ugly is Beautiful                             2020 · 14 tracks                                
-                                                                                                    
+      Ugly is Beautiful      2020 · 14 tracks                                                       
     PLAYLISTS                                                                                       
-      This Is Oliver Tree                           Spotify                                         
+      This Is Oliver Tree    Spotify                                                                
                                                                                                     
                                                                                                     
                                                                                                     
@@ -30,7 +27,10 @@ exports[`palette layout at 100x32 1`] = `
                                                                                                     
                                                                                                     
                                                                                                     
-    5 results                                                       ↑↓ move · ↵ open · esc close    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                        tab scope · ↑↓ move · ↵ open · esc close    
                                                                                                     
                                                                                                     
 "
@@ -39,22 +39,22 @@ exports[`palette layout at 100x32 1`] = `
 exports[`palette layout at 60x20 1`] = `
 "                                                            
                                                             
-    › oliver tree                                           
+    › [ALL] oliver tree                                     
                                                             
     ────────────────────────────────────────────────────    
                                                             
     TRACKS                                                  
-    ▌ Miss You - Bonus Track  Oliver Tree, Robin…   3:26    
-      Life Goes On            Oliver Tree           2:41    
-                                                            
+    ▌ Miss You - Bonus Track Oliver Tree, Robin …   3:26    
+      Life Goes On           Oliver Tree            2:41    
     ARTISTS                                                 
       Oliver Tree                                           
-                                                            
-    ALUgly is Beautiful       2020 · 14 tracks              
-                                                            
+    ALBUMS                                                  
+      Ugly is Beautiful      2020 · 14 tracks               
     PLAYLISTS                                               
-      This Is Oliver Tree     Spotify                       
-    5 results               ↑↓ move · ↵ open · esc close    
+      This Is Oliver Tree    Spotify                        
+                                                            
+                                                            
+                            tab scope · ↑↓ move · ↵ open    
                                                             
                                                             
 "

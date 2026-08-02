@@ -69,7 +69,9 @@ function seedFrames(
     query,
     frames: extra.depth === 2 ? [{ rows: [], selected: -1, loading: false, filter: "" }, frame] : [frame],
     error: null,
+    scope: "all",
     showingHome: extra.showingHome ?? false,
+    showingReference: false,
   });
 }
 
@@ -87,7 +89,9 @@ afterEach(() => {
     query: "",
     frames: [{ rows: [], selected: -1, loading: false, filter: "" }],
     error: null,
+    scope: "all",
     showingHome: true,
+    showingReference: false,
   });
 });
 
@@ -121,12 +125,70 @@ describe("palette", () => {
     expect(screen).toContain("›");
   });
 
+  test.each(SIZES)("flexes around the longest scope label at %ix%i", async (w, h) => {
+    seed("oliver tree", RESULTS);
+    useSearch.setState({ scope: "playlist" });
+    const screen = (await render(w, h)).join("\n");
+    expect(screen).toContain("[PLAYLISTS]");
+    expect(screen).toContain("oliver tree");
+  });
+
   test("groups results under headers", async () => {
     seed("oliver tree", RESULTS);
     const screen = (await render(100, 32)).join("\n");
     for (const header of ["TRACKS", "ARTISTS", "ALBUMS", "PLAYLISTS"]) {
       expect(screen).toContain(header);
     }
+  });
+
+  test("keeps the selected scope visible and explains direct scope cycling", async () => {
+    seed("oliver tree", RESULTS);
+    useSearch.setState({ scope: "album" });
+    const screen = (await render(100, 32)).join("\n");
+    expect(screen).toContain("[ALBUMS]");
+    expect(screen).toContain("tab scope");
+  });
+
+  test("labels direct-reference mode without implying a catalog scope", async () => {
+    seed("spotify:track:4uLU6hMCjMI75M1A2tKUQC", RESULTS);
+    useSearch.setState({ showingReference: true, scope: "album" });
+    const screen = (await render(100, 32)).join("\n");
+    expect(screen).toContain("[DIRECT]");
+    expect(screen).not.toContain("[ALBUMS]");
+    expect(screen).toContain("Spotify reference");
+  });
+
+  test("shows a clear continuation action without pagination mechanics", async () => {
+    seed("oliver tree", {
+      ...RESULTS,
+      pages: {
+        tracks: { loaded: 10, total: 284, nextOffset: 10 },
+      },
+    });
+    const screen = (await render(100, 32)).join("\n");
+    expect(screen).toContain("TRACKS");
+    expect(screen).toContain("load more tracks…");
+    expect(screen).not.toContain("+ load");
+    expect(screen).not.toContain("284");
+    expect(screen).not.toContain("more available");
+  });
+
+  test("keeps grouped pagination compact and explicit", async () => {
+    seed("oliver tree", {
+      ...RESULTS,
+      pages: {
+        tracks: { loaded: 10, total: 12, nextOffset: 10 },
+        artists: { loaded: 10, total: 17, nextOffset: 10 },
+        albums: { loaded: 10, total: 19, nextOffset: 10 },
+        playlists: { loaded: 10, total: 10, nextOffset: null },
+      },
+    });
+    const screen = (await render(120, 40)).join("\n");
+    expect(screen).toContain("TRACKS");
+    expect(screen).toContain("load more tracks…");
+    expect(screen).toContain("ARTISTS");
+    expect(screen).toContain("load more artists…");
+    expect(screen).not.toContain("more available");
   });
 
   test("shows track durations and album metadata", async () => {
@@ -175,8 +237,9 @@ describe("palette", () => {
 
   test("surfaces an error over the status line", async () => {
     seed("oliver", EMPTY_RESULTS);
-    useSearch.setState({ error: "Spotify API 429 on /search: slow down" });
+    useSearch.setState({ error: "Couldn’t search · Slow down (429)" });
     const screen = (await render(100, 32)).join("\n");
+    expect(screen).toContain("Couldn’t search");
     expect(screen).toContain("429");
   });
 
