@@ -34,7 +34,6 @@ import {
   type AvailableUpdate,
 } from "../update.ts";
 import { ActionsMenu } from "./ActionsMenu.tsx";
-import { BrandSplash } from "./Brand.tsx";
 import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { DevicePicker } from "./DevicePicker.tsx";
 import { FeedbackBanner, feedbackTopAboveHud } from "./FeedbackBanner.tsx";
@@ -50,6 +49,10 @@ import { applyPaletteNavigation } from "./palette-navigation.ts";
 import { OVERLAY_PADDING_X, overlayListHeight } from "./Overlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
 import { PlaylistPicker, PLAYLIST_PROMPT_ROW } from "./PlaylistPicker.tsx";
+import {
+  PlaybackEmptyState,
+  STARTUP_MESSAGE_DELAY_MS,
+} from "./PlaybackEmptyState.tsx";
 import { PlaybackStage, playbackDisplayItem } from "./PlaybackStage.tsx";
 import { theme } from "./theme.ts";
 
@@ -114,6 +117,7 @@ export function App({ version }: { version: string }) {
   const [runtimeAttempt, setRuntimeAttempt] = useState(0);
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [showUpdateNotice, setShowUpdateNotice] = useState(false);
+  const [startupMessageVisible, setStartupMessageVisible] = useState(false);
   const profileRecoveryController = useRef<AbortController | null>(null);
   const playbackContextController = useRef<AbortController | null>(null);
   const activatedDevice = useRef<string | null>(null);
@@ -189,6 +193,15 @@ export function App({ version }: { version: string }) {
     // the notice has actually rendered. Quitting during boot must not consume the notification.
     void markUpdateNotified(availableUpdate);
   }, [availableUpdate, showUpdateNotice, updateNoticeVisible]);
+
+  // One timer spans boot and the first playback poll, so a fast launch never flashes loading text.
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setStartupMessageVisible(true),
+      STARTUP_MESSAGE_DELAY_MS,
+    );
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let canceled = false;
@@ -838,9 +851,16 @@ export function App({ version }: { version: string }) {
   });
 
   if (boot.phase === "loading") {
+    // Same height PlaybackStage gets, so the wordmark doesn't jump when boot completes.
     return (
       <box width={width} height={height} position="relative">
-        <BrandSplash message="Connecting to Spotify…" width={width} height={height} />
+        <PlaybackEmptyState
+          ready={false}
+          canSearch={false}
+          startupMessageVisible={startupMessageVisible}
+          width={width}
+          height={Math.max(0, height - KEY_HINT_ROWS)}
+        />
       </box>
     );
   }
@@ -862,7 +882,7 @@ export function App({ version }: { version: string }) {
       />
     );
   }
-  // A bounded, explained conflict beats an unexplained LOADING screen: playback initialization is
+  // A bounded, explained conflict beats an unexplained startup splash: playback initialization is
   // deliberately blocked while another runtime owns local commands, and nothing else renders that.
   if (runtimeOwnership === "conflict") {
     return (
@@ -935,6 +955,7 @@ export function App({ version }: { version: string }) {
         }
         ready={ready}
         canSearch={boot.me !== null}
+        startupMessageVisible={startupMessageVisible}
         overlayOpen={overlayOpen}
         width={width}
         height={contentHeight}

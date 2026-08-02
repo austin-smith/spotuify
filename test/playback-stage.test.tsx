@@ -47,6 +47,7 @@ function stage(item: Track | null, pendingSelection: PendingPlaybackSelection | 
       isLocalDevice
       ready
       canSearch
+      startupMessageVisible
       overlayOpen={false}
       width={100}
       height={31}

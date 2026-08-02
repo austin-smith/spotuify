@@ -75,13 +75,18 @@ export function brandSplashLayout(
   const gapHeight = brandHeight > 0 && remainingHeight > brandHeight ? 1 : 0;
   const totalHeight = brandHeight + gapHeight + messageLines.length;
 
+  // Anchor on the wordmark's own centered row, not the block's. Centering the whole block moved
+  // the brand whenever the message wrapped to a different number of rows. Only a terminal too
+  // short to fit the message below the anchored brand pushes the block up.
+  const brandTop = Math.floor((availableHeight - brandHeight) / 2);
+
   return {
     innerWidth,
     messageLines,
     brandHeight,
     gapHeight,
     totalHeight,
-    top: Math.max(0, Math.floor((availableHeight - totalHeight) / 2)),
+    top: Math.max(0, Math.min(brandTop, availableHeight - totalHeight)),
   };
 }
 
