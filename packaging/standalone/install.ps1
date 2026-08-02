@@ -8,6 +8,8 @@ $script:Repository = 'austin-smith/spotuify'
 $script:ReleasesUrl = "https://github.com/$($script:Repository)/releases"
 $script:InstallerMarkerName = '.spotuify-install.json'
 $script:InstallerManager = 'spotuify-installer'
+# Windows PowerShell 5.1 coerces bare $null to an empty string when binding File.Replace.
+$script:NullBackupPath = [System.Management.Automation.Language.NullString]::Value
 
 function Write-InstallerStep {
 	param([Parameter(Mandatory = $true)][string]$Message)
@@ -431,7 +433,7 @@ function Write-InstallerMarker {
 	$temporary = "$markerPath.$PID.$([guid]::NewGuid().ToString('N')).tmp"
 	[IO.File]::WriteAllText($temporary, $marker + "`n", $utf8WithoutBom)
 	if (Test-Path -LiteralPath $markerPath) {
-		[IO.File]::Replace($temporary, $markerPath, $null)
+		[IO.File]::Replace($temporary, $markerPath, $script:NullBackupPath)
 	} else {
 		Move-Item -LiteralPath $temporary -Destination $markerPath
 	}
@@ -630,7 +632,7 @@ function Install-Spotuify {
 				} catch [IO.IOException] {
 					if (Test-Path -LiteralPath $launcherBackup) {
 						if (Test-Path -LiteralPath $launcherDestination) {
-							[IO.File]::Replace($launcherBackup, $launcherDestination, $null)
+							[IO.File]::Replace($launcherBackup, $launcherDestination, $script:NullBackupPath)
 						} else {
 							Move-Item -LiteralPath $launcherBackup -Destination $launcherDestination
 						}
@@ -671,7 +673,7 @@ function Install-Spotuify {
 			$installCompleted = $true
 		} catch {
 			if ($null -ne $currentBackup -and (Test-Path -LiteralPath $currentBackup)) {
-				[IO.File]::Replace($currentBackup, $currentPath, $null)
+				[IO.File]::Replace($currentBackup, $currentPath, $script:NullBackupPath)
 				$currentBackup = $null
 			} elseif ($currentCreated) {
 				Remove-Item -LiteralPath $currentPath -Force -ErrorAction SilentlyContinue
@@ -707,7 +709,7 @@ function Install-Spotuify {
 		if (-not $installCompleted) {
 			if ($null -ne $currentBackup -and (Test-Path -LiteralPath $currentBackup)) {
 				if (Test-Path -LiteralPath $currentPath) {
-					[IO.File]::Replace($currentBackup, $currentPath, $null)
+					[IO.File]::Replace($currentBackup, $currentPath, $script:NullBackupPath)
 				} else {
 					Move-Item -LiteralPath $currentBackup -Destination $currentPath
 				}
@@ -717,7 +719,7 @@ function Install-Spotuify {
 			}
 			if ($null -ne $launcherBackup -and (Test-Path -LiteralPath $launcherBackup)) {
 				if (Test-Path -LiteralPath $launcherDestination) {
-					[IO.File]::Replace($launcherBackup, $launcherDestination, $null)
+					[IO.File]::Replace($launcherBackup, $launcherDestination, $script:NullBackupPath)
 				} else {
 					Move-Item -LiteralPath $launcherBackup -Destination $launcherDestination
 				}
