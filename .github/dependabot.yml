@@ -30,6 +30,12 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # librespot-core 0.8.0's build script requires vergen <9.1. Remove this after
+      # upgrading to a librespot release that supports newer vergen versions.
+      - dependency-name: vergen
+        versions:
+          - ">=9.1"
 
   - package-ecosystem: rust-toolchain
     directory: /
