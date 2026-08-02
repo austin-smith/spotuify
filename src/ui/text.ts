@@ -24,6 +24,12 @@ export function truncate(value: string, max: number): string {
   return Bun.stringWidth(value) <= max ? value : `${sliceColumns(value, max - 1)}…`;
 }
 
+/** Truncate and pad text to an exact terminal-cell width. */
+export function padColumns(value: string, width: number): string {
+  const clipped = truncate(value, width);
+  return `${clipped}${" ".repeat(Math.max(0, width - Bun.stringWidth(clipped)))}`;
+}
+
 /** Split a word into chunks that each fit a terminal-column budget. */
 function splitWord(value: string, max: number): string[] {
   const chunks: string[] = [];

@@ -7,6 +7,10 @@
 <p align="center">🕺 spotify in ur terminal</p>
 
 <p align="center">
+  Play, browse, and control Spotify from your terminal, with an interactive TUI and a scriptable CLI.
+</p>
+
+<p align="center">
   <a href="https://bun.sh"><img alt="Bun 1.3" src="https://img.shields.io/badge/Bun%201.3-000000?logo=bun&logoColor=white"></a>
   <a href="https://www.rust-lang.org"><img alt="Rust" src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white"></a>
   <a href="https://opentui.com"><img alt="OpenTUI 0.4" src="https://img.shields.io/badge/OpenTUI%200.4-6E56CF"></a>
@@ -41,13 +45,19 @@ macOS, Linux, and Windows builds are available from
 
 Requirements:
 
-- An app registered in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-- A [Spotify Premium](https://www.spotify.com/us/premium/) subscription is required for playback
+- A [Spotify Developer](https://developer.spotify.com/dashboard) app (`spotuify auth` walks through creating one)
+- A [Spotify Premium](https://www.spotify.com/premium/) subscription (required for playback)
 
 Run the guided setup:
 
 ```sh
 spotuify auth
+```
+
+To check the setup:
+
+```sh
+spotuify doctor
 ```
 
 ## TUI
@@ -57,6 +67,8 @@ Launch the interactive player:
 ```sh
 spotuify
 ```
+
+Press `?` in the player for the full keymap.
 
 ## CLI
 
@@ -116,5 +128,5 @@ Spotuify uses two independent Spotify sessions:
   native Rust sidecar.
 
 The Web API token is never passed to librespot. For terminal playback, the TUI sends commands to
-the sidecar and treats its local player events as authoritative. It uses the Web API for browsing,
-remote-device control, and periodic playback-state reconciliation.
+the sidecar and treats its local player events as authoritative. The app uses the Web API for browsing and
+remote-device control, and the TUI periodically reconciles playback state against it.

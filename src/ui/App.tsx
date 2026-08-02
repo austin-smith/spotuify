@@ -18,6 +18,7 @@ import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
 import { useLyrics } from "../store/lyrics.ts";
 import { usePlayback } from "../store/playback.ts";
+import { playbackContextDrill } from "../store/playback-context.ts";
 import { useQueue } from "../store/queue.ts";
 import { useSearch } from "../store/search.ts";
 import { startPlaybackControlServer } from "../runtime/playback-control.ts";
@@ -25,6 +26,7 @@ import {
   RuntimeAlreadyRunningError,
   type ControlServer,
 } from "../runtime/control.ts";
+import { spotifyOpenUrl } from "../spotify/reference.ts";
 import {
   checkForUpdate,
   markUpdateNotified,
@@ -41,7 +43,9 @@ import { SetupScreen } from "./SetupScreen.tsx";
 import { StartupErrorScreen } from "./StartupErrorScreen.tsx";
 import { HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
 import { KeyHints, KEY_HINT_ROWS } from "./KeyHints.tsx";
+import { isPlainShortcut } from "./keys.ts";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
+import { applyPaletteNavigation } from "./palette-navigation.ts";
 import { OVERLAY_PADDING_X, overlayListHeight } from "./Overlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
 import { PlaylistPicker, PLAYLIST_PROMPT_ROW } from "./PlaylistPicker.tsx";
@@ -110,6 +114,7 @@ export function App({ version }: { version: string }) {
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [showUpdateNotice, setShowUpdateNotice] = useState(false);
   const profileRecoveryController = useRef<AbortController | null>(null);
+  const playbackContextController = useRef<AbortController | null>(null);
   const activatedDevice = useRef<string | null>(null);
   const runtimeServer = useRef<ControlServer | null>(null);
 
@@ -452,12 +457,40 @@ export function App({ version }: { version: string }) {
     useLyrics.getState().follow(item);
   }, [trackKey]);
 
+  useEffect(() => () => playbackContextController.current?.abort(), []);
+
   useKeyboard((key) => {
+    // A delayed context lookup must never interrupt a newer keyboard interaction. A fresh `c`
+    // replaces the previous request; an auto-repeated `c` is ignored without canceling the one
+    // deliberate invocation that started it.
+    if (!(key.name === "c" && key.repeated)) {
+      playbackContextController.current?.abort();
+      playbackContextController.current = null;
+    }
+
     const palette = useSearch.getState();
     const picker = useDevices.getState();
     const queue = useQueue.getState();
     const actions = useActions.getState();
     const lyrics = useLyrics.getState();
+
+    const copySpotify = (uri: string, label: string, asLink: boolean) => {
+      const value = asLink ? spotifyOpenUrl(uri) : uri;
+      if (value === null || !renderer.isOsc52Supported()) {
+        actions.notify({
+          kind: "error",
+          message: value === null ? "this item has no Spotify link" : "clipboard copy is unavailable",
+        });
+        return;
+      }
+      const copied = renderer.copyToClipboardOSC52(value);
+      actions.notify({
+        kind: copied ? "success" : "error",
+        message: copied
+          ? `copied ${label} ${asLink ? "link" : "URI"}`
+          : "clipboard copy failed",
+      });
+    };
 
     if (keysOpen) {
       if (key.name === "escape" || key.name === "?" || key.name === "q") setKeysOpen(false);
@@ -527,22 +560,35 @@ export function App({ version }: { version: string }) {
       return;
     }
 
-    // While the palette is open the input consumes printable characters; only navigation,
-    // confirmation and dismissal are handled here, and nothing falls through to transport keys.
+    // Search remains one coherent input mode: printable keys edit the query, arrows move the
+    // selection, and Tab cycles the visible catalog scope directly. There is no hidden state in
+    // which letters suddenly become navigation commands.
     if (palette.open) {
-      // Standard combobox keys: the field always holds the caret, arrows move the list highlight,
-      // Enter accepts the highlighted row, escape closes. Left/Right stay text editing.
+      const isEnter = key.name === "return" || key.name === "enter";
+      const drilled = palette.depth() > 1;
+      const viewport = overlayListHeight(height);
+      const navigated = applyPaletteNavigation(
+        key,
+        palette,
+        {
+          canChangeScope: !drilled && !palette.showingReference,
+          pageSize: viewport,
+        },
+      );
+      if (navigated) return;
+
       if (key.ctrl && key.name === "space") {
         const row = palette.current();
         if (row?.actionItem !== undefined) actions.openActions(row.actionItem, "palette");
       } else if (key.name === "escape") {
         if (!palette.back()) palette.closePalette();
-      } else if (key.name === "up" || (key.ctrl && key.name === "p")) {
-        palette.move(-1);
-      } else if (key.name === "down" || (key.ctrl && key.name === "n")) {
-        palette.move(1);
-      } else if (key.name === "return") {
-        const row = palette.current();
+      } else if (isEnter) {
+        const selectedRow = palette.currentRow();
+        if (selectedRow?.kind === "more") {
+          if (!selectedRow.loading) palette.loadMore(selectedRow.category);
+          return;
+        }
+        const row = selectedRow?.kind === "result" ? selectedRow : null;
         if (row === null || boot.phase !== "ready") return;
 
         // Ctrl+Enter appends instead of playing. Only single items can be queued — Spotify has no
@@ -604,8 +650,66 @@ export function App({ version }: { version: string }) {
       return;
     }
 
+    if (
+      isPlainShortcut(key, "y", { allowShift: true }) &&
+      !key.repeated &&
+      item !== null
+    ) {
+      copySpotify(item.uri, item.name, key.shift);
+      return;
+    }
+
     if (key.name === "u") {
       queue.openQueue();
+      return;
+    }
+
+    if (isPlainShortcut(key, "c")) {
+      const profile = boot.me;
+      if (key.repeated || profile === null) return;
+      const controller = new AbortController();
+      playbackContextController.current = controller;
+      void (async () => {
+        try {
+          const currentPlayback = usePlayback.getState();
+          const contextUri = currentPlayback.contextUri;
+          const itemUri = currentPlayback.item?.uri ?? null;
+          const target = await playbackContextDrill({
+            client: boot.client,
+            meId: profile.id,
+            contextUri,
+            item: currentPlayback.item,
+            market: profile.country,
+            signal: controller.signal,
+          });
+          const latestPlayback = usePlayback.getState();
+          if (
+            controller.signal.aborted ||
+            playbackContextController.current !== controller ||
+            latestPlayback.contextUri !== contextUri ||
+            (latestPlayback.item?.uri ?? null) !== itemUri ||
+            useSearch.getState().open
+          ) {
+            return;
+          }
+          palette.openAt(target);
+        } catch (error) {
+          if (
+            controller.signal.aborted ||
+            playbackContextController.current !== controller
+          ) {
+            return;
+          }
+          actions.notify({
+            kind: "error",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          if (playbackContextController.current === controller) {
+            playbackContextController.current = null;
+          }
+        }
+      })();
       return;
     }
 

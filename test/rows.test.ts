@@ -4,6 +4,7 @@ import { EMPTY_RESULTS } from "../src/api/search.ts";
 import {
   firstSelectable,
   moveSelection,
+  moveSelectionPage,
   toAlbumRows,
   toPlaylistRows,
   toRows,
@@ -107,6 +108,70 @@ describe("toRows", () => {
     );
     expect(rows[1]?.kind === "result" && rows[1].detail).toBe("2020 · 14 tracks");
   });
+
+  test("keeps pagination in an independent continuation row", () => {
+    const rows = toRows(
+      results({
+        tracks: [track("T")],
+        pages: {
+          tracks: { loaded: 10, total: 284, nextOffset: 10 },
+        },
+      }),
+    );
+    expect(rows[0]).toEqual({
+      kind: "header",
+      label: "TRACKS",
+    });
+    expect(rows.at(-1)).toMatchObject({
+      kind: "more",
+      category: "tracks",
+      label: "load more tracks…",
+    });
+  });
+
+  test("keeps the continuation label independent of page size", () => {
+    const rows = toRows(
+      results({
+        tracks: [track("T")],
+        pages: {
+          tracks: { loaded: 10, total: 12, nextOffset: 10 },
+        },
+      }),
+    );
+    expect(rows.at(-1)).toMatchObject({
+      kind: "more",
+      label: "load more tracks…",
+      detail: "",
+    });
+  });
+
+  test("keeps pagination mechanics out of the loading label", () => {
+    const rows = toRows(
+      results({
+        tracks: [track("T")],
+        pages: {
+          tracks: { loaded: 10, total: 284, nextOffset: 10, loadingMore: true },
+        },
+      }),
+    );
+    expect(rows.at(-1)).toMatchObject({
+      kind: "more",
+      label: "loading more tracks…",
+      loading: true,
+    });
+  });
+
+  test("does not add a load-more row when the category is complete", () => {
+    const rows = toRows(
+      results({
+        tracks: [track("T")],
+        pages: {
+          tracks: { loaded: 1, total: 1, nextOffset: null },
+        },
+      }),
+    );
+    expect(rows.some((row) => row.kind === "more")).toBeFalse();
+  });
 });
 
 describe("action targets in drilled track lists", () => {
@@ -188,6 +253,34 @@ describe("moveSelection", () => {
   });
 });
 
+describe("moveSelectionPage", () => {
+  const rows = toRows(
+    results({
+      tracks: [track("T1"), track("T2")],
+      artists: Array.from({ length: 10 }, (_, index) => ({
+        id: `a${index + 1}`,
+        name: `A${index + 1}`,
+        uri: `spotify:artist:a${index + 1}`,
+      })),
+      pages: {
+        tracks: { loaded: 2, total: 20, nextOffset: 10 },
+        artists: { loaded: 10, total: 20, nextOffset: 10 },
+      },
+    }),
+  );
+
+  test("counts headers as rendered viewport rows", () => {
+    expect(moveSelectionPage(rows, 1, 1, 11)).toBe(12);
+    expect(rows[12]).toMatchObject({ kind: "result", label: "A8" });
+    expect(moveSelectionPage(rows, 12, -1, 11)).toBe(1);
+  });
+
+  test("snaps a header target to a selectable row in the travel direction", () => {
+    expect(moveSelectionPage(rows, 2, 1, 2)).toBe(5);
+    expect(moveSelectionPage(rows, 5, -1, 1)).toBe(3);
+  });
+});
+
 describe("firstSelectable", () => {
   test("finds the first result row", () => {
     expect(firstSelectable(toRows(results({ tracks: [track("T")] })))).toBe(1);
@@ -197,6 +290,22 @@ describe("firstSelectable", () => {
     expect(firstSelectable([])).toBe(-1);
     expect(firstSelectable([{ kind: "header", label: "X" }])).toBe(-1);
   });
+
+  test("can land on load more when Spotify returned no readable items", () => {
+    expect(
+      firstSelectable([
+        { kind: "header", label: "PLAYLISTS" },
+        {
+          kind: "more",
+          category: "playlists",
+          label: "load more playlists…",
+          detail: "",
+          loading: false,
+          error: false,
+        },
+      ]),
+    ).toBe(1);
+  });
 });
 
 describe("windowStart", () => {
@@ -205,6 +314,7 @@ describe("windowStart", () => {
     label: `r${i}`,
     detail: "",
     trailing: "",
+    referenceUri: `spotify:track:r${i}`,
     play: { uris: [`u${i}`] },
   }));
 

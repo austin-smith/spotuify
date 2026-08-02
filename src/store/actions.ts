@@ -97,6 +97,8 @@ export interface ActionsSlice {
   activate: () => Promise<ActionResult | null>;
   /** One-key save/unsave for the currently playing item. */
   toggleSaved: (item: PlayableItem) => Promise<void>;
+  /** Publish transient feedback for non-mutating actions such as clipboard copies. */
+  notify: (notice: ActionNotice) => void;
   clearNotice: () => void;
 }
 
@@ -705,6 +707,10 @@ export const useActions = create<ActionsSlice>((set, get) => {
 
     async toggleSaved(item) {
       await toggle(item, false);
+    },
+
+    notify(notice) {
+      setNotice(notice);
     },
 
     clearNotice() {

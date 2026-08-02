@@ -1,7 +1,14 @@
 import type { AlbumTrack } from "../api/catalog.ts";
 import type { HomeData } from "../api/library.ts";
 import type { Playlist, PlaylistEntry } from "../api/playlists.ts";
-import type { SearchResults, SimplePlaylist } from "../api/search.ts";
+import type { ResolvedSpotifyReference } from "../api/references.ts";
+import {
+  SEARCH_PAGE_SIZE,
+  type SearchCategory,
+  type SearchPageState,
+  type SearchResults,
+  type SimplePlaylist,
+} from "../api/search.ts";
 import {
   artistLine,
   type PlayableItem,
@@ -24,12 +31,22 @@ export type Row =
       label: string;
       detail: string;
       trailing: string;
+      /** Canonical Spotify identity used by copy/link actions. */
+      referenceUri: string;
       /** What to hand the player when this row is chosen. */
       play: PlayTarget;
       /** Full item context for save and add-to-playlist actions, when this is a playable item. */
       actionItem?: PlayableItem;
       /** Set when choosing this row should open a deeper list rather than play. */
       drill?: Drill;
+    }
+  | {
+      kind: "more";
+      category: SearchCategory;
+      label: string;
+      detail: string;
+      loading: boolean;
+      error: boolean;
     };
 
 export type PlayTarget =
@@ -62,6 +79,11 @@ export interface RowContext {
 export const EMPTY_CONTEXT: RowContext = { meId: "", libraryMatches: [] };
 
 type ResultRow = Extract<Row, { kind: "result" }>;
+export type SelectableRow = Extract<Row, { kind: "result" | "more" }>;
+
+export function isSelectable(row: Row | undefined): row is SelectableRow {
+  return row?.kind === "result" || row?.kind === "more";
+}
 
 function trackRow(track: Track): ResultRow {
   return {
@@ -69,6 +91,7 @@ function trackRow(track: Track): ResultRow {
     label: track.name,
     detail: artistLine(track),
     trailing: formatDuration(track.duration_ms),
+    referenceUri: track.uri,
     play: { uris: [track.uri] },
     actionItem: track,
   };
@@ -80,6 +103,7 @@ function artistRow(artist: SimpleArtist): ResultRow {
     label: artist.name,
     detail: "",
     trailing: "",
+    referenceUri: artist.uri,
     play: { contextUri: artist.uri },
     drill: { kind: "artist", id: artist.id, name: artist.name },
   };
@@ -93,6 +117,7 @@ function albumRow(album: SimpleAlbum): ResultRow {
     label: album.name,
     detail: [year, tracks].filter((part) => part.length > 0).join(" · "),
     trailing: "",
+    referenceUri: album.uri,
     play: { contextUri: album.uri },
     drill: { kind: "album", id: album.id, name: album.name, uri: album.uri },
   };
@@ -117,6 +142,7 @@ function playlistRow(playlist: {
     label: playlist.name,
     detail: playlist.mine ? "" : playlist.ownerName,
     trailing: "",
+    referenceUri: playlist.uri,
     play: { contextUri: playlist.uri },
     ...(playlist.mine
       ? {
@@ -159,6 +185,7 @@ export function toPlaylistRows(
     label: entry.item.name,
     detail: artistLine(entry.item),
     trailing: formatDuration(entry.item.duration_ms),
+    referenceUri: entry.item.uri,
     play: { contextUri: playlist.uri, offset: entry.position },
     actionItem: entry.item,
   }));
@@ -181,6 +208,7 @@ export function toAlbumRows(
     label: `${String(track.track_number || index + 1).padStart(2)}  ${track.name}`,
     detail: track.artists.map((a) => a.name).join(", "),
     trailing: formatDuration(track.duration_ms),
+    referenceUri: track.uri,
     play: { contextUri: album.uri, offset: index },
     actionItem: {
       id: track.id,
@@ -203,6 +231,23 @@ export function toArtistRows(albums: SimpleAlbum[]): Row[] {
   return albums.map(albumRow);
 }
 
+/** A resolved pasted URI/URL is shown as one deliberate, confirmable navigation result. */
+export function toReferenceRows(
+  resolved: ResolvedSpotifyReference,
+  context: RowContext = EMPTY_CONTEXT,
+): Row[] {
+  switch (resolved.type) {
+    case "track":
+      return [trackRow(resolved.item)];
+    case "artist":
+      return [artistRow(resolved.item)];
+    case "album":
+      return [albumRow(resolved.item)];
+    case "playlist":
+      return [searchPlaylistRow(resolved.item, context.meId)];
+  }
+}
+
 /** Case-insensitive substring filter over selectable rows, dropping headers left empty. */
 export function filterRows(rows: Row[], query: string): Row[] {
   const needle = query.trim().toLowerCase();
@@ -220,14 +265,46 @@ export function filterRows(rows: Row[], query: string): Row[] {
   // Drop headers whose group ended up empty.
   return kept.filter((row, i) => {
     if (row.kind !== "header") return true;
-    return kept[i + 1]?.kind === "result";
+    return isSelectable(kept[i + 1]);
   });
 }
 
 /** A header plus its rows, or nothing at all when the group is empty. */
-function group<T>(label: string, items: T[], toRow: (item: T) => ResultRow): Row[] {
-  if (items.length === 0) return [];
-  return [{ kind: "header", label }, ...items.map(toRow)];
+function group<T>(
+  label: string,
+  items: T[],
+  toRow: (item: T) => ResultRow,
+  pagination?: { category: SearchCategory; page: SearchPageState },
+): Row[] {
+  if (items.length === 0 && pagination?.page.nextOffset === null) return [];
+  if (items.length === 0 && pagination === undefined) return [];
+
+  const rows: Row[] = [
+    {
+      kind: "header",
+      label,
+    },
+    ...items.map(toRow),
+  ];
+
+  const paged = pagination;
+  if (paged !== undefined && paged.page.nextOffset !== null) {
+    const failed = paged.page.loadMoreError !== undefined;
+    rows.push({
+      kind: "more",
+      category: paged.category,
+      label: failed
+        ? `↻ retry loading ${paged.category}`
+        : paged.page.loadingMore === true
+          ? `loading more ${paged.category}…`
+          : `load more ${paged.category}…`,
+      detail: failed ? paged.page.loadMoreError ?? "" : "",
+      loading: paged.page.loadingMore === true,
+      error: failed,
+    });
+  }
+
+  return rows;
 }
 
 /**
@@ -244,10 +321,38 @@ export function toRows(results: SearchResults, context: RowContext = EMPTY_CONTE
 
   return [
     ...group("YOUR PLAYLISTS", context.libraryMatches, (p) => playlistRow(p)),
-    ...group("TRACKS", results.tracks, trackRow),
-    ...group("ARTISTS", results.artists, artistRow),
-    ...group("ALBUMS", results.albums, albumRow),
-    ...group("PLAYLISTS", remotePlaylists, (p) => searchPlaylistRow(p, context.meId)),
+    ...group(
+      "TRACKS",
+      results.tracks,
+      trackRow,
+      results.pages?.tracks === undefined
+        ? undefined
+        : { category: "tracks", page: results.pages.tracks },
+    ),
+    ...group(
+      "ARTISTS",
+      results.artists,
+      artistRow,
+      results.pages?.artists === undefined
+        ? undefined
+        : { category: "artists", page: results.pages.artists },
+    ),
+    ...group(
+      "ALBUMS",
+      results.albums,
+      albumRow,
+      results.pages?.albums === undefined
+        ? undefined
+        : { category: "albums", page: results.pages.albums },
+    ),
+    ...group(
+      "PLAYLISTS",
+      remotePlaylists,
+      (p) => searchPlaylistRow(p, context.meId),
+      results.pages?.playlists === undefined
+        ? undefined
+        : { category: "playlists", page: results.pages.playlists },
+    ),
   ];
 }
 
@@ -271,9 +376,14 @@ export function toHomeRows(home: HomeData): Row[] {
 /**
  * The user's playlists whose name matches what they have typed.
  *
- * A plain substring match on the name, which is all the palette's own filter does elsewhere.
+ * A plain substring match on the name, which is all the palette's own filter does elsewhere. The
+ * default uses the same ten-result page as remote categories; there is no smaller all-scope mode.
  */
-export function matchPlaylists(playlists: Playlist[], query: string, limit = 5): Playlist[] {
+export function matchPlaylists(
+  playlists: Playlist[],
+  query: string,
+  limit = SEARCH_PAGE_SIZE,
+): Playlist[] {
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return [];
   const matches = playlists.filter((playlist) =>
@@ -287,7 +397,7 @@ export function matchPlaylists(playlists: Playlist[], query: string, limit = 5):
 
 /** Index of the first selectable row, or -1 when there are none. */
 export function firstSelectable(rows: Row[]): number {
-  return rows.findIndex((row) => row.kind === "result");
+  return rows.findIndex(isSelectable);
 }
 
 /**
@@ -303,13 +413,46 @@ export function moveSelection(rows: Row[], current: number, delta: number): numb
 
   while (remaining > 0) {
     let next = index + step;
-    while (next >= 0 && next < rows.length && rows[next]?.kind !== "result") next += step;
+    while (next >= 0 && next < rows.length && !isSelectable(rows[next])) next += step;
     if (next < 0 || next >= rows.length) break;
     index = next;
     remaining--;
   }
 
-  return rows[index]?.kind === "result" ? index : firstSelectable(rows);
+  return isSelectable(rows[index]) ? index : firstSelectable(rows);
+}
+
+/** Move by rendered rows, then land on the nearest selectable row in that direction. */
+export function moveSelectionPage(
+  rows: Row[],
+  current: number,
+  direction: -1 | 1,
+  pageSize: number,
+): number {
+  if (!isSelectable(rows[current])) return firstSelectable(rows);
+
+  const distance = Math.max(1, Math.floor(pageSize));
+  const target = Math.min(
+    rows.length - 1,
+    Math.max(0, current + direction * distance),
+  );
+  if (isSelectable(rows[target])) return target;
+
+  for (
+    let index = target + direction;
+    index >= 0 && index < rows.length;
+    index += direction
+  ) {
+    if (isSelectable(rows[index])) return index;
+  }
+  for (
+    let index = target - direction;
+    index >= 0 && index < rows.length;
+    index -= direction
+  ) {
+    if (isSelectable(rows[index])) return index;
+  }
+  return firstSelectable(rows);
 }
 
 /**

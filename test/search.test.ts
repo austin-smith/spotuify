@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SpotifyClient } from "../src/api/client.ts";
-import { PER_TYPE, search } from "../src/api/search.ts";
+import { SEARCH_PAGE_SIZE, search } from "../src/api/search.ts";
 import type { TokenStore } from "../src/auth/tokens.ts";
 
 const realFetch = globalThis.fetch;
@@ -64,10 +64,10 @@ describe("search", () => {
     expect(results.playlists).toEqual([]);
   });
 
-  test("caps each type at its display budget", async () => {
-    stub({ tracks: { items: Array.from({ length: 10 }, (_, i) => track(`t${i}`)) } });
+  test("uses one consistent ten-result page for every type", async () => {
+    stub({ tracks: { items: Array.from({ length: 15 }, (_, i) => track(`t${i}`)) } });
     const results = await search(new SpotifyClient(tokens), "q");
-    expect(results.tracks).toHaveLength(PER_TYPE.tracks);
+    expect(results.tracks).toHaveLength(SEARCH_PAGE_SIZE);
   });
 
   // limit=20 is a hard 400 from Spotify, not a silent clamp.
@@ -75,8 +75,7 @@ describe("search", () => {
     const { urls } = stub({});
     await search(new SpotifyClient(tokens), "q");
     const limit = Number(new URL(urls[0]!).searchParams.get("limit"));
-    expect(limit).toBeGreaterThan(0);
-    expect(limit).toBeLessThanOrEqual(10);
+    expect(limit).toBe(10);
   });
 
   test("requests all four types and passes the market", async () => {
@@ -94,6 +93,52 @@ describe("search", () => {
     expect(new URL(urls[0]!).searchParams.get("q")).toBe("oliver tree");
   });
 
+  test("requests only the selected scope", async () => {
+    const { urls } = stub({});
+    await search(new SpotifyClient(tokens), "q", { scope: "album" });
+    expect(new URL(urls[0]!).searchParams.get("type")).toBe("album");
+  });
+
+  test("requests only categories compatible with official field filters", async () => {
+    const { urls } = stub({});
+    await search(new SpotifyClient(tokens), "genre:ambient");
+    expect(new URL(urls[0]!).searchParams.get("type")).toBe("track,artist");
+  });
+
+  test("carries totals and the next offset for each requested category", async () => {
+    stub({
+      tracks: {
+        items: Array.from({ length: 10 }, (_, i) => track(`t${i}`)),
+        total: 284,
+        limit: 10,
+        offset: 20,
+        next: "next-page",
+      },
+    });
+    const results = await search(new SpotifyClient(tokens), "q", {
+      scope: "track",
+      offset: 20,
+    });
+    expect(results.pages?.tracks).toEqual({ loaded: 10, total: 284, nextOffset: 30 });
+  });
+
+  test("stops pagination at Spotify's maximum search offset", async () => {
+    stub({
+      tracks: {
+        items: Array.from({ length: 10 }, (_, i) => track(`t${i}`)),
+        total: 2_000,
+        limit: 10,
+        offset: 1_000,
+        next: "unrequestable-page",
+      },
+    });
+    const results = await search(new SpotifyClient(tokens), "q", {
+      scope: "track",
+      offset: 1_000,
+    });
+    expect(results.pages?.tracks?.nextOffset).toBeNull();
+  });
+
   test("handles a 204 with no body", async () => {
     globalThis.fetch = (async () =>
       new Response(null, { status: 204 })) as unknown as typeof fetch;
@@ -103,8 +148,24 @@ describe("search", () => {
 
   test("requests only the caller's types", async () => {
     const { urls } = stub({});
-    await search(new SpotifyClient(tokens), "q", { types: ["episode", "show"] });
-    expect(new URL(urls[0]!).searchParams.get("type")).toBe("episode,show");
+    const results = await search(new SpotifyClient(tokens), "q", {
+      types: ["episode", "show"],
+    });
+    const params = new URL(urls[0]!).searchParams;
+    expect(params.get("type")).toBe("episode,show");
+    expect(params.get("limit")).toBe("10");
+    expect(results).not.toHaveProperty("pages");
+  });
+
+  test("rejects mixing palette pagination with explicit CLI result controls", async () => {
+    const { urls } = stub({});
+    await expect(
+      search(new SpotifyClient(tokens), "q", {
+        scope: "track",
+        types: ["track"],
+      }),
+    ).rejects.toThrow("cannot be combined");
+    expect(urls).toHaveLength(0);
   });
 
   test("returns episodes, shows, and audiobooks when asked", async () => {
