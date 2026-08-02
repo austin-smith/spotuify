@@ -167,34 +167,53 @@ function New-ReleaseFixture {
 	$releaseName = "spotuify-v$Version-windows-x64"
 	$assetName = "$releaseName.zip"
 	$archivePath = Join-Path $fixtureRoot $assetName
-	Add-Type -AssemblyName System.IO.Compression.FileSystem
-	$fileStream = [IO.File]::Open($archivePath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-	$archive = New-Object IO.Compression.ZipArchive($fileStream, [IO.Compression.ZipArchiveMode]::Create, $false)
+	Add-Type -AssemblyName System.IO.Compression
+	$fileStream = $null
+	$archive = $null
 	try {
+		$fileStream = [IO.File]::Open($archivePath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+		$archive = New-Object IO.Compression.ZipArchive($fileStream, [IO.Compression.ZipArchiveMode]::Create, $false)
 		$null = $archive.CreateEntry("$releaseName/")
 		foreach ($fileName in @('spotuify.exe', 'spotuify-engine.exe')) {
 			$entry = $archive.CreateEntry("$releaseName/$fileName", [IO.Compression.CompressionLevel]::Optimal)
-			$inputStream = [IO.File]::OpenRead((Join-Path $payloadRoot $fileName))
-			$outputStream = $entry.Open()
+			$inputStream = $null
+			$outputStream = $null
 			try {
+				$inputStream = [IO.File]::OpenRead((Join-Path $payloadRoot $fileName))
+				$outputStream = $entry.Open()
 				$inputStream.CopyTo($outputStream)
 			} finally {
-				$outputStream.Dispose()
-				$inputStream.Dispose()
+				if ($null -ne $outputStream) {
+					$outputStream.Dispose()
+				}
+				if ($null -ne $inputStream) {
+					$inputStream.Dispose()
+				}
 			}
 		}
 		if ($ExtraEntry) {
 			$extra = $archive.CreateEntry("$releaseName/unexpected.txt")
-			$writer = New-Object IO.StreamWriter($extra.Open())
+			$extraStream = $null
+			$writer = $null
 			try {
+				$extraStream = $extra.Open()
+				$writer = New-Object IO.StreamWriter($extraStream)
 				$writer.Write('unexpected')
 			} finally {
-				$writer.Dispose()
+				if ($null -ne $writer) {
+					$writer.Dispose()
+				} elseif ($null -ne $extraStream) {
+					$extraStream.Dispose()
+				}
 			}
 		}
 	} finally {
-		$archive.Dispose()
-		$fileStream.Dispose()
+		if ($null -ne $archive) {
+			$archive.Dispose()
+		}
+		if ($null -ne $fileStream) {
+			$fileStream.Dispose()
+		}
 	}
 
 	$digest = Get-Sha256Digest -Path $archivePath
