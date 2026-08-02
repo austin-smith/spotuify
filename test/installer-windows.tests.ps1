@@ -75,6 +75,21 @@ function Invoke-Test {
 	Write-Host "PASS $Name"
 }
 
+function Get-Sha256Digest {
+	param([Parameter(Mandatory = $true)][string]$Path)
+	$stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+	$hasher = $null
+	try {
+		$hasher = [Security.Cryptography.SHA256]::Create()
+		return ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+	} finally {
+		if ($null -ne $hasher) {
+			$hasher.Dispose()
+		}
+		$stream.Dispose()
+	}
+}
+
 function New-TestExecutable {
 	param(
 		[Parameter(Mandatory = $true)][string]$Path,
@@ -182,12 +197,12 @@ function New-ReleaseFixture {
 		$fileStream.Dispose()
 	}
 
-	$digest = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+	$digest = Get-Sha256Digest -Path $archivePath
 	if ($WrongChecksum) {
 		$digest = '0' * 64
 	}
 	$manifestPath = Join-Path $fixtureRoot 'SHA256SUMS'
-	$launcherDigest = (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash.ToLowerInvariant()
+	$launcherDigest = Get-Sha256Digest -Path $launcherPath
 	[IO.File]::WriteAllText($manifestPath, "$digest  $assetName`n$launcherDigest  $launcherName`n")
 	return [pscustomobject]@{
 		Archive = $archivePath
@@ -242,6 +257,8 @@ function Set-TestInstallEnvironment {
 	Remove-Item Env:\SPOTUIFY_VERSION -ErrorAction SilentlyContinue
 }
 
+$testFailure = $null
+$cleanupFailure = $null
 try {
 	New-Item -ItemType Directory -Path $testRoot | Out-Null
 
@@ -277,13 +294,13 @@ try {
 		Set-TestInstallEnvironment 'launcher-refresh-install'
 		Install-Spotuify
 		$installedLauncher = Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin\spotuify.exe'
-		$firstDigest = (Get-FileHash -LiteralPath $installedLauncher -Algorithm SHA256).Hash
+		$firstDigest = Get-Sha256Digest -Path $installedLauncher
 
 		$secondFixture = New-ReleaseFixture -Name 'launcher-second' -Version '2.0.0'
 		Use-ReleaseFixture $secondFixture
 		Install-Spotuify
-		$secondDigest = (Get-FileHash -LiteralPath $installedLauncher -Algorithm SHA256).Hash
-		$expectedDigest = (Get-FileHash -LiteralPath $secondFixture.Launcher -Algorithm SHA256).Hash
+		$secondDigest = Get-Sha256Digest -Path $installedLauncher
+		$expectedDigest = Get-Sha256Digest -Path $secondFixture.Launcher
 		Assert-True ($firstDigest -cne $secondDigest) 'launcher changed between releases'
 		Assert-Equal $secondDigest $expectedDigest 'installed launcher digest'
 		Assert-Equal ((& $installedLauncher --version).Trim()) 'spotuify 2.0.0' 'refreshed launcher behavior'
@@ -489,14 +506,38 @@ try {
 	}
 
 	Write-Host 'All Spotuify Windows installer tests passed.'
+} catch {
+	$testFailure = $_
 } finally {
-	Set-Item Function:\Invoke-InstallerDownload -Value $originalDownloadFunction
-	Set-Item Function:\Test-SpotuifyBinaries -Value $originalBinaryTestFunction
-	Set-Item Function:\Write-InstallerMarker -Value $originalMarkerFunction
-	foreach ($name in $environmentNames) {
-		[Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process')
+	try {
+		Set-Item Function:\Invoke-InstallerDownload -Value $originalDownloadFunction
+		Set-Item Function:\Test-SpotuifyBinaries -Value $originalBinaryTestFunction
+		Set-Item Function:\Write-InstallerMarker -Value $originalMarkerFunction
+		foreach ($name in $environmentNames) {
+			[Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process')
+		}
+	} catch {
+		$cleanupFailure = $_
 	}
 	if (Test-Path -LiteralPath $testRoot) {
-		Remove-Item -LiteralPath $testRoot -Recurse -Force
+		try {
+			Remove-Item -LiteralPath $testRoot -Recurse -Force
+		} catch {
+			if ($null -eq $cleanupFailure) {
+				$cleanupFailure = $_
+			} else {
+				Write-Warning "Additional test cleanup failure: $($_.Exception.Message)"
+			}
+		}
 	}
+}
+
+if ($null -ne $testFailure) {
+	if ($null -ne $cleanupFailure) {
+		Write-Warning "Test cleanup also failed: $($cleanupFailure.Exception.Message)"
+	}
+	throw $testFailure
+}
+if ($null -ne $cleanupFailure) {
+	throw $cleanupFailure
 }
