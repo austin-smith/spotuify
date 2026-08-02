@@ -114,7 +114,7 @@ describe("action targets in drilled track lists", () => {
     const item = track("P");
     const [row] = toPlaylistRows(
       { name: "List", uri: "spotify:playlist:list" },
-      [{ position: 3, track: item, isLocal: false }],
+      [{ position: 3, item, isLocal: false }],
     );
     expect(row?.kind === "result" && row.actionItem).toBe(item);
   });

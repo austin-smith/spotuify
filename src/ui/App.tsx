@@ -20,6 +20,11 @@ import { useLyrics } from "../store/lyrics.ts";
 import { usePlayback } from "../store/playback.ts";
 import { useQueue } from "../store/queue.ts";
 import { useSearch } from "../store/search.ts";
+import { startPlaybackControlServer } from "../runtime/playback-control.ts";
+import {
+  RuntimeAlreadyRunningError,
+  type ControlServer,
+} from "../runtime/control.ts";
 import {
   checkForUpdate,
   markUpdateNotified,
@@ -95,13 +100,18 @@ export function App({ version }: { version: string }) {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [engine, setEngine] = useState<EngineStatus>({ state: "starting" });
   const [engineClient, setEngineClient] = useState<LibrespotEngine | null>(null);
+  const [runtimeOwnership, setRuntimeOwnership] = useState<
+    "waiting" | "checking" | "owned" | "unavailable" | "conflict"
+  >("waiting");
   const [profileRecoveryRequest, setProfileRecoveryRequest] = useState(0);
   const [profileRecoveryFailed, setProfileRecoveryFailed] = useState(false);
   const [bootAttempt, setBootAttempt] = useState(0);
+  const [runtimeAttempt, setRuntimeAttempt] = useState(0);
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [showUpdateNotice, setShowUpdateNotice] = useState(false);
   const profileRecoveryController = useRef<AbortController | null>(null);
   const activatedDevice = useRef<string | null>(null);
+  const runtimeServer = useRef<ControlServer | null>(null);
 
   const item = usePlayback((s) => s.item);
   const pendingSelection = usePlayback((s) => s.pendingSelection);
@@ -134,6 +144,8 @@ export function App({ version }: { version: string }) {
   const bootProfile = boot.phase === "ready" ? boot.me : null;
   const bootAccountId = bootProfile?.id ?? null;
   const bootProfileRetryAt = boot.phase === "ready" ? boot.profileRetryAt : null;
+  const canInitializePlayback =
+    runtimeOwnership === "owned" || runtimeOwnership === "unavailable";
   const updateNoticeVisible = updateNoticeIsVisible(
     boot.phase,
     actionNotice !== null || error !== null,
@@ -214,20 +226,67 @@ export function App({ version }: { version: string }) {
   useEffect(() => {
     if (bootPlayer === null) return;
 
+    let canceled = false;
+    let close: (() => Promise<void>) | undefined;
+    setRuntimeOwnership("checking");
+    void startPlaybackControlServer(bootPlayer, { publish: false })
+      .then((server) => {
+        if (canceled) {
+          void server.close();
+          return;
+        }
+        runtimeServer.current = server;
+        close = () => server.close();
+        setRuntimeOwnership("owned");
+      })
+      .catch((error) => {
+        if (canceled) return;
+        if (error instanceof RuntimeAlreadyRunningError) {
+          setRuntimeOwnership("conflict");
+          setEngine({ state: "failed", reason: error.message });
+          return;
+        }
+        // Local automation is optional when the OS cannot expose a private endpoint. This is not
+        // evidence of another playback owner, so the interactive app may still start normally.
+        setRuntimeOwnership("unavailable");
+      });
+
+    return () => {
+      canceled = true;
+      setRuntimeOwnership("waiting");
+      runtimeServer.current = null;
+      void close?.();
+    };
+  }, [bootPlayer, runtimeAttempt]);
+
+  useEffect(() => {
+    if (
+      bootPlayer === null ||
+      !canInitializePlayback
+    )
+      return;
+
     const supervisor = new LibrespotEngine();
     let canceled = false;
     const unsubscribe = supervisor.onStatus(setEngine);
-    setEngineClient(supervisor);
-    void supervisor.start().catch((err) => {
-      // The supervisor owns normal launch failures. This is a final boundary for unexpected setup
-      // errors so a rejected promise can never leave the UI stuck at "starting".
-      if (!canceled) {
+    void supervisor
+      .start()
+      .then(() => {
+        if (!canceled) setEngineClient(supervisor);
+      })
+      .catch((err) => {
+        // The supervisor owns normal launch failures. This is a final boundary for unexpected setup
+        // errors so a rejected promise can never leave the UI stuck at "starting".
+        if (canceled) return;
         setEngine({
           state: "failed",
           reason: err instanceof Error ? err.message : String(err),
         });
-      }
-    });
+        const server = runtimeServer.current;
+        runtimeServer.current = null;
+        void server?.close();
+        setRuntimeOwnership("unavailable");
+      });
 
     return () => {
       canceled = true;
@@ -235,36 +294,36 @@ export function App({ version }: { version: string }) {
       supervisor.stop();
       setEngineClient(null);
     };
-  }, [bootPlayer]);
+  }, [bootPlayer, canInitializePlayback]);
 
   useEffect(() => {
     if (bootPlayer === null || engineClient === null) return;
     useDevices.getState().configure(bootPlayer, engineClient, bootAccountId);
+    let stopPlayback: (() => void) | undefined;
     if (bootAccountId === null) {
-      // `/me` is the single recovery probe. Starting playback here would schedule `/me/player` at
-      // the same Retry-After deadline and make the two lanes compete for scarce quota.
-      usePlayback.setState({
-        item: null,
-        pendingSelection: null,
-        isPlaying: false,
-        shuffle: false,
-        repeat: "off",
-        volumePercent: null,
-        deviceId: null,
-        deviceName: null,
-        sessionPresence: "unknown",
-        progressMs: 0,
-        durationMs: 0,
-        error: null,
-        ready: true,
+      // `/me` is the single recovery probe. Initialize command ownership with its Web
+      // reconciliation lane suspended so `/me/player` cannot compete for the same Retry-After
+      // deadline and the private runtime never serves an unconfigured default store.
+      stopPlayback = usePlayback.getState().start(bootPlayer, engineClient, null, {
+        suspendWebReconciliation: true,
       });
-      return;
+    } else {
+      stopPlayback = usePlayback
+        .getState()
+        .start(bootPlayer, engineClient, bootAccountId, {
+          // `/me` owns the finite Retry-After deadline. Keep librespot live, but do not let playback
+          // schedule a competing `/me/player` probe until account recovery succeeds.
+          suspendWebReconciliation: bootProfileRetryAt !== null,
+        });
     }
-    return usePlayback.getState().start(bootPlayer, engineClient, bootAccountId, {
-      // `/me` owns the finite Retry-After deadline. Keep librespot live, but do not let playback
-      // schedule a competing `/me/player` probe until account recovery succeeds.
-      suspendWebReconciliation: bootProfileRetryAt !== null,
+    const server = runtimeServer.current;
+    void server?.publish().catch(() => {
+      if (runtimeServer.current !== server) return;
+      runtimeServer.current = null;
+      void server.close();
+      setRuntimeOwnership("unavailable");
     });
+    return () => stopPlayback?.();
     // Profile recovery resumes the existing store explicitly. Restarting it when only the retry
     // deadline clears would discard authoritative native state because listeners do not replay it.
   }, [bootPlayer, engineClient, bootAccountId]);
@@ -523,6 +582,11 @@ export function App({ version }: { version: string }) {
       setBootAttempt((attempt) => attempt + 1);
       return;
     }
+    if (runtimeOwnership === "conflict" && key.name === "r") {
+      setRuntimeOwnership("checking");
+      setRuntimeAttempt((attempt) => attempt + 1);
+      return;
+    }
     if (boot.phase !== "ready") return;
 
     if (key.name === "/") {
@@ -675,6 +739,17 @@ export function App({ version }: { version: string }) {
     return (
       <StartupErrorScreen
         message={boot.message}
+        width={width}
+        height={height}
+      />
+    );
+  }
+  // A bounded, explained conflict beats an unexplained LOADING screen: playback initialization is
+  // deliberately blocked while another runtime owns local commands, and nothing else renders that.
+  if (runtimeOwnership === "conflict") {
+    return (
+      <StartupErrorScreen
+        message="Another Spotuify runtime is already serving local commands. Stop it with `spotuify service stop`, then retry."
         width={width}
         height={height}
       />

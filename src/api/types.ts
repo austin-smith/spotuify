@@ -37,6 +37,33 @@ export interface Episode {
   uri: string;
   duration_ms: number;
   show?: { id: string; name: string };
+  release_date?: string;
+}
+
+/** An artist with the audience fields the full artist object carries and the simple one omits. */
+export interface FullArtist extends SimpleArtist {
+  genres?: string[];
+  followers?: { total: number };
+  images?: Image[];
+}
+
+export interface SimpleShow {
+  id: string;
+  name: string;
+  uri: string;
+  publisher?: string;
+  description?: string;
+  total_episodes?: number;
+}
+
+export interface SimpleAudiobook {
+  id: string;
+  name: string;
+  uri: string;
+  authors?: { name: string }[];
+  publisher?: string;
+  description?: string;
+  total_chapters?: number;
 }
 
 export type PlayableItem = Track | Episode;

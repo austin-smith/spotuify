@@ -9,7 +9,7 @@ from source. They never share npm dist-tags or Homebrew state.
 | Push tag `vX.Y.Z` | `X.Y.Z` | `latest` | Stable, marked latest | Update stable formula |
 
 Canary versions are derived during the workflow and are never committed to the repository. Users
-opt in with `npm install --global spotuify@canary`. A stable version is published only after the
+opt in with `npm install -g spotuify@canary`. A stable version is published only after the
 matching version is committed to both manifests and its signed tag is pushed.
 
 GitHub Releases is the canonical stable distribution channel. Each stable release contains signed

@@ -156,11 +156,11 @@ export function toPlaylistRows(
 ): Row[] {
   return entries.map((entry) => ({
     kind: "result" as const,
-    label: entry.track.name,
-    detail: artistLine(entry.track),
-    trailing: formatDuration(entry.track.duration_ms),
+    label: entry.item.name,
+    detail: artistLine(entry.item),
+    trailing: formatDuration(entry.item.duration_ms),
     play: { contextUri: playlist.uri, offset: entry.position },
-    actionItem: entry.track,
+    actionItem: entry.item,
   }));
 }
 

@@ -1,5 +1,5 @@
 import { SpotifyApiError, type SpotifyClient } from "./client.ts";
-import type { Track } from "./types.ts";
+import type { Episode, PlayableItem, Track } from "./types.ts";
 
 /**
  * A playlist as the palette needs it.
@@ -26,9 +26,11 @@ export interface Playlist {
  */
 export interface PlaylistEntry {
   position: number;
-  track: Track;
+  item: PlayableItem;
   isLocal: boolean;
 }
+
+type RawItem = Track & { type?: string; show?: { id: string; name: string } };
 
 interface RawEntry {
   is_local?: boolean;
@@ -38,8 +40,8 @@ interface RawEntry {
    * `item` is the current key. The older `track` is deprecated and, as of this writing, absent from
    * the responses entirely, so it is only read as a fallback.
    */
-  item?: (Track & { type?: string }) | null;
-  track?: (Track & { type?: string }) | null;
+  item?: RawItem | null;
+  track?: RawItem | null;
 }
 
 interface RawPlaylist {
@@ -62,7 +64,7 @@ const ITEM_PAGE = 50;
  * rows on screen.
  */
 const ITEM_FIELDS =
-  "next,items(is_local,item(id,name,uri,duration_ms,type,artists(id,name,uri),album(id,name,uri,images)))";
+  "next,items(is_local,item(id,name,uri,duration_ms,type,artists(id,name,uri),album(id,name,uri,images),show(id,name)))";
 
 const PLAYLIST_FIELDS = "next,items(id,name,uri,owner(id,display_name))";
 
@@ -72,6 +74,26 @@ interface RawPage<T> {
 }
 
 interface PlaylistMutation {
+  snapshot_id?: unknown;
+}
+
+export interface CreatedPlaylist {
+  id: string;
+  name: string;
+  uri: string;
+  public: boolean | null;
+  collaborative: boolean;
+  description: string | null;
+  snapshotId: string;
+}
+
+interface RawCreatedPlaylist {
+  id?: unknown;
+  name?: unknown;
+  uri?: unknown;
+  public?: unknown;
+  collaborative?: unknown;
+  description?: unknown;
   snapshot_id?: unknown;
 }
 
@@ -148,14 +170,24 @@ export async function playlistItems(
 
       const items = page?.items ?? [];
       items.forEach((raw, index) => {
-        const track = raw?.item ?? raw?.track ?? null;
-        // Episodes carry no artists or album, and the rows are built for tracks. Skipping them
-        // still costs a position, which is exactly why `position` is tracked rather than inferred.
-        if (track === null || track.type === "episode") return;
-        if (typeof track.name !== "string" || typeof track.uri !== "string") return;
+        const value = raw?.item ?? raw?.track ?? null;
+        if (value === null) return;
+        if (typeof value.name !== "string" || typeof value.uri !== "string") return;
+        // Episodes arrive on the track shape but carry a show instead of artists and an album;
+        // narrowing here keeps `PlayableItem` honest for every consumer.
+        const item: PlayableItem =
+          value.type === "episode"
+            ? ({
+                id: typeof value.id === "string" ? value.id : "",
+                name: value.name,
+                uri: value.uri,
+                duration_ms: value.duration_ms,
+                ...(value.show !== undefined ? { show: value.show } : {}),
+              } satisfies Episode)
+            : value;
         entries.push({
           position: offset + index,
-          track,
+          item,
           isLocal: raw?.is_local === true,
         });
       });
@@ -194,6 +226,206 @@ export async function addPlaylistItems(
   }
   return response.snapshot_id;
 }
+
+function confirmedSnapshot(response: PlaylistMutation | null): string {
+  if (typeof response?.snapshot_id !== "string" || response.snapshot_id.length === 0) {
+    throw new Error("spotify did not confirm the playlist update");
+  }
+  return response.snapshot_id;
+}
+
+/** Create an empty playlist for the current user using Spotify's current `/me/playlists` route. */
+export async function createPlaylist(
+  client: SpotifyClient,
+  options: {
+    name: string;
+    public?: boolean;
+    collaborative?: boolean;
+    description?: string;
+  },
+): Promise<CreatedPlaylist> {
+  const name = options.name.trim();
+  if (name.length === 0) throw new Error("playlist name cannot be empty");
+  if (options.collaborative === true && options.public === true) {
+    throw new Error("a collaborative playlist must be private");
+  }
+  const visibility = options.collaborative === true ? false : options.public;
+  const response = await client.request<RawCreatedPlaylist>("/me/playlists", {
+    method: "POST",
+    body: {
+      name,
+      ...(visibility !== undefined ? { public: visibility } : {}),
+      ...(options.collaborative !== undefined ? { collaborative: options.collaborative } : {}),
+      ...(options.description !== undefined ? { description: options.description } : {}),
+    },
+  });
+  if (
+    typeof response?.id !== "string" ||
+    typeof response.name !== "string" ||
+    typeof response.uri !== "string" ||
+    typeof response.snapshot_id !== "string"
+  ) {
+    throw new Error("spotify returned an invalid created playlist");
+  }
+  return {
+    id: response.id,
+    name: response.name,
+    uri: response.uri,
+    public: typeof response.public === "boolean" ? response.public : null,
+    collaborative: response.collaborative === true,
+    description: typeof response.description === "string" ? response.description : null,
+    snapshotId: response.snapshot_id,
+  };
+}
+
+/** Change playlist details. Omitted fields are left untouched. */
+export async function updatePlaylistDetails(
+  client: SpotifyClient,
+  playlistId: string,
+  changes: {
+    name?: string;
+    public?: boolean;
+    collaborative?: boolean;
+    description?: string;
+  },
+): Promise<void> {
+  if (Object.keys(changes).length === 0) throw new Error("at least one playlist change is required");
+  if (changes.name !== undefined && changes.name.trim().length === 0) {
+    throw new Error("playlist name cannot be empty");
+  }
+  if (changes.collaborative === true && changes.public === true) {
+    throw new Error("a collaborative playlist must be private");
+  }
+  await client.request(`/playlists/${playlistId}`, { method: "PUT", body: changes });
+}
+
+/** Remove every occurrence of each URI, optionally guarded by a playlist snapshot. */
+export async function removePlaylistItems(
+  client: SpotifyClient,
+  playlistId: string,
+  uris: readonly string[],
+  snapshotId?: string,
+): Promise<string> {
+  if (uris.length === 0) throw new Error("at least one playlist item is required");
+  if (uris.length > 100) throw new Error("spotify accepts at most 100 playlist items per request");
+  const response = await client.request<PlaylistMutation>(`/playlists/${playlistId}/items`, {
+    method: "DELETE",
+    body: {
+      items: uris.map((uri) => ({ uri })),
+      ...(snapshotId !== undefined ? { snapshot_id: snapshotId } : {}),
+    },
+  });
+  return confirmedSnapshot(response);
+}
+
+/** Move a contiguous range inside a playlist without replacing any items. */
+export async function movePlaylistItems(
+  client: SpotifyClient,
+  playlistId: string,
+  options: { from: number; before: number; length?: number; snapshotId?: string },
+): Promise<string> {
+  if (!Number.isInteger(options.from) || options.from < 0) throw new Error("from must be at least 0");
+  if (!Number.isInteger(options.before) || options.before < 0) throw new Error("before must be at least 0");
+  if (options.length !== undefined && (!Number.isInteger(options.length) || options.length < 1)) {
+    throw new Error("length must be at least 1");
+  }
+  const response = await client.request<PlaylistMutation>(`/playlists/${playlistId}/items`, {
+    method: "PUT",
+    body: {
+      range_start: options.from,
+      insert_before: options.before,
+      ...(options.length !== undefined ? { range_length: options.length } : {}),
+      ...(options.snapshotId !== undefined ? { snapshot_id: options.snapshotId } : {}),
+    },
+  });
+  return confirmedSnapshot(response);
+}
+
+/** Replace every playlist item atomically, or clear the playlist with an empty URI array. */
+export async function replacePlaylistItems(
+  client: SpotifyClient,
+  playlistId: string,
+  uris: readonly string[],
+): Promise<string> {
+  if (uris.length > 100) throw new Error("spotify accepts at most 100 replacement items");
+  const response = await client.request<PlaylistMutation>(`/playlists/${playlistId}/items`, {
+    method: "PUT",
+    body: { uris: [...uris] },
+  });
+  return confirmedSnapshot(response);
+}
+
+export interface PlaylistDetails {
+  id: string;
+  name: string;
+  uri: string;
+  description: string | null;
+  public: boolean | null;
+  collaborative: boolean;
+  ownerId: string;
+  ownerName: string;
+  followers: number | null;
+  totalItems: number | null;
+}
+
+// `items(total)` is the current key, matching the `/items` rename; `tracks(total)` is read as a
+// fallback the same way `playlistItems` still reads the deprecated `track` entry key.
+const DETAIL_FIELDS =
+  "id,name,uri,description,public,collaborative,owner(id,display_name),followers(total),items(total),tracks(total)";
+
+/** A playlist's own metadata, without its contents. Works for any visible playlist, not just owned. */
+export async function playlistDetails(
+  client: SpotifyClient,
+  playlistId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<PlaylistDetails> {
+  const raw = await client.request<{
+    id?: unknown;
+    name?: unknown;
+    uri?: unknown;
+    description?: unknown;
+    public?: unknown;
+    collaborative?: unknown;
+    owner?: { id?: unknown; display_name?: unknown } | null;
+    followers?: { total?: unknown } | null;
+    items?: { total?: unknown } | null;
+    tracks?: { total?: unknown } | null;
+  }>(`/playlists/${playlistId}`, {
+    query: { fields: DETAIL_FIELDS },
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (
+    typeof raw?.id !== "string" ||
+    typeof raw.name !== "string" ||
+    typeof raw.uri !== "string"
+  ) {
+    throw new Error("spotify returned an invalid playlist");
+  }
+  const ownerId = typeof raw.owner?.id === "string" ? raw.owner.id : "";
+  return {
+    id: raw.id,
+    name: raw.name,
+    uri: raw.uri,
+    description: typeof raw.description === "string" && raw.description !== "" ? raw.description : null,
+    public: typeof raw.public === "boolean" ? raw.public : null,
+    collaborative: raw.collaborative === true,
+    ownerId,
+    ownerName: typeof raw.owner?.display_name === "string" ? raw.owner.display_name : ownerId,
+    followers: typeof raw.followers?.total === "number" ? raw.followers.total : null,
+    totalItems:
+      typeof raw.items?.total === "number"
+        ? raw.items.total
+        : typeof raw.tracks?.total === "number"
+          ? raw.tracks.total
+          : null,
+  };
+}
+
+// There are deliberately no follow/unfollow functions here: playlist membership is library
+// membership. The classic `/playlists/{id}/followers` routes answer 403 for every request, like
+// the retired `/tracks` route above; following and unfollowing — which is also how Spotify
+// deletes an owned playlist — go through the URI-based `/me/library` family with
+// `spotify:playlist:` URIs (verified against the live API).
 
 /**
  * Turn Spotify's refusals into something the palette can print.

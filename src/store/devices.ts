@@ -56,13 +56,60 @@ function localDevice(): Device | null {
   };
 }
 
-function withLocalDevice(devices: Device[]): Device[] {
+/**
+ * Spotify's remote device list with the embedded receiver prepended when it is usable.
+ *
+ * The receiver is not always present in `/me/player/devices`, so any surface resolving a device
+ * selector must merge it in — otherwise the local receiver cannot be targeted by name or ID.
+ */
+export function withLocalDevice(devices: Device[]): Device[] {
   const local = localDevice();
   if (local === null) return devices;
   return [
     local,
     ...devices.filter((device) => device.id !== local.id),
   ];
+}
+
+/** The account-matched, ready embedded receiver's device ID, or null when it cannot be routed. */
+export function localReceiverId(): string | null {
+  return localDevice()?.id ?? null;
+}
+
+/**
+ * Transfer playback to a resolved device, routing the embedded receiver through librespot.
+ *
+ * A Web API transfer aimed at our own receiver would sidestep the native activation path while
+ * `confirmDeviceTransfer` marks the move as externally confirmed — exactly the state mix the
+ * account-match and ID-identity rules exist to prevent. Local routing applies only when the
+ * librespot and Web API accounts match; everything else goes through Spotify with the transfer
+ * confirmed into the playback store.
+ */
+export async function transferPlayback(
+  device: Device & { id: string },
+  play: boolean,
+  webPlayer?: PlayerApi,
+): Promise<void> {
+  const status = native?.getStatus();
+  if (
+    webAccountId !== null &&
+    status?.state === "ready" &&
+    status.accountId === webAccountId &&
+    device.id === status.deviceId
+  ) {
+    await native!.transfer();
+    // Native transfer preserves the paused/playing state; only an explicit play request resumes.
+    if (play && !usePlayback.getState().isPlaying) {
+      const outcome = await usePlayback.getState().togglePlay();
+      // The transfer succeeded but the requested resume did not; callers must not report success.
+      if (outcome !== null) throw outcome.failure;
+    }
+    return;
+  }
+  const target = webPlayer ?? player;
+  if (target === null) throw new Error("no web player is configured for device transfer");
+  await target.transfer(device.id, play);
+  usePlayback.getState().confirmDeviceTransfer(device.id, device.name);
 }
 
 /**
@@ -171,19 +218,8 @@ export const useDevices = create<DeviceSlice>((set, get) => ({
 
     set({ loading: true, error: null });
     try {
-      const nativeStatus = native?.getStatus();
-      if (
-        webAccountId !== null &&
-        nativeStatus?.state === "ready" &&
-        nativeStatus.accountId === webAccountId &&
-        device.id === nativeStatus.deviceId
-      ) {
-        await native!.transfer();
-      } else {
-        // Keep whatever the playback state was; transferring should not start music by itself.
-        await player.transfer(device.id, false);
-        usePlayback.getState().confirmDeviceTransfer(device.id, device.name);
-      }
+      // Keep whatever the playback state was; transferring should not start music by itself.
+      await transferPlayback(device as Device & { id: string }, false);
       // Active flags changed. Do not show a stale cached list on the next open.
       cachedRemoteDevices = null;
       cachedAt = 0;

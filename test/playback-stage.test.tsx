@@ -21,6 +21,8 @@ const PENDING: PendingPlaybackSelection = {
   confirmation: { kind: "item", uri: TRACK.uri },
   requiresFollowUp: false,
   lane: "web",
+  previousContextUri: null,
+  optimisticContextUri: null,
 };
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
@@ -99,6 +101,8 @@ test("a context without track metadata gets a restrained starting surface", asyn
       confirmation: { kind: "context", uri: "spotify:playlist:daily-mix" },
       requiresFollowUp: true,
       lane: "web",
+  previousContextUri: null,
+  optimisticContextUri: null,
     }),
   );
   await Bun.sleep(20);

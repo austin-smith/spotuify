@@ -56,6 +56,16 @@ export type PlaybackSelectionConfirmation =
 
 export type PlaybackSelectionLane = "native" | "web";
 
+/**
+ * Resolution of a playback command.
+ *
+ * `null` when the mutation was accepted. Otherwise the rejection cause — surfaced this way, not by
+ * rejecting the promise, because view call sites are fire-and-forget and take their error surface
+ * from the store's `error` banner. RPC callers must consume this so a failed command is never
+ * reported as success.
+ */
+export type PlaybackCommandOutcome = null | { failure: unknown };
+
 export interface PendingPlaybackSelection {
   /** Monotonic identity so an older command cannot clear a newer selection. */
   requestId: number;
@@ -68,6 +78,10 @@ export interface PendingPlaybackSelection {
   requiresFollowUp: boolean;
   /** The control lane whose acknowledgement is allowed to finish this transition. */
   lane: PlaybackSelectionLane;
+  /** Context to restore when this selection fails — the optimistic assignment must not outlive it. */
+  previousContextUri: string | null;
+  /** What the optimistic assignment wrote, so restoration never overwrites a newer authority. */
+  optimisticContextUri: string | null;
 }
 
 export interface PlaybackStartOptions {
@@ -89,6 +103,8 @@ export interface PlaybackSlice {
   volumePercent: number | null;
   deviceId: string | null;
   deviceName: string | null;
+  /** Last context confirmed by the Web API or selected through this client. */
+  contextUri: string | null;
   /**
    * Whether a successful source has established that a Spotify playback session exists.
    *
@@ -122,14 +138,14 @@ export interface PlaybackSlice {
   playSelection: (
     options: PlaybackSelectionOptions,
     preview?: PlaybackSelectionPreview,
-  ) => Promise<void>;
-  togglePlay: () => Promise<void>;
-  next: () => Promise<void>;
-  previous: () => Promise<void>;
-  seekBy: (deltaMs: number) => Promise<void>;
-  adjustVolume: (delta: number) => Promise<void>;
-  toggleShuffle: () => Promise<void>;
-  cycleRepeat: () => Promise<void>;
+  ) => Promise<PlaybackCommandOutcome>;
+  togglePlay: () => Promise<PlaybackCommandOutcome>;
+  next: () => Promise<PlaybackCommandOutcome>;
+  previous: () => Promise<PlaybackCommandOutcome>;
+  seekBy: (deltaMs: number) => Promise<PlaybackCommandOutcome>;
+  adjustVolume: (delta: number) => Promise<PlaybackCommandOutcome>;
+  toggleShuffle: () => Promise<PlaybackCommandOutcome>;
+  cycleRepeat: () => Promise<PlaybackCommandOutcome>;
 }
 
 /** Mutable, non-reactive internals — kept out of the store so they never trigger a render. */
@@ -335,6 +351,7 @@ function applyState(state: PlaybackState | null): Partial<PlaybackSlice> {
       durationMs: 0,
       deviceId: null,
       deviceName: null,
+      contextUri: null,
       sessionPresence: "absent",
       ready: true,
     };
@@ -363,6 +380,7 @@ function applyState(state: PlaybackState | null): Partial<PlaybackSlice> {
     volumePercent: state.device?.volume_percent ?? null,
     deviceId: state.device?.id ?? null,
     deviceName: state.device?.name ?? null,
+    contextUri: state.context?.uri ?? null,
     sessionPresence: "present",
     progressMs: anchor.progressMs,
     durationMs,
@@ -618,6 +636,24 @@ function clearPendingSelection(
   set({ pendingSelection: null });
 }
 
+/**
+ * Undo a failed selection's optimistic context assignment.
+ *
+ * Guarded on the optimistic value still being in place: an authoritative source that has since
+ * written a different context owns the field, and restoring over it would reintroduce staleness.
+ */
+function restoreSelectionContext(
+  set: (patch: Partial<PlaybackSlice>) => void,
+  get: () => PlaybackSlice,
+  requestId: number,
+): void {
+  const state = get();
+  const pendingSelection = state.pendingSelection;
+  if (pendingSelection?.requestId !== requestId) return;
+  if (state.contextUri !== pendingSelection.optimisticContextUri) return;
+  set({ contextUri: pendingSelection.previousContextUri });
+}
+
 function resetPendingSelectionTracking(requestId: number): void {
   clearTimer(pendingSelectionResolutionTimer);
   pendingSelectionResolutionTimer = null;
@@ -763,7 +799,10 @@ function deferPendingSelectionResolution(
     // cannot drop the renderer back to the branded idle state.
     if (promotePendingSelectionFromNativeTransport(set, get, requestId)) return;
     // Connection or a half-complete/unrelated event sequence is not confirmation.
-    if (resolution.kind === "failed") fail(set, resolution.error, "transient");
+    if (resolution.kind === "failed") {
+      restoreSelectionContext(set, get, requestId);
+      fail(set, resolution.error, "transient");
+    }
     clearPendingSelection(set, get, requestId);
   }, NATIVE_TAKEOVER_GRACE_MS);
 }
@@ -951,6 +990,7 @@ function applyNativeEvent(
         isPlaying: false,
         progressMs: 0,
         durationMs: 0,
+        contextUri: null,
       });
       return null;
     case "volume_changed":
@@ -1003,6 +1043,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
   volumePercent: null,
   deviceId: null,
   deviceName: null,
+  contextUri: null,
   sessionPresence: "unknown",
   progressMs: 0,
   durationMs: 0,
@@ -1045,6 +1086,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         volumePercent: null,
         deviceId: null,
         deviceName: null,
+        contextUri: null,
         sessionPresence: "unknown",
         progressMs: 0,
         durationMs: 0,
@@ -1066,7 +1108,12 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         durationMs: startingState.durationMs,
       };
       confirmFromStore(startingState);
-      set({ sessionPresence: "unknown", ready: false, pendingSelection: null });
+      set({
+        contextUri: null,
+        sessionPresence: "unknown",
+        ready: false,
+        pendingSelection: null,
+      });
     }
     // An unresolved read belongs to the previous run. Its own identity guards keep it from
     // mutating this run, and the new run must issue an independent initial reconciliation.
@@ -1355,7 +1402,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
   },
 
   async playSelection(options, preview) {
-    if (api === null) return;
+    if (api === null) return null;
     clearTimer(pendingSelectionResolutionTimer);
     pendingSelectionResolutionTimer = null;
     settledWebSelectionRequestId = null;
@@ -1369,6 +1416,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     const state = get();
     const routeNative = nativeCanHandle(state);
     const confirmation = selectionConfirmationFor(options, preview);
+    const optimisticContextUri = options.contextUri ?? null;
     set({
       pendingSelection: {
         requestId,
@@ -1377,7 +1425,10 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         confirmation,
         requiresFollowUp: selectionRequiresFollowUp(confirmation, state),
         lane: routeNative ? "native" : "web",
+        previousContextUri: state.contextUri,
+        optimisticContextUri,
       },
+      contextUri: optimisticContextUri,
       error: null,
     });
     let webMutation = routeNative ? null : beginWebMutation();
@@ -1395,7 +1446,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         // Keep the transition through metadata events: native load resolves only after the player
         // confirms it began, including when Spotify substitutes another playable item.
         clearPendingSelection(set, get, requestId);
-        return;
+        return null;
       }
       // Native availability can change between route selection and command dispatch. Once this
       // request falls back, only Web reconciliation or an authoritative native takeover owns it.
@@ -1409,6 +1460,7 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         ...(state.deviceId !== null ? { deviceId: state.deviceId } : {}),
       });
       settlePendingWebSelection(set, get, requestId);
+      return null;
     } catch (err) {
       // A superseded request owns neither the visible pending state nor its error surface.
       const current = get();
@@ -1424,11 +1476,16 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
             kind: "failed",
             error: err,
           });
-          return;
+          // The failure may yet be canceled by the exact native handshake, so this command's
+          // outcome is genuinely undecided; report acceptance rather than a failure that a
+          // successful takeover would contradict.
+          return null;
         }
+        restoreSelectionContext(set, get, requestId);
         fail(set, err, isNativeDevice(current.deviceId) ? "transient" : "until-success");
         clearPendingSelection(set, get, requestId);
       }
+      return { failure: err };
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }
@@ -1440,9 +1497,10 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
    * superseded it.
    */
   async togglePlay() {
-    if (api === null) return;
+    if (api === null) return null;
     const { isPlaying, deviceId } = get();
     const target = !isPlaying;
+    let outcome: PlaybackCommandOutcome = null;
     const progressRevision = fieldRevision("progress");
     const guard = beginOptimistic("playing");
     const routeNative = nativeCanHandle(get());
@@ -1490,8 +1548,10 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           };
         });
       }
+      return null;
     } catch (err) {
       fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
+      outcome = { failure: err };
       if (mayRollback(guard) && get().isPlaying === target) {
         const now = performance.now();
         anchor = revisionMatches("progress", progressRevision)
@@ -1509,10 +1569,11 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }
+    return outcome;
   },
 
   async next() {
-    if (api === null) return;
+    if (api === null) return null;
     const routeNative = nativeCanHandle(get());
     let webMutation = routeNative ? null : beginWebMutation();
     try {
@@ -1521,15 +1582,17 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         webMutation ??= beginWebMutation();
         await api.next(get().deviceId ?? undefined);
       }
+      return null;
     } catch (err) {
       fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
+      return { failure: err };
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }
   },
 
   async previous() {
-    if (api === null) return;
+    if (api === null) return null;
     const routeNative = nativeCanHandle(get());
     let webMutation = routeNative ? null : beginWebMutation();
     try {
@@ -1538,17 +1601,20 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
         webMutation ??= beginWebMutation();
         await api.previous(get().deviceId ?? undefined);
       }
+      return null;
     } catch (err) {
       fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
+      return { failure: err };
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }
   },
 
   async seekBy(deltaMs) {
-    if (api === null) return;
+    if (api === null) return null;
     const { durationMs, deviceId } = get();
     const target = Math.min(durationMs, Math.max(0, extrapolate(anchor, performance.now()) + deltaMs));
+    let outcome: PlaybackCommandOutcome = null;
     const guard = beginOptimistic("progress");
     const routeNative = nativeCanHandle(get());
     let webMutation = routeNative ? null : beginWebMutation();
@@ -1570,8 +1636,10 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           };
         });
       }
+      return null;
     } catch (err) {
       fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
+      outcome = { failure: err };
       if (mayRollback(guard)) {
         const restored = materializeAnchor(confirmed.anchor);
         anchor = {
@@ -1584,14 +1652,15 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }
+    return outcome;
   },
 
   async adjustVolume(delta) {
-    if (api === null) return;
+    if (api === null) return null;
     const { volumePercent, deviceId } = get();
-    if (volumePercent === null) return;
+    if (volumePercent === null) return null;
     const target = Math.min(100, Math.max(0, volumePercent + delta));
-    if (target === volumePercent) return;
+    if (target === volumePercent) return null;
     const guard = beginOptimistic("volume");
     const routeNative = nativeCanHandle(get());
     let webMutation = routeNative ? null : beginWebMutation();
@@ -1608,18 +1677,20 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           confirmed.volumePercent = target;
         });
       }
+      return null;
     } catch (err) {
       fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
       if (mayRollback(guard) && get().volumePercent === target) {
         set({ volumePercent: confirmed.volumePercent });
       }
+      return { failure: err };
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }
   },
 
   async toggleShuffle() {
-    if (api === null) return;
+    if (api === null) return null;
     const { shuffle, deviceId } = get();
     const target = !shuffle;
     const guard = beginOptimistic("shuffle");
@@ -1638,18 +1709,20 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           confirmed.shuffle = target;
         });
       }
+      return null;
     } catch (err) {
       fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
       if (mayRollback(guard) && get().shuffle === target) {
         set({ shuffle: confirmed.shuffle });
       }
+      return { failure: err };
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }
   },
 
   async cycleRepeat() {
-    if (api === null) return;
+    if (api === null) return null;
     const { repeat, deviceId } = get();
     const mode = nextRepeatState(repeat);
     const guard = beginOptimistic("repeat");
@@ -1668,11 +1741,13 @@ export const usePlayback = create<PlaybackSlice>((set, get) => ({
           confirmed.repeat = mode;
         });
       }
+      return null;
     } catch (err) {
       fail(set, err, isNativeDevice(get().deviceId) ? "transient" : "until-success");
       if (mayRollback(guard) && get().repeat === mode) {
         set({ repeat: confirmed.repeat });
       }
+      return { failure: err };
     } finally {
       if (webMutation !== null) finishWebMutation(get, webMutation);
     }

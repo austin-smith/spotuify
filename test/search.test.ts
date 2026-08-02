@@ -100,4 +100,90 @@ describe("search", () => {
     const results = await search(new SpotifyClient(tokens), "q");
     expect(results.tracks).toEqual([]);
   });
+
+  test("requests only the caller's types", async () => {
+    const { urls } = stub({});
+    await search(new SpotifyClient(tokens), "q", { types: ["episode", "show"] });
+    expect(new URL(urls[0]!).searchParams.get("type")).toBe("episode,show");
+  });
+
+  test("returns episodes, shows, and audiobooks when asked", async () => {
+    stub({
+      episodes: {
+        items: [
+          { id: "e", name: "Ep", uri: "spotify:episode:e", duration_ms: 1000 },
+        ],
+        next: null,
+      },
+      shows: {
+        items: [{ id: "s", name: "Show", uri: "spotify:show:s", publisher: "P" }],
+        next: null,
+      },
+      audiobooks: {
+        items: [{ id: "b", name: "Book", uri: "spotify:audiobook:b" }],
+        next: null,
+      },
+    });
+    const results = await search(new SpotifyClient(tokens), "q", {
+      types: ["episode", "show", "audiobook"],
+    });
+    expect(results.episodes.map((e) => e.name)).toEqual(["Ep"]);
+    expect(results.shows.map((s) => s.name)).toEqual(["Show"]);
+    expect(results.audiobooks.map((b) => b.name)).toEqual(["Book"]);
+  });
+
+  /**
+   * The 10-per-request cap is Spotify's, not ours. Deeper limits page by offset, and each request
+   * asks only for what is still missing so the final page never over-fetches past the cap.
+   */
+  test("pages by offset to satisfy limits above one request", async () => {
+    const requests: URLSearchParams[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const params = new URL(String(url)).searchParams;
+      requests.push(params);
+      const offset = Number(params.get("offset") ?? 0);
+      const limit = Number(params.get("limit"));
+      return Response.json({
+        tracks: {
+          items: Array.from({ length: limit }, (_, i) => track(`t${offset + i}`)),
+          next: "next-page",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const results = await search(new SpotifyClient(tokens), "q", {
+      types: ["track"],
+      limit: 25,
+    });
+    expect(results.tracks).toHaveLength(25);
+    expect(results.tracks.map((t) => t.name)).toEqual(
+      Array.from({ length: 25 }, (_, i) => `t${i}`),
+    );
+    expect(requests.map((p) => [p.get("offset"), p.get("limit")])).toEqual([
+      [null, "10"],
+      ["10", "10"],
+      ["20", "5"],
+    ]);
+  });
+
+  test("stops paging when Spotify reports no further page", async () => {
+    const { urls } = stub({ tracks: { items: [track("only")], next: null } });
+    const results = await search(new SpotifyClient(tokens), "q", {
+      types: ["track"],
+      limit: 30,
+    });
+    expect(results.tracks.map((t) => t.name)).toEqual(["only"]);
+    expect(urls).toHaveLength(1);
+  });
+
+  test("rejects limits outside Spotify's reachable range", async () => {
+    const { urls } = stub({});
+    await expect(
+      search(new SpotifyClient(tokens), "q", { types: ["track"], limit: 51 }),
+    ).rejects.toThrow("between 1 and 50");
+    await expect(
+      search(new SpotifyClient(tokens), "q", { types: ["track"], limit: 0 }),
+    ).rejects.toThrow("between 1 and 50");
+    expect(urls).toHaveLength(0);
+  });
 });

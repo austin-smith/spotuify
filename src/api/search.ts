@@ -1,5 +1,13 @@
 import type { SpotifyClient } from "./client.ts";
-import type { Page, SimpleAlbum, SimpleArtist, Track } from "./types.ts";
+import type {
+  Episode,
+  Page,
+  SimpleAlbum,
+  SimpleArtist,
+  SimpleAudiobook,
+  SimpleShow,
+  Track,
+} from "./types.ts";
 
 export interface SimplePlaylist {
   id: string;
@@ -10,11 +18,23 @@ export interface SimplePlaylist {
   tracks?: { total: number };
 }
 
+export type SearchType =
+  | "track"
+  | "artist"
+  | "album"
+  | "playlist"
+  | "show"
+  | "episode"
+  | "audiobook";
+
 export interface SearchResults {
   tracks: Track[];
   artists: SimpleArtist[];
   albums: SimpleAlbum[];
   playlists: SimplePlaylist[];
+  shows: SimpleShow[];
+  episodes: Episode[];
+  audiobooks: SimpleAudiobook[];
 }
 
 interface RawSearchResponse {
@@ -22,16 +42,36 @@ interface RawSearchResponse {
   artists?: Page<SimpleArtist | null>;
   albums?: Page<SimpleAlbum | null>;
   playlists?: Page<SimplePlaylist | null>;
+  shows?: Page<SimpleShow | null>;
+  episodes?: Page<Episode | null>;
+  audiobooks?: Page<SimpleAudiobook | null>;
 }
 
+const RESULT_KEY = {
+  track: "tracks",
+  artist: "artists",
+  album: "albums",
+  playlist: "playlists",
+  show: "shows",
+  episode: "episodes",
+  audiobook: "audiobooks",
+} as const satisfies Record<SearchType, keyof SearchResults>;
+
+/** The palette's default request: the four types it renders, unpaged. */
+const DEFAULT_TYPES: readonly SearchType[] = ["track", "artist", "album", "playlist"];
+
 /**
- * Per-type result counts.
+ * Per-type result counts for the default (palette) search.
  *
  * Spotify caps `limit` at 10 per type — `limit=20` is a hard 400 `Invalid limit`, not a silent
- * clamp. Totals for a typical query are in the low tens, so there is nothing to paginate.
+ * clamp. Deeper result sets are reached by paging `offset`, which `search` does only when a caller
+ * asks for more than one request's worth.
  */
 export const PER_TYPE = { tracks: 6, artists: 4, albums: 4, playlists: 4 } as const;
 const MAX_LIMIT = 10;
+
+/** Spotify rejects `offset` beyond 1000; combined with a 50-per-type cap this is unreachable. */
+export const MAX_RESULTS_PER_TYPE = 50;
 
 /** Spotify returns `null` entries inside these arrays; drop them before anything touches a field. */
 function compact<T>(page: Page<T | null> | undefined): T[] {
@@ -43,31 +83,77 @@ export const EMPTY_RESULTS: SearchResults = {
   artists: [],
   albums: [],
   playlists: [],
+  shows: [],
+  episodes: [],
+  audiobooks: [],
 };
 
 export async function search(
   client: SpotifyClient,
   query: string,
-  options: { market?: string; signal?: AbortSignal } = {},
+  options: {
+    market?: string;
+    signal?: AbortSignal;
+    /** Resource types to request. Defaults to the palette's four. */
+    types?: readonly SearchType[];
+    /**
+     * Per-type result count, 1–50. Without it the palette's `PER_TYPE` caps apply; with it every
+     * requested type is paged until it has `limit` results or Spotify runs out.
+     */
+    limit?: number;
+  } = {},
 ): Promise<SearchResults> {
   const trimmed = query.trim();
   if (trimmed.length === 0) return EMPTY_RESULTS;
+  if (
+    options.limit !== undefined &&
+    (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > MAX_RESULTS_PER_TYPE)
+  ) {
+    throw new Error(`search limit must be between 1 and ${MAX_RESULTS_PER_TYPE}`);
+  }
 
-  const raw = await client.request<RawSearchResponse>("/search", {
-    query: {
-      q: trimmed,
-      type: "track,artist,album,playlist",
-      limit: Math.min(MAX_LIMIT, Math.max(...Object.values(PER_TYPE))),
-      market: options.market,
-    },
-    ...(options.signal ? { signal: options.signal } : {}),
-  });
+  const types = options.types === undefined ? DEFAULT_TYPES : [...new Set(options.types)];
+  if (types.length === 0) return EMPTY_RESULTS;
+  const perType = (type: SearchType): number =>
+    options.limit ?? PER_TYPE[RESULT_KEY[type] as keyof typeof PER_TYPE] ?? MAX_LIMIT;
+  const target = Math.max(...types.map(perType));
 
-  if (raw === null) return EMPTY_RESULTS;
-  return {
-    tracks: compact(raw.tracks).slice(0, PER_TYPE.tracks),
-    artists: compact(raw.artists).slice(0, PER_TYPE.artists),
-    albums: compact(raw.albums).slice(0, PER_TYPE.albums),
-    playlists: compact(raw.playlists).slice(0, PER_TYPE.playlists),
+  const results: SearchResults = {
+    tracks: [],
+    artists: [],
+    albums: [],
+    playlists: [],
+    shows: [],
+    episodes: [],
+    audiobooks: [],
   };
+  // One offset walks every requested type together; a type that is exhausted simply returns an
+  // empty page while the others keep filling. Spotify's per-request cap makes this the only way
+  // past 10 results.
+  let pending = new Set(types);
+  for (let offset = 0; pending.size > 0 && offset < target; offset += MAX_LIMIT) {
+    const raw = await client.request<RawSearchResponse>("/search", {
+      query: {
+        q: trimmed,
+        type: [...pending].join(","),
+        limit: Math.min(MAX_LIMIT, target - offset),
+        ...(offset > 0 ? { offset } : {}),
+        market: options.market,
+      },
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    if (raw === null) break;
+
+    const still = new Set<SearchType>();
+    for (const type of pending) {
+      const key = RESULT_KEY[type];
+      const page = raw[key] as Page<never> | undefined;
+      const kept = perType(type) - results[key].length;
+      (results[key] as unknown[]).push(...compact(page).slice(0, Math.max(0, kept)));
+      if (results[key].length < perType(type) && typeof page?.next === "string") still.add(type);
+    }
+    pending = still;
+  }
+
+  return results;
 }
