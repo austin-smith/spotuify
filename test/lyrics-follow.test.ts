@@ -68,6 +68,23 @@ describe("following", () => {
     expect(useLyrics.getState().offset).toBe(12);
   });
 
+  test("jumping to an edge takes over like any hand scroll", () => {
+    useLyrics.getState().scrollToEdge("bottom", 10);
+    expect(useLyrics.getState().offset).toBe(30);
+    expect(useLyrics.getState().following).toBe(false);
+
+    useLyrics.getState().setFollowing(true);
+    useLyrics.getState().scrollToEdge("top", 10);
+    expect(useLyrics.getState().offset).toBe(0);
+    expect(useLyrics.getState().following).toBe(false);
+  });
+
+  test("the bottom of a lyric shorter than the viewport is the top", () => {
+    useLyrics.setState({ total: 5 });
+    useLyrics.getState().scrollToEdge("bottom", 10);
+    expect(useLyrics.getState().offset).toBe(0);
+  });
+
   test("a new track starts following again", () => {
     useLyrics.getState().scrollBy(5, 10);
     expect(useLyrics.getState().following).toBe(false);

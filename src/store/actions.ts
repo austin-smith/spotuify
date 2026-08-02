@@ -212,14 +212,22 @@ function firstEnabled(entries: readonly ActionEntry[]): number {
   return entries.findIndex((entry) => !entry.disabled);
 }
 
+/** Move by `delta` enabled entries, stopping at the ends; the wheel sends multi-row deltas. */
 function moveEnabled(entries: readonly ActionEntry[], selected: number, delta: number): number {
   if (entries.length === 0) return -1;
   const step = delta > 0 ? 1 : -1;
+  let remaining = Math.abs(delta);
   let index = selected;
-  do {
-    index += step;
-  } while (index >= 0 && index < entries.length && entries[index]?.disabled);
-  return index >= 0 && index < entries.length ? index : selected;
+
+  while (remaining > 0) {
+    let next = index + step;
+    while (next >= 0 && next < entries.length && entries[next]?.disabled) next += step;
+    if (next < 0 || next >= entries.length) break;
+    index = next;
+    remaining--;
+  }
+
+  return index;
 }
 
 /** Filter locally; loading the full catalog once is cheaper and more predictable than API search. */

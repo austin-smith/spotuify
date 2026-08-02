@@ -39,7 +39,7 @@ import { CoverBackdrop } from "./CoverBackdrop.tsx";
 import { DevicePicker } from "./DevicePicker.tsx";
 import { FeedbackBanner, feedbackTopAboveHud } from "./FeedbackBanner.tsx";
 import { LyricsView } from "./LyricsView.tsx";
-import { QueueView } from "./QueueView.tsx";
+import { QueueView, queueListHeight } from "./QueueView.tsx";
 import { SetupScreen } from "./SetupScreen.tsx";
 import { StartupErrorScreen } from "./StartupErrorScreen.tsx";
 import { HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
@@ -503,21 +503,34 @@ export function App({ version }: { version: string }) {
       // number from the same helper.
       const viewport = overlayListHeight(height);
       if (key.name === "escape" || key.name === "l") lyrics.closeLyrics();
+      // Option/Alt+arrow before the plain arrows, same as the palette: laptop Home/End.
+      else if (key.option === true && key.name === "up") lyrics.scrollToEdge("top", viewport);
+      else if (key.option === true && key.name === "down") lyrics.scrollToEdge("bottom", viewport);
       else if (key.name === "up" || (key.ctrl && key.name === "p")) lyrics.scrollBy(-1, viewport);
       else if (key.name === "down" || (key.ctrl && key.name === "n")) lyrics.scrollBy(1, viewport);
       else if (key.name === "pageup") lyrics.scrollBy(-viewport, viewport);
       else if (key.name === "pagedown") lyrics.scrollBy(viewport, viewport);
-      else if (key.name === "home") {
-        lyrics.setFollowing(false);
-        lyrics.scrollTo(0);
-      } else if (key.name === "f") lyrics.setFollowing(true);
+      else if (key.name === "home") lyrics.scrollToEdge("top", viewport);
+      else if (key.name === "end") lyrics.scrollToEdge("bottom", viewport);
+      else if (key.name === "f") lyrics.setFollowing(true);
       else if (key.name === "r") lyrics.openLyrics(usePlayback.getState().item);
       return;
     }
 
     if (queue.open) {
+      // The rows the queue view is actually showing, from the same helper it lays out with.
+      const viewport = queueListHeight(height, queue);
       if (key.name === "escape" || key.name === "u") queue.closeQueue();
       else if (key.name === "r") void queue.refresh();
+      // Option/Alt+arrow before the plain arrows, same as the palette: laptop Home/End.
+      else if (key.option === true && key.name === "up") queue.scrollToEdge("top", viewport);
+      else if (key.option === true && key.name === "down") queue.scrollToEdge("bottom", viewport);
+      else if (key.name === "up" || (key.ctrl && key.name === "p")) queue.scrollBy(-1, viewport);
+      else if (key.name === "down" || (key.ctrl && key.name === "n")) queue.scrollBy(1, viewport);
+      else if (key.name === "pageup") queue.scrollBy(-viewport, viewport);
+      else if (key.name === "pagedown") queue.scrollBy(viewport, viewport);
+      else if (key.name === "home") queue.scrollToEdge("top", viewport);
+      else if (key.name === "end") queue.scrollToEdge("bottom", viewport);
       return;
     }
 

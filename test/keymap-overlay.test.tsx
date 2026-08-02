@@ -102,8 +102,8 @@ describe("keymap engine status", () => {
     await setup.renderOnce();
 
     const screen = setup.captureCharFrame();
-    expect(screen).toContain("IN SEARCH");
-    expect(screen).toContain("IN LYRICS");
+    expect(screen).toContain("SEARCH");
+    expect(screen).toContain("LISTS");
     expect(screen).toContain("esc close");
   });
 
@@ -116,13 +116,32 @@ describe("keymap engine status", () => {
     });
     const screen = lines.join("\n");
 
-    expect(screen).toContain("IN LYRICS");
-    expect(screen).toContain("pgup/pgdn   scroll a page");
+    expect(screen).toContain("LISTS");
+    // The gap encodes the key column width: longest shortcut (`tab / shift+tab`, 15 cells) plus 2.
+    expect(screen).toContain("pgup/pgdn        a page");
     expect(screen).not.toContain("look again");
     expect(screen).not.toContain("↑/↓LYRICscroll");
     for (const line of lines.slice(0, 32)) {
       expect(line.length).toBeLessThanOrEqual(80);
     }
+  });
+
+  // Overflowing columns drop whole groups silently; growing the keymap once hid `q quit` at 80×24.
+  test.each(SUPPORTED_SIZES)("keeps every key group visible at %ix%i", async (width, height) => {
+    const screen = (
+      await render(width, height, {
+        state: "ready",
+        pid: 42,
+        deviceId: "receiver",
+        accountId: "account",
+      })
+    ).join("\n");
+
+    for (const group of ["PLAYBACK", "BROWSE", "LISTS", "SEARCH"]) {
+      expect(screen).toContain(group);
+    }
+    // 60×20 has never fit the APP group; the guard here is that nothing else joins it.
+    if (height >= 24) expect(screen).toContain("APP");
   });
 
   test("describes a ready local receiver without the ambiguous activation message", async () => {

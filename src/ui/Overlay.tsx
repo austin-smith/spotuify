@@ -40,6 +40,17 @@ export function overlayListHeight(height: number, extraRows = 0): number {
   return Math.max(1, height - CHROME_ROWS - extraRows);
 }
 
+/**
+ * Rows a wheel event asks to move by, signed; null for non-scroll mouse input. Whether a row means
+ * a scroll offset or a selection step is the overlay's call.
+ */
+export function scrollSteps(event: MouseEvent): number | null {
+  const direction = event.scroll?.direction;
+  if (direction !== "up" && direction !== "down") return null;
+  const rows = Math.max(1, Math.trunc(event.scroll?.delta ?? 1));
+  return direction === "up" ? -rows : rows;
+}
+
 /** The `◈ TITLE` header most overlays use. */
 export function OverlayTitle({ glyph, title }: { glyph: string; title: string }) {
   return (

@@ -1,6 +1,13 @@
+import type { MouseEvent } from "@opentui/core";
 import { useActions } from "../store/actions.ts";
 import { listWindowStart } from "../store/rows.ts";
-import { Overlay, OverlayTitle, overlayInnerWidth, overlayListHeight } from "./Overlay.tsx";
+import {
+  Overlay,
+  OverlayTitle,
+  overlayInnerWidth,
+  overlayListHeight,
+  scrollSteps,
+} from "./Overlay.tsx";
 import { truncate } from "./text.ts";
 import { theme } from "./theme.ts";
 
@@ -15,6 +22,7 @@ export function ActionsMenu({ width, height }: { width: number; height: number }
   const savedLoading = useActions((s) => s.savedLoading);
   const busy = useActions((s) => s.busy);
   const error = useActions((s) => s.error);
+  const move = useActions((s) => s.move);
 
   if (target === null) return null;
 
@@ -25,6 +33,14 @@ export function ActionsMenu({ width, height }: { width: number; height: number }
   const status =
     error ?? (busy ? "updating spotify…" : savedLoading ? "checking liked state…" : "actions");
 
+  // Selection-driven like the palette: the wheel moves the highlight and the window follows.
+  const handleMouseScroll = (event: MouseEvent) => {
+    const rows = scrollSteps(event);
+    if (rows === null || busy) return;
+    move(rows);
+    event.stopPropagation();
+  };
+
   return (
     <Overlay
       width={width}
@@ -33,6 +49,7 @@ export function ActionsMenu({ width, height }: { width: number; height: number }
       status={status}
       isError={error !== null}
       hints="↑↓ move · ↵ choose · esc close"
+      onMouseScroll={handleMouseScroll}
     >
       {visible.map((entry, offset) => {
         const index = start + offset;

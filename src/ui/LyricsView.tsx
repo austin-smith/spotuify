@@ -5,7 +5,13 @@ import type { PlayableItem } from "../api/types.ts";
 import { useLyrics } from "../store/lyrics.ts";
 import { formatDuration } from "../store/progress.ts";
 import { positionMs } from "../store/playback.ts";
-import { Overlay, OverlayTitle, overlayInnerWidth, overlayListHeight } from "./Overlay.tsx";
+import {
+  Overlay,
+  OverlayTitle,
+  overlayInnerWidth,
+  overlayListHeight,
+  scrollSteps,
+} from "./Overlay.tsx";
 import { easeOut, lerpColor } from "./color.ts";
 import { truncate, wrap } from "./text.ts";
 import { theme } from "./theme.ts";
@@ -310,11 +316,9 @@ export function LyricsView({
   const scrollable = display.length > viewport;
 
   const handleMouseScroll = (event: MouseEvent) => {
-    const direction = event.scroll?.direction;
-    if (!scrollable || (direction !== "up" && direction !== "down")) return;
-
-    const rows = Math.max(1, Math.trunc(event.scroll?.delta ?? 1));
-    scrollBy(direction === "up" ? -rows : rows, viewport);
+    const rows = scrollSteps(event);
+    if (rows === null || !scrollable) return;
+    scrollBy(rows, viewport);
     event.stopPropagation();
   };
 
