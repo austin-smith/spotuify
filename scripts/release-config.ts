@@ -54,6 +54,7 @@ export const RELEASE_TARGETS = {
 export const REPO_ROOT = resolve(import.meta.dir, "..");
 export const DIST_DIR = resolve(REPO_ROOT, "dist");
 export const STAGE_DIR = resolve(DIST_DIR, "stage");
+export const STANDALONE_STAGE_DIR = resolve(DIST_DIR, "standalone-stage");
 
 function validSemanticVersion(value: unknown, source: string): string {
   if (!isSemanticVersion(value)) {
@@ -159,6 +160,28 @@ export function executableName(name: string, target: ReleaseTarget): string {
 
 export function releaseExecutableNames(target: ReleaseTarget): readonly [string, string] {
   return [executableName("spotuify", target), executableName("spotuify-engine", target)];
+}
+
+export function standaloneComponentName(
+  version: string,
+  target: ReleaseTarget,
+  component: "spotuify" | "engine" | "launcher",
+): string {
+  const extension = target.platform === "win32" ? ".exe" : "";
+  return `${artifactName(version, target)}-standalone-${component}${extension}`;
+}
+
+export function standaloneComponentNames(
+  version: string,
+  target: ReleaseTarget,
+): readonly string[] {
+  return [
+    standaloneComponentName(version, target, "spotuify"),
+    standaloneComponentName(version, target, "engine"),
+    ...(target.platform === "win32"
+      ? [standaloneComponentName(version, target, "launcher")]
+      : []),
+  ];
 }
 
 export function normalizeCommandOutput(stdout: string): string {

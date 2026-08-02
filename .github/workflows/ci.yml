@@ -49,6 +49,9 @@ jobs:
       - name: Test TypeScript
         run: bun test
 
+      - name: Test POSIX installer
+        run: bun run installer:test:posix
+
       - name: Check Rust formatting
         run: cargo fmt --manifest-path native/Cargo.toml --check
 
@@ -227,6 +230,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Test PowerShell installer
+        shell: powershell
+        run: ./test/installer-windows.tests.ps1
 
       - name: Package and verify npm launcher
         run: |

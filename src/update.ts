@@ -1,6 +1,12 @@
 import { UPDATE_PATH } from "./config.ts";
-import { installSource, type InstallSource } from "./distribution.ts";
+import {
+  installSource,
+  standaloneInstallation,
+  type InstallSource,
+  type StandaloneTarget,
+} from "./distribution.ts";
 import { writePrivateFileAtomic } from "./private-file.ts";
+import { parseStandaloneManifest, STANDALONE_MANIFEST_URL } from "./standalone-release.ts";
 import {
   compareSemanticVersions,
   isSemanticVersion,
@@ -9,10 +15,11 @@ import {
 } from "./semver.ts";
 
 export type UpdateChannel = "latest" | "canary";
+type UpdateSource = "npm" | "homebrew" | "standalone";
 
 export interface AvailableUpdate {
   status: "available";
-  source: "npm" | "homebrew";
+  source: UpdateSource;
   channel: UpdateChannel;
   currentVersion: string;
   latestVersion: string;
@@ -25,7 +32,7 @@ export type UpdateCheckResult =
   | AvailableUpdate
   | {
       status: "current";
-      source: "npm" | "homebrew";
+      source: UpdateSource;
       channel: UpdateChannel;
       currentVersion: string;
       latestVersion: string | null;
@@ -33,11 +40,11 @@ export type UpdateCheckResult =
     }
   | { status: "unsupported"; source: "direct" | "source" }
   | { status: "disabled" }
-  | { status: "unavailable"; source: "npm" | "homebrew"; message: string };
+  | { status: "unavailable"; source: UpdateSource; message: string };
 
 interface UpdateCache {
   schema: 1;
-  source: "npm" | "homebrew";
+  source: UpdateSource;
   channel: UpdateChannel;
   checkedAt: number | null;
   attemptedAt: number;
@@ -58,6 +65,7 @@ interface CheckOptions {
   force?: boolean;
   respectOptOut?: boolean;
   env?: NodeJS.ProcessEnv;
+  standaloneTarget?: StandaloneTarget;
 }
 
 const NPM_METADATA_URL = "https://registry.npmjs.org/spotuify";
@@ -75,10 +83,10 @@ export function updateChannel(version: string): UpdateChannel {
   return prereleaseIdentifiers(version)?.[0] === "canary" ? "canary" : "latest";
 }
 
-export function updateCommand(source: "npm" | "homebrew", channel: UpdateChannel): string {
-  return source === "homebrew"
-    ? "brew update && brew upgrade austin-smith/tap/spotuify"
-    : `npm install --global spotuify@${channel}`;
+export function updateCommand(source: UpdateSource, channel: UpdateChannel): string {
+  if (source === "homebrew") return "brew update && brew upgrade austin-smith/tap/spotuify";
+  if (source === "npm") return `npm install --global spotuify@${channel}`;
+  return "spotuify update";
 }
 
 export function automaticUpdateChecksEnabled(
@@ -100,7 +108,7 @@ function parseCache(value: unknown): UpdateCache | null {
   const cache = value as Partial<UpdateCache>;
   if (
     cache.schema !== 1 ||
-    (cache.source !== "npm" && cache.source !== "homebrew") ||
+    (cache.source !== "npm" && cache.source !== "homebrew" && cache.source !== "standalone") ||
     !isUpdateChannel(cache.channel) ||
     (cache.checkedAt !== null &&
       (typeof cache.checkedAt !== "number" || !Number.isFinite(cache.checkedAt))) ||
@@ -131,14 +139,14 @@ async function writeCache(path: string, cache: UpdateCache): Promise<void> {
 
 function cacheMatches(
   cache: UpdateCache | null,
-  source: "npm" | "homebrew",
+  source: UpdateSource,
   channel: UpdateChannel,
 ): cache is UpdateCache {
   return cache !== null && cache.source === source && cache.channel === channel;
 }
 
 function resultFromVersion(
-  source: "npm" | "homebrew",
+  source: UpdateSource,
   channel: UpdateChannel,
   currentVersion: string,
   latestVersion: string | null,
@@ -258,8 +266,14 @@ export async function checkForUpdate(options: CheckOptions): Promise<UpdateCheck
   if (!isSemanticVersion(options.currentVersion)) {
     return { status: "unavailable", source, message: "current version is invalid" };
   }
+  const standaloneTarget = source === "standalone"
+    ? (options.standaloneTarget ?? standaloneInstallation()?.target)
+    : undefined;
+  if (source === "standalone" && standaloneTarget === undefined) {
+    return { status: "unavailable", source, message: "standalone installation is invalid" };
+  }
 
-  const channel = source === "homebrew" ? "latest" : updateChannel(options.currentVersion);
+  const channel = source === "npm" ? updateChannel(options.currentVersion) : "latest";
   const now = options.now ?? Date.now();
   const cachePath = options.cachePath ?? UPDATE_PATH;
   const fetcher = options.fetcher ?? fetch;
@@ -312,7 +326,11 @@ export async function checkForUpdate(options: CheckOptions): Promise<UpdateCheck
 
   try {
     const response = await fetcher(
-      source === "npm" ? `${NPM_METADATA_URL}/${channel}` : HOMEBREW_FORMULA_URL,
+      source === "npm"
+        ? `${NPM_METADATA_URL}/${channel}`
+        : source === "homebrew"
+          ? HOMEBREW_FORMULA_URL
+          : STANDALONE_MANIFEST_URL,
       { headers, signal: requestSignal(options.signal) },
     );
     let latestVersion: string | null;
@@ -325,10 +343,11 @@ export async function checkForUpdate(options: CheckOptions): Promise<UpdateCheck
     } else {
       if (!response.ok) throw new Error(`update server returned ${response.status}`);
       const body = await responseText(response);
-      latestVersion =
-        source === "npm"
-          ? npmLatestVersion(body, channel)
-          : homebrewLatestVersion(body);
+      latestVersion = source === "npm"
+        ? npmLatestVersion(body, channel)
+        : source === "homebrew"
+          ? homebrewLatestVersion(body)
+          : parseStandaloneManifest(body, standaloneTarget!).version;
     }
 
     const etag =

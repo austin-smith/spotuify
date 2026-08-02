@@ -11,7 +11,7 @@ import {
 } from "../src/update.ts";
 
 function available(
-  source: "npm" | "homebrew",
+  source: "npm" | "homebrew" | "standalone",
   channel: "latest" | "canary" = "latest",
 ): UpdateCheckResult {
   return {
@@ -23,7 +23,9 @@ function available(
     command:
       source === "homebrew"
         ? "brew update && brew upgrade austin-smith/tap/spotuify"
-        : `npm install --global spotuify@${channel}`,
+        : source === "npm"
+          ? `npm install --global spotuify@${channel}`
+          : "spotuify update",
     shouldNotify: true,
     stale: false,
   };
@@ -214,5 +216,44 @@ describe("explicit update command", () => {
     });
     expect(result).toEqual({ status: "failed", exitCode: 7 });
     expect(commands).toEqual([["brew", "update"]]);
+  });
+
+  test("updates a verified installer-managed standalone installation", async () => {
+    const installation = {
+      root: "/managed/spotuify",
+      releaseDirectory: "/managed/spotuify/releases/1.0.0-linux-x64",
+      releaseName: "1.0.0-linux-x64",
+      target: "linux-x64" as const,
+    };
+    const installed: string[] = [];
+    const result = await runUpdateCommand({
+      check: async () => available("standalone"),
+      checkOnly: false,
+      currentVersion: "1.0.0",
+      source: "standalone",
+      standalone: installation,
+      standaloneInstaller: async (managed, version) => {
+        expect(managed).toBe(installation);
+        installed.push(version);
+        return { version, changed: true };
+      },
+      stdout: () => {},
+    });
+    expect(result).toEqual({ status: "updated", exitCode: 0 });
+    expect(installed).toEqual(["1.1.0"]);
+  });
+
+  test("never replaces an unmanaged direct download", async () => {
+    const errors: string[] = [];
+    const result = await runUpdateCommand({
+      check: async () => ({ status: "unsupported", source: "direct" }),
+      checkOnly: false,
+      currentVersion: "1.0.0",
+      source: "direct",
+      stderr: (message) => errors.push(message),
+      stdout: () => {},
+    });
+    expect(result).toEqual({ status: "failed", exitCode: 1 });
+    expect(errors.join("\n")).toContain("not installer-managed");
   });
 });

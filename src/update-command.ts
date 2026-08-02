@@ -1,6 +1,15 @@
 import { realpathSync, statSync } from "node:fs";
 import { posix, win32 } from "node:path";
-import { installSource, type InstallSource } from "./distribution.ts";
+import {
+  installSource,
+  standaloneInstallation,
+  type InstallSource,
+  type StandaloneInstallation,
+} from "./distribution.ts";
+import {
+  installStandaloneUpdate,
+  type StandaloneUpdateResult,
+} from "./standalone-release.ts";
 import {
   checkForUpdate,
   UPDATE_AVAILABLE_EXIT_CODE,
@@ -10,6 +19,10 @@ import {
 type Check = typeof checkForUpdate;
 type Run = (command: readonly string[]) => Promise<number>;
 type NpmInvocation = (channel: "latest" | "canary") => readonly string[];
+type StandaloneInstaller = (
+  installation: StandaloneInstallation,
+  version: string,
+) => Promise<StandaloneUpdateResult>;
 
 interface UpdateCommandOptions {
   currentVersion: string;
@@ -18,6 +31,8 @@ interface UpdateCommandOptions {
   check?: Check;
   run?: Run;
   npmInvocation?: NpmInvocation;
+  standaloneInstaller?: StandaloneInstaller;
+  standalone?: StandaloneInstallation;
   stdout?: (message: string) => void;
   stderr?: (message: string) => void;
 }
@@ -151,13 +166,18 @@ export async function runUpdateCommand(
   const check = options.check ?? checkForUpdate;
   const run = options.run ?? runProcess;
   const npmInvocation = options.npmInvocation ?? npmUpdateInvocation;
+  const standaloneInstaller = options.standaloneInstaller ?? installStandaloneUpdate;
   const stdout = options.stdout ?? console.log;
   const stderr = options.stderr ?? console.error;
+  const standalone = source === "standalone"
+    ? (options.standalone ?? standaloneInstallation())
+    : undefined;
   const result = await check({
     currentVersion: options.currentVersion,
     source,
     force: true,
     respectOptOut: false,
+    standaloneTarget: standalone?.target,
   });
 
   switch (result.status) {
@@ -167,13 +187,11 @@ export async function runUpdateCommand(
       stderr("The update check is disabled.");
       return { status: "failed", exitCode: 1 };
     case "unsupported":
-      if (result.source === "source") {
-        stderr("Source builds are updated through git; pull the repository and rebuild spotuify.");
-      } else {
-        stderr(
-          "Direct-download builds cannot be replaced automatically. Download the latest release from https://github.com/austin-smith/spotuify/releases.",
-        );
-      }
+      stderr(
+        result.source === "source"
+          ? "Source builds are updated through git; pull the repository and rebuild spotuify."
+          : "This direct-download build is not installer-managed. Download the latest release from https://github.com/austin-smith/spotuify/releases.",
+      );
       return { status: "failed", exitCode: 1 };
     case "unavailable":
       stderr(`Could not check for updates: ${result.message}`);
@@ -186,11 +204,33 @@ export async function runUpdateCommand(
         `spotuify ${result.currentVersion} → ${result.latestVersion} is available via ${result.source}.`,
       );
       if (options.checkOnly) {
-        stdout(`Run \`spotuify update\` or: ${result.command}`);
+        stdout(
+          result.source === "standalone"
+              ? "Run `spotuify update`."
+              : `Run \`spotuify update\` or: ${result.command}`,
+        );
         return { status: "available", exitCode: UPDATE_AVAILABLE_EXIT_CODE };
       }
 
-      if (result.source === "homebrew") {
+      if (result.source === "standalone") {
+        if (standalone === undefined) {
+          stderr("The standalone installation marker or active release pointer is invalid.");
+          return { status: "failed", exitCode: 1 };
+        }
+        let standaloneResult: StandaloneUpdateResult;
+        try {
+          standaloneResult = await standaloneInstaller(standalone, result.latestVersion);
+        } catch (error) {
+          stderr(`Could not install the update: ${error instanceof Error ? error.message : String(error)}`);
+          return { status: "failed", exitCode: 1 };
+        }
+        stdout(
+          standaloneResult.changed
+            ? `Updated spotuify to ${standaloneResult.version}. Restart spotuify to use it.`
+            : `spotuify ${standaloneResult.version} was already activated by another update.`,
+        );
+        return { status: "updated", exitCode: 0 };
+      } else if (result.source === "homebrew") {
         const updateExit = await run(["brew", "update"]);
         if (updateExit !== 0) return { status: "failed", exitCode: updateExit };
         const upgradeExit = await run([

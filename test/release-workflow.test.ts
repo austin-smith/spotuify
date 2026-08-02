@@ -26,4 +26,20 @@ describe("release workflow", () => {
     expect(source).not.toContain("Verify release tag signature");
     expect(source).not.toContain("GitHub-verified signature");
   });
+
+  test("publishes standalone installers and verifies the crapshack endpoints", async () => {
+    const source = await Bun.file(WORKFLOW_PATH).text();
+
+    expect(source).toContain(
+      "install -m 0755 packaging/standalone/install.sh dist/install.sh",
+    );
+    expect(source).toContain(
+      "install -m 0644 packaging/standalone/install.ps1 dist/install.ps1",
+    );
+    expect(source).toContain(
+      "dist/*.tar.gz dist/*.zip dist/*-standalone-* dist/install.sh dist/install.ps1",
+    );
+    expect(source).toContain("https://crapshack.net/spotuify/install.sh");
+    expect(source).toContain("https://crapshack.net/spotuify/install.ps1");
+  });
 });

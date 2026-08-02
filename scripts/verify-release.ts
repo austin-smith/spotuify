@@ -11,6 +11,7 @@ import {
   releaseExecutableNames,
   releaseTarget,
   run,
+  standaloneComponentName,
 } from "./release-config.ts";
 import { softwareLicenses } from "../src/licenses.ts";
 
@@ -64,6 +65,33 @@ try {
   }
   if (licenses !== expectedLicenses) {
     throw new Error("main executable reported unexpected software licenses");
+  }
+
+  const standaloneMain = resolve(
+    DIST_DIR,
+    standaloneComponentName(version, target, "spotuify"),
+  );
+  const standaloneEngine = resolve(
+    DIST_DIR,
+    standaloneComponentName(version, target, "engine"),
+  );
+  const [standaloneMainVersion, standaloneEngineVersion] = await Promise.all([
+    captureCommandOutput([standaloneMain, "--version"]),
+    captureCommandOutput([standaloneEngine, "--version"]),
+  ]);
+  if (standaloneMainVersion !== `spotuify ${version}`) {
+    throw new Error("standalone update executable reported an unexpected version");
+  }
+  if (standaloneEngineVersion !== `spotuify-engine ${version}`) {
+    throw new Error("standalone update engine reported an unexpected version");
+  }
+  if (target.platform === "win32") {
+    const launcher = await stat(
+      resolve(DIST_DIR, standaloneComponentName(version, target, "launcher")),
+    );
+    if (!launcher.isFile() || launcher.size === 0) {
+      throw new Error("standalone Windows launcher is missing or empty");
+    }
   }
   console.log(`verified ${archive}`);
 } finally {
