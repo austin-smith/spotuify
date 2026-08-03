@@ -7,7 +7,7 @@ const SCREEN_PADDING_Y = 1;
 const MESSAGE_GAP = 1;
 const FOOTER_GAP = 1;
 const HEADING_LINES = ["Startup failed."] as const;
-const FOOTER_LINES = ["R to retry.", "Q to quit."] as const;
+const FOOTER_LINES = ["r to retry.", "q to quit."] as const;
 
 export interface StartupErrorLayout {
   innerWidth: number;

@@ -54,7 +54,7 @@ describe("startup error screen layout", () => {
     const layout = startupErrorLayout("failure", 14, 7);
 
     expect(layout.headingLines).toEqual(["Startup", "failed."]);
-    expect(layout.footerLines).toEqual(["R to", "retry.", "Q to quit."]);
+    expect(layout.footerLines).toEqual(["r to", "retry.", "q to quit."]);
     expect(layout.brandHeight).toBe(0);
     expect(layout.brandGapHeight).toBe(0);
     expect(layout.messageLines).toEqual([]);
@@ -75,8 +75,8 @@ describe("startup error screen layout", () => {
     const copy = screen.replace(/\s+/g, " ").trim();
 
     expect(screen).not.toContain("SPOTUIFY");
-    expect(copy).toBe("Startup failed. R to retry. Q to quit.");
-    expect(lines[5]).toContain("Q to quit.");
+    expect(copy).toBe("Startup failed. r to retry. q to quit.");
+    expect(lines[5]).toContain("q to quit.");
 
     for (const line of lines.slice(0, 7)) {
       expect(Bun.stringWidth(line)).toBeLessThanOrEqual(14);
@@ -106,8 +106,8 @@ describe("startup error screen layout", () => {
     expect(screen).toContain("SPOTUIFY");
     expect(screen).not.toContain("███████╗");
     expect(screen).toContain("END-OF-DIAGNOSTIC");
-    expect(lines[15]).toContain("R to retry.");
-    expect(lines[16]).toContain("Q to quit.");
+    expect(lines[15]).toContain("r to retry.");
+    expect(lines[16]).toContain("q to quit.");
   });
 
   test.each(SUPPORTED_SIZES)(
@@ -129,8 +129,8 @@ describe("startup error screen layout", () => {
       expect(screen).toContain("Startup failed.");
       expect(screen).toContain("Spotify API 503 on /me:");
       expect(screen).not.toContain("spotuify auth");
-      expect(lines[height - 3]).toContain("R to retry.");
-      expect(lines[height - 2]).toContain("Q to quit.");
+      expect(lines[height - 3]).toContain("r to retry.");
+      expect(lines[height - 2]).toContain("q to quit.");
 
       for (const line of lines.slice(0, height)) {
         expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);

@@ -55,9 +55,9 @@ describe("setup screen layout", () => {
 
     expect(screen).not.toContain("SPOTUIFY");
     expect(copy).toContain(
-      "Setup required. Run spotuify auth to get started. Q to quit.",
+      "Setup required. Run spotuify auth to get started. q to quit.",
     );
-    expect(lines[6]).toContain("Q to quit.");
+    expect(lines[6]).toContain("q to quit.");
 
     for (const line of lines.slice(0, 8)) {
       expect(Bun.stringWidth(line)).toBeLessThanOrEqual(18);
@@ -81,7 +81,7 @@ describe("setup screen layout", () => {
     expect(screen).not.toContain("███████╗");
     expect(screen).toContain("ENDOFHANDOFF");
     expect(screen).toContain("Update available — run: spotuify update");
-    expect(lines[16]).toContain("Q to quit.");
+    expect(lines[16]).toContain("q to quit.");
   });
 
   test.each(SUPPORTED_SIZES)(
@@ -96,8 +96,8 @@ describe("setup screen layout", () => {
       expect(screen).not.toContain("developer.spotify.com");
       expect(screen).not.toContain("SPOTUIFY_CLIENT_ID");
       expect(screen).toContain("Update available — run: spotuify update");
-      expect(screen).toContain("Q to quit.");
-      expect(lines[height - 2]).toContain("Q to quit.");
+      expect(screen).toContain("q to quit.");
+      expect(lines[height - 2]).toContain("q to quit.");
 
       for (const line of lines.slice(0, height)) {
         expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
@@ -114,7 +114,7 @@ describe("setup screen layout", () => {
       expect(screen).toContain("Setup required.");
       expect(screen).toContain("Run spotuify auth to get started.");
       expect(screen).not.toContain("Update available");
-      expect(lines[height - 2]).toContain("Q to quit.");
+      expect(lines[height - 2]).toContain("q to quit.");
     },
   );
 });
