@@ -646,7 +646,7 @@ export function App({ version }: { version: string }) {
       return;
     }
 
-    if (key.name === "q" || (key.ctrl && key.name === "c")) {
+    if (key.name === "q") {
       renderer.destroy();
       return;
     }
