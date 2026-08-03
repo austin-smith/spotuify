@@ -8,7 +8,8 @@ const checksumLines = (
 ).trim().split("\n");
 const checksums = new Map(
   checksumLines.map((line) => {
-    const match = /^([0-9a-f]{64})  (.+(?:\.tar\.gz|\.zip))$/.exec(line);
+    const match =
+      /^([0-9a-f]{64})  (install\.(?:ps1|sh)|\S+\.(?:tar\.gz|zip)|spotuify-v\S+-standalone-(?:spotuify|engine|launcher)(?:\.exe)?)$/.exec(line);
     if (match === null) throw new Error(`invalid checksum line: ${line}`);
     return [match[2]!, match[1]!] as const;
   }),

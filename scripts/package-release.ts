@@ -1,12 +1,15 @@
-import { mkdir, rm, stat, utimes } from "node:fs/promises";
+import { copyFile, mkdir, rm, stat, utimes } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   archiveName,
   artifactName,
   buildVersion,
   DIST_DIR,
+  executableName,
   releaseExecutableNames,
   releaseTarget,
+  standaloneComponentName,
+  STANDALONE_STAGE_DIR,
   STAGE_DIR,
 } from "./release-config.ts";
 
@@ -50,6 +53,22 @@ for (const path of [stage, ...expectedFiles.map((file) => resolve(stage, file))]
 
 await mkdir(DIST_DIR, { recursive: true });
 await rm(archive, { force: true });
+
+const [mainName, engineName] = expectedFiles;
+await copyFile(
+  resolve(stage, mainName),
+  resolve(DIST_DIR, standaloneComponentName(version, target, "spotuify")),
+);
+await copyFile(
+  resolve(stage, engineName),
+  resolve(DIST_DIR, standaloneComponentName(version, target, "engine")),
+);
+if (target.platform === "win32") {
+  await copyFile(
+    resolve(STANDALONE_STAGE_DIR, name, executableName("spotuify-launcher", target)),
+    resolve(DIST_DIR, standaloneComponentName(version, target, "launcher")),
+  );
+}
 
 if (target.archiveExtension === "zip") {
   const zip = Bun.spawn(["tar", "-a", "-cf", archive, "-C", STAGE_DIR, name], {

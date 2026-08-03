@@ -18,10 +18,25 @@
 </p>
 
 <p align="center">
-  <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="90%" />
+  <img src="./docs/screenshots/now-playing.png" alt="Now playing" width="49%" />
+  <img src="./docs/screenshots/lyrics.png" alt="Lyrics" width="49%" />
 </p>
 
 ## Install
+
+### Standalone
+
+macOS / Linux:
+
+```sh
+curl -fsSL https://crapshack.net/spotuify/install.sh | sh
+```
+
+Windows:
+
+```powershell
+irm https://crapshack.net/spotuify/install.ps1 | iex
+```
 
 ### npm (macOS, Linux, Windows)
 
@@ -40,6 +55,20 @@ brew install austin-smith/tap/spotuify
 
 macOS, Linux, and Windows builds are available from
 [GitHub Releases](https://github.com/austin-smith/spotuify/releases).
+
+## Update
+
+```sh
+# Install the latest available version
+spotuify update
+
+# Check for an available update without installing it
+spotuify update --check
+```
+
+Spotuify delegates npm and Homebrew updates to their package managers. Installer-managed standalone
+installations update transactionally in place. Manually extracted direct downloads remain unmanaged
+and must be replaced from [GitHub Releases](https://github.com/austin-smith/spotuify/releases).
 
 ## First-time setup
 
@@ -90,16 +119,6 @@ spotuify status --json
 
 Run `spotuify --help` for all commands and options. See the [CLI guide](docs/cli.md) for scripting,
 output formats, exit codes, and the playback service.
-
-## Update
-
-```sh
-spotuify update
-spotuify update --check
-```
-
-Direct-download installations can be updated from
-[GitHub Releases](https://github.com/austin-smith/spotuify/releases).
 
 ## Development
 

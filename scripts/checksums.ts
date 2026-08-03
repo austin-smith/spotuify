@@ -6,22 +6,28 @@ import {
   buildVersion,
   DIST_DIR,
   RELEASE_TARGETS,
+  standaloneComponentNames,
 } from "./release-config.ts";
 
 const version = await buildVersion();
-const expected = Object.values(RELEASE_TARGETS)
+const archives = Object.values(RELEASE_TARGETS)
   .map((target) => archiveName(version, target))
   .sort();
+const installers = ["install.ps1", "install.sh"];
+const components = Object.values(RELEASE_TARGETS)
+  .flatMap((target) => standaloneComponentNames(version, target))
+  .sort();
+const expected = [...archives, ...components, ...installers].sort();
 const actual = (await readdir(DIST_DIR))
   .filter(
     (file) =>
-      file.startsWith(`spotuify-v${version}-`) &&
-      (file.endsWith(".tar.gz") || file.endsWith(".zip")),
+      installers.includes(file) ||
+      file.startsWith(`spotuify-v${version}-`),
   )
   .sort();
 if (JSON.stringify(actual) !== JSON.stringify(expected)) {
   throw new Error(
-    `expected release archives ${expected.join(", ")}, found ${actual.join(", ") || "none"}`,
+    `expected release assets ${expected.join(", ")}, found ${actual.join(", ") || "none"}`,
   );
 }
 

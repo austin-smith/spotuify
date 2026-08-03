@@ -83,6 +83,9 @@ jobs:
       - name: Check and test TypeScript
         run: bun run typecheck && bun test
 
+      - name: Test POSIX installer
+        run: bun run installer:test:posix
+
       - name: Check and test Rust
         run: |
           cargo fmt --manifest-path native/Cargo.toml --check
@@ -162,6 +165,7 @@ jobs:
           name: release-${{ matrix.target }}
           path: |
             dist/*.tar.gz
+            dist/*-standalone-*
             dist/npm/*.tgz
           if-no-files-found: error
           retention-days: 7
@@ -229,6 +233,7 @@ jobs:
           name: release-darwin-arm64
           path: |
             dist/*.tar.gz
+            dist/*-standalone-*
             dist/npm/*.tgz
           if-no-files-found: error
           retention-days: 7
@@ -266,6 +271,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Test PowerShell installer
+        shell: powershell
+        run: ./test/installer-windows.tests.ps1
+
       - name: Build release
         run: bun run release:build windows-x64
 
@@ -287,6 +296,7 @@ jobs:
           name: release-windows-x64
           path: |
             dist/*.zip
+            dist/*-standalone-*
             dist/npm/*.tgz
           if-no-files-found: error
           retention-days: 7
@@ -381,6 +391,11 @@ jobs:
           pattern: release-*
           merge-multiple: true
 
+      - name: Stage standalone installers
+        run: |
+          install -m 0755 packaging/standalone/install.sh dist/install.sh
+          install -m 0644 packaging/standalone/install.ps1 dist/install.ps1
+
       - name: Generate checksums and Homebrew formula
         run: |
           bun run release:checksums
@@ -396,11 +411,13 @@ jobs:
               exit 0
             fi
             gh release upload "$GITHUB_REF_NAME" \
-              dist/*.tar.gz dist/*.zip dist/SHA256SUMS dist/spotuify.rb \
+              dist/*.tar.gz dist/*.zip dist/*-standalone-* dist/install.sh dist/install.ps1 \
+              dist/SHA256SUMS dist/spotuify.rb \
               --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
-              dist/*.tar.gz dist/*.zip dist/SHA256SUMS dist/spotuify.rb \
+              dist/*.tar.gz dist/*.zip dist/*-standalone-* dist/install.sh dist/install.ps1 \
+              dist/SHA256SUMS dist/spotuify.rb \
               --draft \
               --generate-notes \
               --title "$GITHUB_REF_NAME" \
@@ -416,6 +433,78 @@ jobs:
           else
             echo "$GITHUB_REF_NAME is already published"
           fi
+
+  public-installer-smoke:
+    name: Public installer smoke test (${{ matrix.name }})
+    if: needs.validate.outputs.channel == 'stable'
+    needs:
+      - validate
+      - publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: POSIX
+            runner: ubuntu-24.04
+            kind: posix
+          - name: Windows
+            runner: windows-2025
+            kind: windows
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Install through crapshack.net
+        if: matrix.kind == 'posix'
+        env:
+          SPOTUIFY_INSTALL_PREFIX: ${{ runner.temp }}/spotuify
+          SPOTUIFY_NO_MODIFY_PATH: "1"
+          SPOTUIFY_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          curl --retry 5 --retry-all-errors -fsSL \
+            https://crapshack.net/spotuify/install.sh | sh
+          test "$("$SPOTUIFY_INSTALL_PREFIX/bin/spotuify" --version)" = \
+            "spotuify $SPOTUIFY_VERSION"
+          test "$("$SPOTUIFY_INSTALL_PREFIX/libexec/spotuify-engine" --version)" = \
+            "spotuify-engine $SPOTUIFY_VERSION"
+          "$SPOTUIFY_INSTALL_PREFIX/bin/spotuify" update --check
+
+      - name: Install through crapshack.net
+        if: matrix.kind == 'windows'
+        shell: powershell
+        env:
+          SPOTUIFY_NO_MODIFY_PATH: "1"
+          SPOTUIFY_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          $env:SPOTUIFY_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'spotuify'
+          $installerSource = $null
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              $installerSource = Invoke-RestMethod `
+                -Uri 'https://crapshack.net/spotuify/install.ps1' `
+                -UseBasicParsing `
+                -TimeoutSec 60
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (2 * $attempt)
+            }
+          }
+          $installerSource | Invoke-Expression
+          $binDirectory = Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin'
+          $mainVersion = & (Join-Path $binDirectory 'spotuify.exe') --version
+          $currentRelease = (Get-Content -LiteralPath (Join-Path $env:SPOTUIFY_INSTALL_DIR 'current') -Raw).Trim()
+          $engineVersion = & (Join-Path $env:SPOTUIFY_INSTALL_DIR "releases\$currentRelease\spotuify-engine.exe") --version
+          if ($mainVersion -cne "spotuify $env:SPOTUIFY_VERSION") {
+            throw "Unexpected Spotuify version: $mainVersion"
+          }
+          if ($engineVersion -cne "spotuify-engine $env:SPOTUIFY_VERSION") {
+            throw "Unexpected Spotuify engine version: $engineVersion"
+          }
+          & (Join-Path $binDirectory 'spotuify.exe') update --check
+          if ($LASTEXITCODE -ne 0) { throw 'Standalone update check failed.' }
 
   homebrew:
     name: Update Homebrew tap

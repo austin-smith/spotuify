@@ -139,6 +139,45 @@ describe("cached update checks", () => {
     });
   });
 
+  test("uses the latest release manifest for standalone updates", async () => {
+    const main = "a".repeat(64);
+    const engine = "b".repeat(64);
+    const target = process.platform === "darwin"
+      ? "darwin-arm64"
+      : process.platform === "win32"
+        ? "windows-x64"
+        : process.arch === "arm64"
+          ? "linux-arm64"
+          : "linux-x64";
+    const extension = process.platform === "win32" ? ".exe" : "";
+    let requested = "";
+    const result = await checkForUpdate({
+      cachePath: await cachePath(),
+      currentVersion: "1.2.2",
+      env: {},
+      fetcher: async (input) => {
+        requested = String(input);
+        return new Response(
+          `${engine}  spotuify-v1.2.3-${target}-standalone-engine${extension}\n` +
+            `${main}  spotuify-v1.2.3-${target}-standalone-spotuify${extension}\n` +
+            (process.platform === "win32"
+              ? `${"c".repeat(64)}  spotuify-v1.2.3-${target}-standalone-launcher.exe\n`
+              : ""),
+        );
+      },
+      now: 1_000,
+      source: "standalone",
+      standaloneTarget: target,
+    });
+    expect(requested).toContain("releases/latest/download/SHA256SUMS");
+    expect(result).toMatchObject({
+      status: "available",
+      source: "standalone",
+      latestVersion: "1.2.3",
+      command: "spotuify update",
+    });
+  });
+
   test("revalidates stale metadata with ETags", async () => {
     const path = await cachePath();
     await checkForUpdate({

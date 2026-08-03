@@ -9,6 +9,7 @@ import {
   REPO_ROOT,
   releaseTarget,
   run,
+  STANDALONE_STAGE_DIR,
   STAGE_DIR,
 } from "./release-config.ts";
 
@@ -83,6 +84,14 @@ await copyFile(
   resolve(cargoTarget, "release", executableName("spotuify-engine", target)),
   engineExecutable,
 );
+if (target.platform === "win32") {
+  const launcherDirectory = resolve(STANDALONE_STAGE_DIR, name);
+  await mkdir(launcherDirectory, { recursive: true });
+  await copyFile(
+    resolve(cargoTarget, "release", executableName("spotuify-launcher", target)),
+    resolve(launcherDirectory, executableName("spotuify-launcher", target)),
+  );
+}
 if (target.platform !== "win32") {
   await chmod(mainExecutable, 0o755);
   await chmod(engineExecutable, 0o755);

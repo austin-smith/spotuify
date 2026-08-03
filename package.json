@@ -20,6 +20,8 @@
     "engine:build": "cargo build --manifest-path native/Cargo.toml",
     "engine:build:release": "cargo build --release --manifest-path native/Cargo.toml",
     "engine:test": "cargo test --manifest-path native/Cargo.toml",
+    "installer:test:posix": "node --test test/installer-posix.node.mjs",
+    "installer:test:windows": "powershell -NoLogo -NoProfile -File ./test/installer-windows.tests.ps1",
     "licenses:check": "scripts/licenses.sh check",
     "licenses:generate": "scripts/licenses.sh generate",
     "release": "bun run scripts/create-release.ts",
