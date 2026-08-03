@@ -307,7 +307,7 @@ try {
 		Assert-True ($script:DownloadUrls[0] -match '/releases/download/v1\.2\.3/SHA256SUMS$') 'pinned release URL'
 	}
 
-	Invoke-Test 'refreshes an existing managed launcher' {
+	Invoke-Test 'refreshes an available managed launcher immediately' {
 		$firstFixture = New-ReleaseFixture -Name 'launcher-first' -Version '1.0.0'
 		Use-ReleaseFixture $firstFixture
 		Set-TestInstallEnvironment 'launcher-refresh-install'
@@ -322,7 +322,43 @@ try {
 		$expectedDigest = Get-Sha256Digest -Path $secondFixture.Launcher
 		Assert-True ($firstDigest -cne $secondDigest) 'launcher changed between releases'
 		Assert-Equal $secondDigest $expectedDigest 'installed launcher digest'
+		Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin\spotuify.pending.exe'))) 'no pending launcher for immediate refresh'
 		Assert-Equal ((& $installedLauncher --version).Trim()) 'spotuify 2.0.0' 'refreshed launcher behavior'
+	}
+
+	Invoke-Test 'repairs an unusable managed launcher immediately' {
+		$firstFixture = New-ReleaseFixture -Name 'launcher-corrupt-first' -Version '1.0.0'
+		Use-ReleaseFixture $firstFixture
+		Set-TestInstallEnvironment 'launcher-corrupt-install'
+		Install-Spotuify
+		$installedLauncher = Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin\spotuify.exe'
+		[IO.File]::WriteAllText($installedLauncher, 'corrupt launcher')
+
+		$secondFixture = New-ReleaseFixture -Name 'launcher-corrupt-second' -Version '2.0.0'
+		Use-ReleaseFixture $secondFixture
+		Install-Spotuify
+		Assert-Equal (Get-Sha256Digest -Path $installedLauncher) (Get-Sha256Digest -Path $secondFixture.Launcher) 'repaired launcher digest'
+		Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin\spotuify.pending.exe'))) 'no pending launcher after repair'
+		Assert-Equal ((& $installedLauncher --version).Trim()) 'spotuify 2.0.0' 'repaired launcher behavior'
+	}
+
+	Invoke-Test 'rejects a read-only managed launcher' {
+		$firstFixture = New-ReleaseFixture -Name 'launcher-readonly-first' -Version '1.0.0'
+		Use-ReleaseFixture $firstFixture
+		Set-TestInstallEnvironment 'launcher-readonly-install'
+		Install-Spotuify
+		$installedLauncher = Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin\spotuify.exe'
+		$originalAttributes = [IO.File]::GetAttributes($installedLauncher)
+		try {
+			[IO.File]::SetAttributes($installedLauncher, $originalAttributes -bor [IO.FileAttributes]::ReadOnly)
+			$secondFixture = New-ReleaseFixture -Name 'launcher-readonly-second' -Version '2.0.0'
+			Use-ReleaseFixture $secondFixture
+			Assert-Throws { Install-Spotuify } 'read-only and cannot be updated'
+		} finally {
+			[IO.File]::SetAttributes($installedLauncher, $originalAttributes)
+		}
+		Assert-Equal ((& $installedLauncher --version).Trim()) 'spotuify 1.0.0' 'read-only launcher preservation'
+		Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin\spotuify.pending.exe'))) 'no pending launcher after read-only failure'
 	}
 
 	Invoke-Test 'repairs an installer-owned empty bin directory' {
@@ -452,9 +488,10 @@ try {
 		}
 		$installed = Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin\spotuify.exe'
 		Assert-Equal ((& $installed --version).Trim()) 'spotuify 1.0.0' 'rolled-back version'
+		Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin\spotuify.pending.exe'))) 'pending launcher rollback'
 	}
 
-	Invoke-Test 'updates without replacing a running Windows payload executable' {
+	Invoke-Test 'stages a launcher update while the current launcher is running' {
 		$firstFixture = New-ReleaseFixture -Name 'running-first' -Version '1.0.0'
 		Use-ReleaseFixture $firstFixture
 		Set-TestInstallEnvironment 'running-install'
@@ -468,7 +505,18 @@ try {
 			Use-ReleaseFixture $secondFixture
 			Install-Spotuify
 			Assert-True (-not $running.HasExited) 'old payload remains running through update'
+			$pendingLauncher = Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin\spotuify.pending.exe'
+			Assert-Equal (Get-Sha256Digest -Path $pendingLauncher) (Get-Sha256Digest -Path $secondFixture.Launcher) 'running update pending launcher digest'
+			Assert-Equal @(Get-ChildItem -LiteralPath (Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin') -Filter '*.backup').Count 0 'no locked launcher backups'
 			Assert-Equal ((& $launcher --version).Trim()) 'spotuify 2.0.0' 'new commands use updated payload'
+
+			$pendingHandle = [IO.File]::Open($pendingLauncher, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+			try {
+				Install-Spotuify
+			} finally {
+				$pendingHandle.Dispose()
+			}
+			Assert-Equal (Get-Sha256Digest -Path $pendingLauncher) (Get-Sha256Digest -Path $secondFixture.Launcher) 'reused in-use pending launcher digest'
 		} finally {
 			if (-not $running.HasExited) {
 				& taskkill.exe /PID $running.Id /T /F 2>$null | Out-Null

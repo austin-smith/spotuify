@@ -439,6 +439,49 @@ function Write-InstallerMarker {
 	}
 }
 
+function Test-ProcessRunningFromPath {
+	param([Parameter(Mandatory = $true)][string]$Path)
+	$expectedPath = [IO.Path]::GetFullPath($Path)
+	foreach ($process in @(Get-Process -ErrorAction SilentlyContinue)) {
+		try {
+			$processPath = $process.Path
+			if (-not [string]::IsNullOrEmpty($processPath) -and
+				[string]::Equals([IO.Path]::GetFullPath($processPath), $expectedPath, [StringComparison]::OrdinalIgnoreCase)) {
+				return $true
+			}
+		} catch {}
+	}
+	return $false
+}
+
+function Test-FileAvailableForReplacement {
+	param([Parameter(Mandatory = $true)][string]$Path)
+	$item = Get-Item -LiteralPath $Path -Force
+	if (($item.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+		throw "$Path is read-only and cannot be updated."
+	}
+	$stream = $null
+	try {
+		$stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+		return $true
+	} catch [IO.IOException] {
+		$win32Code = $_.Exception.HResult -band 0xffff
+		if ($win32Code -eq 32 -or $win32Code -eq 33 -or (Test-ProcessRunningFromPath -Path $Path)) {
+			return $false
+		}
+		throw
+	} catch [UnauthorizedAccessException] {
+		if (Test-ProcessRunningFromPath -Path $Path) {
+			return $false
+		}
+		throw
+	} finally {
+		if ($null -ne $stream) {
+			$stream.Dispose()
+		}
+	}
+}
+
 function Exit-InstallerLock {
 	param([string]$LockPath, [string]$Token)
 	try {
@@ -617,37 +660,64 @@ function Install-Spotuify {
 		if (-not (Test-Path -LiteralPath $binDirectory)) {
 			New-Item -ItemType Directory -Path $binDirectory | Out-Null
 		}
-		if (Test-Path -LiteralPath $pendingLauncher) {
-			Remove-Item -LiteralPath $pendingLauncher -Force
-		}
 		$launcherTemporary = Join-Path $binDirectory (".spotuify-launcher-$PID-$([guid]::NewGuid().ToString('N')).tmp")
 		Copy-Item -LiteralPath $launcherPath -Destination $launcherTemporary
 		if (Test-Path -LiteralPath $launcherDestination) {
 			$installedLauncherDigest = (Get-FileHash -LiteralPath $launcherDestination -Algorithm SHA256).Hash.ToLowerInvariant()
 			if ($installedLauncherDigest -cne $launcher.Digest) {
-				$launcherBackup = Join-Path $binDirectory (".spotuify-launcher-$PID-$([guid]::NewGuid().ToString('N')).backup")
-				try {
-					[IO.File]::Replace($launcherTemporary, $launcherDestination, $launcherBackup)
-					$launcherTemporary = $null
-				} catch [IO.IOException] {
-					if (Test-Path -LiteralPath $launcherBackup) {
-						if (Test-Path -LiteralPath $launcherDestination) {
-							[IO.File]::Replace($launcherBackup, $launcherDestination, $script:NullBackupPath)
-						} else {
-							Move-Item -LiteralPath $launcherBackup -Destination $launcherDestination
-						}
+				if (Test-FileAvailableForReplacement -Path $launcherDestination) {
+					if (Test-Path -LiteralPath $pendingLauncher) {
+						Remove-Item -LiteralPath $pendingLauncher -Force
 					}
-					$launcherBackup = $null
-					Move-Item -LiteralPath $launcherTemporary -Destination $pendingLauncher
-					$launcherTemporary = $null
-					$launcherPendingCreated = $true
-					Write-Warning 'The running launcher is in use; its verified replacement was staged for the next launcher exit.'
+					$launcherBackup = Join-Path $binDirectory (".spotuify-launcher-$PID-$([guid]::NewGuid().ToString('N')).backup")
+					try {
+						[IO.File]::Replace($launcherTemporary, $launcherDestination, $launcherBackup)
+						$launcherTemporary = $null
+					} catch [IO.IOException] {
+						if (Test-Path -LiteralPath $launcherBackup) {
+							if (Test-Path -LiteralPath $launcherDestination) {
+								[IO.File]::Replace($launcherBackup, $launcherDestination, $script:NullBackupPath)
+							} else {
+								Move-Item -LiteralPath $launcherBackup -Destination $launcherDestination
+							}
+						}
+						$launcherBackup = $null
+					}
+				}
+				if ($null -ne $launcherTemporary) {
+					$pendingLauncherMatches = $false
+					if (Test-Path -LiteralPath $pendingLauncher) {
+						$pendingLauncherDigest = (Get-FileHash -LiteralPath $pendingLauncher -Algorithm SHA256).Hash.ToLowerInvariant()
+						$pendingLauncherMatches = $pendingLauncherDigest -ceq $launcher.Digest
+					}
+					if ($pendingLauncherMatches) {
+						Remove-Item -LiteralPath $launcherTemporary -Force
+						$launcherTemporary = $null
+						Write-Warning 'The verified launcher update is already staged for the next launcher exit.'
+					} else {
+						if (Test-Path -LiteralPath $pendingLauncher) {
+							Remove-Item -LiteralPath $pendingLauncher -Force
+						}
+						Move-Item -LiteralPath $launcherTemporary -Destination $pendingLauncher
+						$launcherTemporary = $null
+						$launcherPendingCreated = $true
+						Write-Warning 'The verified launcher update was staged for the next launcher exit.'
+					}
 				}
 			} else {
 				Remove-Item -LiteralPath $launcherTemporary -Force
 				$launcherTemporary = $null
+				if (Test-Path -LiteralPath $pendingLauncher) {
+					$pendingLauncherDigest = (Get-FileHash -LiteralPath $pendingLauncher -Algorithm SHA256).Hash.ToLowerInvariant()
+					if ($pendingLauncherDigest -cne $installedLauncherDigest) {
+						Remove-Item -LiteralPath $pendingLauncher -Force
+					}
+				}
 			}
 		} else {
+			if (Test-Path -LiteralPath $pendingLauncher) {
+				Remove-Item -LiteralPath $pendingLauncher -Force
+			}
 			Move-Item -LiteralPath $launcherTemporary -Destination $launcherDestination
 			$launcherTemporary = $null
 			$launcherCreated = $true
@@ -688,7 +758,6 @@ function Install-Spotuify {
 			Remove-Item -LiteralPath $launcherBackup -Force
 			$launcherBackup = $null
 		}
-
 		try {
 			$pathAction = Add-SpotuifyToPath -BinDirectory $binDirectory
 		} catch {
@@ -717,6 +786,9 @@ function Install-Spotuify {
 			} elseif ($currentCreated -and (Test-Path -LiteralPath $currentPath)) {
 				Remove-Item -LiteralPath $currentPath -Force -ErrorAction SilentlyContinue
 			}
+			if ($launcherCreated -and (Test-Path -LiteralPath $launcherDestination)) {
+				Remove-Item -LiteralPath $launcherDestination -Force -ErrorAction SilentlyContinue
+			}
 			if ($null -ne $launcherBackup -and (Test-Path -LiteralPath $launcherBackup)) {
 				if (Test-Path -LiteralPath $launcherDestination) {
 					[IO.File]::Replace($launcherBackup, $launcherDestination, $script:NullBackupPath)
@@ -724,8 +796,6 @@ function Install-Spotuify {
 					Move-Item -LiteralPath $launcherBackup -Destination $launcherDestination
 				}
 				$launcherBackup = $null
-			} elseif ($launcherCreated -and (Test-Path -LiteralPath $launcherDestination)) {
-				Remove-Item -LiteralPath $launcherDestination -Force -ErrorAction SilentlyContinue
 			}
 			if ($launcherPendingCreated -and (Test-Path -LiteralPath $pendingLauncher)) {
 				Remove-Item -LiteralPath $pendingLauncher -Force -ErrorAction SilentlyContinue
