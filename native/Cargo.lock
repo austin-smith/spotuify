@@ -2597,7 +2597,9 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1 0.11.0",
+ "sysinfo",
  "tokio",
+ "uuid",
  "vergen",
 ]
 
@@ -3160,6 +3162,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf3923a6f5c4c6382e0b653c4117f48d631ea17f38ed86e2a828e6f7412f5239"
 dependencies = [
  "getrandom 0.4.3",
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]
