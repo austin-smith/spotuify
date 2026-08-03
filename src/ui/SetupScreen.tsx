@@ -10,7 +10,7 @@ const FOOTER_GAP = 1;
 const QUIT_GAP = 1;
 const HEADING = "Setup required.";
 const UPDATE_NOTICE = "Update available — run: spotuify update";
-const QUIT_HINT = "Q to quit.";
+const QUIT_HINT = "q to quit.";
 
 export interface SetupScreenLayout {
   innerWidth: number;
