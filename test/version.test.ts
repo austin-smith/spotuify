@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import packageMetadata from "../package.json";
-import { canaryVersion, normalizeCommandOutput } from "../scripts/release-config.ts";
+import {
+  canaryVersion,
+  hostReleaseTarget,
+  normalizeCommandOutput,
+  sourceArchiveName,
+} from "../scripts/release-config.ts";
 
 interface CargoManifest {
   package?: {
@@ -56,4 +61,17 @@ test("canary versions require a stable canonical version", () => {
 test("command output uses consistent line endings across platforms", () => {
   expect(normalizeCommandOutput("first\r\nsecond\r\n")).toBe("first\nsecond");
   expect(normalizeCommandOutput("first\nsecond\n")).toBe("first\nsecond");
+});
+
+test("Homebrew source archives and native hosts cover every supported Unix target", () => {
+  expect(sourceArchiveName("1.2.3")).toBe("spotuify-v1.2.3-source.tar.gz");
+  expect(hostReleaseTarget("darwin", "arm64").id).toBe("darwin-arm64");
+  expect(hostReleaseTarget("linux", "arm64").id).toBe("linux-arm64");
+  expect(hostReleaseTarget("linux", "x64").id).toBe("linux-x64");
+  expect(() => hostReleaseTarget("darwin", "x64")).toThrow(
+    "Homebrew source builds require macOS arm64 or Linux arm64/x64",
+  );
+  expect(() => hostReleaseTarget("win32", "x64")).toThrow(
+    "Homebrew source builds require macOS arm64 or Linux arm64/x64",
+  );
 });

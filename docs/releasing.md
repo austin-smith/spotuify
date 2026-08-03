@@ -13,8 +13,8 @@ opt in with `npm install -g spotuify@canary`. A stable version is published only
 matching version is committed to both manifests and its signed tag is pushed.
 
 GitHub Releases is the canonical stable distribution channel. Each stable release contains signed
-and notarized macOS builds, Linux builds, an unsigned Windows build, SHA-256 checksums, and a
-generated Homebrew formula.
+and notarized macOS builds, Linux builds, an unsigned Windows build, a deterministic source
+archive, and SHA-256 checksums. The Homebrew tap builds its own bottles from that source release.
 
 ## Stable release outputs
 
@@ -26,8 +26,8 @@ The tag `vX.Y.Z` produces:
 | `spotuify-vX.Y.Z-linux-arm64.tar.gz` | `ubuntu-22.04-arm` | arm64, glibc 2.35+ |
 | `spotuify-vX.Y.Z-linux-x64.tar.gz` | `ubuntu-22.04` | x86-64 baseline, glibc 2.35+ |
 | `spotuify-vX.Y.Z-windows-x64.zip` | `windows-2025` | Windows 11, x86-64 with AVX2 |
+| `spotuify-vX.Y.Z-source.tar.gz` | release publisher | Tagged source used by Homebrew |
 | `SHA256SUMS` | release publisher | All archive checksums |
-| `spotuify.rb` | release publisher | Formula ready for `homebrew-tap` |
 
 Every archive has one top-level directory containing two executables. Windows uses the same names
 with an `.exe` suffix.
@@ -38,10 +38,13 @@ spotuify-vX.Y.Z-<platform>-<architecture>/
 └── spotuify-engine
 ```
 
-The two executables must remain together for a direct installation. The generated Homebrew formula
-supports Apple silicon macOS, installs `spotuify` into `bin`, and keeps `spotuify-engine` private in
-`libexec`. License terms and third-party notices are embedded in `spotuify` and available through
-`spotuify licenses`, so every distribution includes them without adding files to the archives.
+The two executables must remain together for a direct installation. The Homebrew formula builds
+from the source archive on Apple silicon macOS and Linux arm64/x86-64. It declares Bun and Rust as
+build dependencies, plus `pkgconf` and `alsa-lib` on Linux. Homebrew's test-bot builds native
+bottles, installs `spotuify` into `bin`, keeps `spotuify-engine` private in `libexec`, and verifies
+the resulting linkage. License terms and third-party notices are embedded in `spotuify` and
+available through `spotuify licenses`, so every distribution includes them without adding files to
+the binary archives.
 
 The npm workflow publishes one user-facing package and four internal platform packages:
 
@@ -69,7 +72,7 @@ Under **Settings → Secrets and variables → Actions**, add these repository s
 | `APPLE_API_PRIVATE_KEY_BASE64` | Base64-encoded App Store Connect API `.p8` key |
 | `APPLE_API_KEY_ID` | App Store Connect API key ID |
 | `APPLE_API_ISSUER_ID` | App Store Connect issuer ID |
-| `HOMEBREW_TAP_TOKEN` | Fine-grained token scoped to `austin-smith/homebrew-tap` with repository Contents read/write |
+| `HOMEBREW_TAP_TOKEN` | Fine-grained token scoped to `austin-smith/homebrew-tap` with Contents and Pull requests read/write |
 
 Encode the two files on macOS without modifying their contents:
 
@@ -84,8 +87,9 @@ and deletes the keychain and key material when the job ends.
 
 ### Create the Homebrew tap
 
-A personal tap requires no Homebrew review. Create it with Homebrew's tap scaffold, then publish
-that scaffold as the public `austin-smith/homebrew-tap` repository:
+A personal tap requires no Homebrew review. Create it with Homebrew's tap scaffold, including the
+generated `brew test-bot` and `brew pr-pull` workflows, then publish that scaffold as the public
+`austin-smith/homebrew-tap` repository:
 
 ```sh
 brew tap-new austin-smith/homebrew-tap
@@ -95,17 +99,26 @@ gh repo create austin-smith/homebrew-tap \
   --push
 ```
 
-Create the fine-grained token with only the tap selected and only **Contents: Read and write**.
-Store it as the `HOMEBREW_TAP_TOKEN` repository secret in `austin-smith/spotuify`. The release
-workflow reads the formula back from the published GitHub release and commits it directly to
-`Formula/spotuify.rb` in the tap. Users can then install it directly:
+Retain the scaffold's SHA-pinned Homebrew actions and Dependabot configuration. Extend its native
+matrix with `ubuntu-24.04-arm` so test-bot produces bottles for Apple silicon macOS, Linux arm64,
+and Linux x86-64. Never use emulation or cross-compilation for these bottles.
+
+Create the fine-grained token with only the tap selected and only **Contents: Read and write** and
+**Pull requests: Read and write**. Store it as the `HOMEBREW_TAP_TOKEN` repository secret in
+`austin-smith/spotuify`. The stable release workflow creates or updates a version-specific tap
+branch containing `Formula/spotuify.rb` and `metadata/spotuify.json`, then opens a pull request.
+It never writes an untested formula directly to the tap's `main` branch. Users install the merged
+formula directly:
 
 ```sh
 brew install austin-smith/tap/spotuify
 ```
 
-The update is idempotent, so rerunning the publisher after a tap failure is safe. The workflow does
-not replace assets when the GitHub release is already public.
+The pull-request publisher is idempotent and refuses downgrades. After all test-bot jobs pass,
+review the exact pull-request head SHA and run the tap's `brew pr-pull` workflow with that SHA. That
+workflow publishes the bottles, adds their checksums to the formula, and merges the reviewed
+change. The tap metadata is merged in the same commit range, so Spotuify does not announce a
+Homebrew update before the tested bottles are installable.
 
 ### Bootstrap npm trusted publishing
 
@@ -181,10 +194,16 @@ canary jobs; do not configure a second publisher.
    configured with a signing key registered to the maintainer's GitHub account; the command or
    workflow fails without publishing otherwise.
 
-7. Confirm that all four archives, `SHA256SUMS`, and `spotuify.rb` are attached before the draft is
-   published.
-8. Confirm that `Formula/spotuify.rb` was updated in `austin-smith/homebrew-tap`.
-9. Confirm that all five npm packages have the released version.
+7. Confirm that all four binary archives, the source archive, and `SHA256SUMS` are attached before
+   the draft is published. `spotuify.rb` is an Actions artifact, not a GitHub Release asset, because
+   its final bottle checksums are produced by the tap.
+8. Confirm that the release workflow opened the version-specific pull request in
+   `austin-smith/homebrew-tap`.
+9. Review the formula and exact head SHA after every test-bot job passes, then run the tap's
+   `brew pr-pull` workflow with the pull request number and reviewed head SHA.
+10. Confirm that the tap formula contains bottles for Apple silicon macOS, Linux arm64, and Linux
+    x86-64, and that `metadata/spotuify.json` names the same version.
+11. Confirm that all five npm packages have the released version.
 
 The workflow rejects a tag unless GitHub verifies its signature, it points to a commit on `main`,
 and it exactly matches the canonical `package.json` version and duplicate native Cargo version. It
@@ -197,8 +216,13 @@ also extracts each finished archive and executes `spotuify --version` and
   safely replace assets while the release remains a draft.
 - If a release has already been published, never move its tag or replace its assets. Correct the
   problem with a new patch version and release.
-- If the tap update fails, rerun the Homebrew job. It reads the canonical formula from the existing
-  release and updates the tap without changing published release assets.
+- If the tap pull-request job fails, rerun it. It reuses the version branch and open pull request
+  without changing published release assets.
+- If test-bot fails, fix the source build or formula and publish a new patch release when the
+  existing GitHub release is already public. Do not merge a red tap pull request and do not attach
+  hand-built bottles.
+- If bottle publication fails after green test-bot jobs, rerun `brew pr-pull` with the same reviewed
+  head SHA. Do not bypass the SHA check or commit bottle metadata manually.
 - If npm publishing fails after the packages are bootstrapped, rerun the npm job. It skips versions
   already present and publishes only the missing packages.
 - If a canary fails and no newer canary has published, rerun the failed jobs. Once a newer canary

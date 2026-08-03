@@ -42,4 +42,26 @@ describe("release workflow", () => {
     expect(source).toContain("https://crapshack.net/spotuify/install.sh");
     expect(source).toContain("https://crapshack.net/spotuify/install.ps1");
   });
+
+  test("publishes source while keeping the unbottled formula out of the release", async () => {
+    const source = await Bun.file(WORKFLOW_PATH).text();
+
+    expect(source).toContain("bun run release:package-source");
+    expect(source.indexOf("bun run release:package-source")).toBeLessThan(
+      source.indexOf("bun run release:checksums"),
+    );
+    expect(source).toContain("name: homebrew-candidate");
+    expect(source).toContain("dist/spotuify.rb");
+    expect(source).toContain("dist/spotuify.json");
+    expect(source).not.toContain("dist/SHA256SUMS dist/spotuify.rb");
+  });
+
+  test("opens a tap pull request instead of committing an untested formula to main", async () => {
+    const source = await Bun.file(WORKFLOW_PATH).text();
+
+    expect(source).toContain("name: Open Homebrew formula pull request");
+    expect(source).toContain("dist/homebrew/spotuify.rb");
+    expect(source).toContain("dist/homebrew/spotuify.json");
+    expect(source).not.toContain("--pattern spotuify.rb");
+  });
 });

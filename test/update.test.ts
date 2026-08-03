@@ -118,7 +118,7 @@ describe("cached update checks", () => {
     });
   });
 
-  test("uses the published Homebrew formula as the installable version", async () => {
+  test("uses published tap metadata as the installable Homebrew version", async () => {
     let requested = "";
     const result = await checkForUpdate({
       cachePath: await cachePath(),
@@ -126,12 +126,12 @@ describe("cached update checks", () => {
       env: {},
       fetcher: async (input) => {
         requested = String(input);
-        return new Response('class Spotuify < Formula\n  version "1.2.3"\nend\n');
+        return new Response('{"schema":1,"version":"1.2.3"}\n');
       },
       now: 1_000,
       source: "homebrew",
     });
-    expect(requested).toContain("homebrew-tap/main/Formula/spotuify.rb");
+    expect(requested).toContain("homebrew-tap/main/metadata/spotuify.json");
     expect(result).toMatchObject({
       status: "available",
       latestVersion: "1.2.3",

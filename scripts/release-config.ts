@@ -4,8 +4,10 @@ import { isSemanticVersion, isStableVersion } from "../src/semver.ts";
 export const REPOSITORY = "austin-smith/spotuify";
 export const REPOSITORY_URL = `https://github.com/${REPOSITORY}`;
 export const PRODUCT_DESCRIPTION = "spotify in ur terminal";
+export const HOMEBREW_DESCRIPTION = "Spotify client for the terminal";
 export const HOMEBREW_TAP_REPOSITORY = "austin-smith/homebrew-tap";
 export const HOMEBREW_FORMULA_PATH = "Formula/spotuify.rb";
+export const HOMEBREW_METADATA_PATH = "metadata/spotuify.json";
 export const MACOS_DEPLOYMENT_TARGET = "13.0";
 
 export interface ReleaseTarget {
@@ -70,7 +72,9 @@ function validStableVersion(value: unknown, source: string): string {
   return value;
 }
 
-export async function productVersion(): Promise<string> {
+export async function productVersion(
+  options: { requirePinnedPackageManager?: boolean } = {},
+): Promise<string> {
   const packageJson = await Bun.file(resolve(REPO_ROOT, "package.json")).json();
   const cargoToml = Bun.TOML.parse(
     await Bun.file(resolve(REPO_ROOT, "native", "Cargo.toml")).text(),
@@ -81,7 +85,10 @@ export async function productVersion(): Promise<string> {
   if (packageJson.private !== true) {
     throw new Error("package.json must keep private = true");
   }
-  if (packageJson.packageManager !== `bun@${Bun.version}`) {
+  if (
+    options.requirePinnedPackageManager !== false &&
+    packageJson.packageManager !== `bun@${Bun.version}`
+  ) {
     throw new Error(
       `release scripts require ${packageJson.packageManager}, current runtime is bun@${Bun.version}`,
     );
@@ -152,6 +159,27 @@ export function artifactName(version: string, target: ReleaseTarget): string {
 
 export function archiveName(version: string, target: ReleaseTarget): string {
   return `${artifactName(version, target)}.${target.archiveExtension}`;
+}
+
+export function sourceArchiveName(version: string): string {
+  return `spotuify-v${version}-source.tar.gz`;
+}
+
+export function hostReleaseTarget(
+  platform = process.platform,
+  architecture = process.arch,
+): ReleaseTarget {
+  const target = Object.values(RELEASE_TARGETS).find(
+    (candidate) =>
+      candidate.platform === platform && candidate.arch === architecture,
+  );
+  if (target === undefined || target.platform === "win32") {
+    throw new Error(
+      `Homebrew source builds require macOS arm64 or Linux arm64/x64; ` +
+        `current host is ${platform}/${architecture}`,
+    );
+  }
+  return target;
 }
 
 export function executableName(name: string, target: ReleaseTarget): string {
