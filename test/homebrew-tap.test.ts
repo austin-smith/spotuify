@@ -31,8 +31,12 @@ describe("Homebrew tap publisher", () => {
     expect(rendered).toContain("spotuify-v1.2.3-darwin-arm64.tar.gz");
     expect(rendered).toContain("spotuify-v1.2.3-linux-arm64.tar.gz");
     expect(rendered).toContain("spotuify-v1.2.3-linux-x64.tar.gz");
+    expect(rendered).toContain('depends_on "patchelf" => :build');
     expect(rendered).toContain('depends_on "alsa-lib"');
     expect(rendered).toContain('libexec.install "spotuify", "spotuify-engine"');
+    expect(rendered).toContain(
+      'system "patchelf", "--set-rpath", formula_opt_lib("alsa-lib"), libexec/"spotuify-engine" if OS.linux?',
+    );
     expect(rendered).toContain(
       '(bin/"spotuify").write_env_script libexec/"spotuify", SPOTUIFY_INSTALL_SOURCE: "homebrew"',
     );

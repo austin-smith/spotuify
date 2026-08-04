@@ -43,11 +43,13 @@ ${source("linux-arm64", 6)}
     else
 ${source("linux-x64", 6)}
     end
+    depends_on "patchelf" => :build
     depends_on "alsa-lib"
   end
 
   def install
     libexec.install "spotuify", "spotuify-engine"
+    system "patchelf", "--set-rpath", formula_opt_lib("alsa-lib"), libexec/"spotuify-engine" if OS.linux?
     (bin/"spotuify").write_env_script libexec/"spotuify", SPOTUIFY_INSTALL_SOURCE: "homebrew"
   end
 
