@@ -45,7 +45,7 @@ npm install -g spotuify          # stable
 npm install -g spotuify@canary   # canary
 ```
 
-### Homebrew (macOS)
+### Homebrew (macOS, Linux)
 
 ```sh
 brew install austin-smith/tap/spotuify
