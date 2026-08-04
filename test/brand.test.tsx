@@ -185,6 +185,21 @@ describe("responsive brand lockup", () => {
     }
   });
 
+  test("paints the segmented wordmark unclipped at its exact breakpoint", async () => {
+    // The segments are sized against gaps the font inserts internally, so a re-split or a font
+    // swap could satisfy the mode check while the lockup box clips the right edge.
+    const width = 29;
+    setup = await createTestRenderer({ width, height: 3 });
+    createRoot(setup.renderer).render(<BrandLockup width={width} maxHeight={2} />);
+    await Bun.sleep(20);
+    await setup.renderOnce();
+
+    const rows = setup.captureCharFrame().split("\n").filter((row) => row.trim());
+    expect(brandLockupMode(width, 2)).toBe("art");
+    expect(rows[0]?.trimEnd()).toBe("█▀▀ █▀█ █▀█ ▀█▀ █ █ █ █▀▀ █▄█");
+    expect(rows[1]?.trimEnd()).toBe("▄▄█ █▀▀ █▄█  █  █▄█ █ █▀   █");
+  });
+
   test("falls back to readable plain text in a tiny region", async () => {
     setup = await createTestRenderer({ width: 24, height: 5 });
     createRoot(setup.renderer).render(<BrandLockup width={24} maxHeight={1} />);
