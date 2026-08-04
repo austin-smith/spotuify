@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "@clack/prompts": "1.7.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@opentui/core": "0.4.5",
     "@opentui/react": "0.4.5",
     "ansi-escapes": "7.3.0",
@@ -56,6 +57,7 @@
     "jpeg-js": "0.4.4",
     "react": "19.2.8",
     "supports-hyperlinks": "4.5.0",
+    "zod": "4.4.3",
     "zustand": "5.0.14"
   }
 }

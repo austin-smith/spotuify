@@ -81,6 +81,23 @@ export function spotifyUri(value: string): string {
   return spotifyReference(value).uri;
 }
 
+/** The kinds Spotify's library endpoints accept, shared by save and remove. */
+export const LIBRARY_KINDS = [
+  "track",
+  "episode",
+  "album",
+  "show",
+  "audiobook",
+] as const;
+
+export function libraryUri(item: string, refusal: string): string {
+  const ref = spotifyReference(item);
+  if (!(LIBRARY_KINDS as readonly string[]).includes(ref.kind)) {
+    throw usageError(`Spotify ${ref.kind} resources ${refusal}.`);
+  }
+  return ref.uri;
+}
+
 export function integer(value: string, label: string, minimum = 0): number {
   if (!/^-?\d+$/.test(value)) throw usageError(`${label} must be an integer.`);
   const parsed = Number(value);

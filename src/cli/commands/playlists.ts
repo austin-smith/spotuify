@@ -1,16 +1,15 @@
 import { Command, Option } from "commander";
 import { removeLibraryItems, saveLibraryItems } from "../../api/library.ts";
 import {
-  addPlaylistItems,
   createPlaylist,
   movePlaylistItems,
-  myPlaylists,
   playlistDetails,
   playlistItems,
   removePlaylistItems,
   replacePlaylistItems,
   updatePlaylistDetails,
 } from "../../api/playlists.ts";
+import { playlistAdd, playlistList } from "../operations/playlists.ts";
 import { artistLine } from "../../api/types.ts";
 import { unavailable, usageError } from "../errors.ts";
 import { formatDuration, normalizeItem, type CliIo } from "../output.ts";
@@ -35,25 +34,8 @@ export function registerPlaylists(program: Command, io: CliIo): void {
     .description("List the user's playlists")
     .option("--owned", "show only owned playlists")
     .action(async (options: { owned?: boolean }, command: Command) => {
-      const session = await cliSession();
-      const me = await session.profile();
-      const { client } = session;
-      const all = (await myPlaylists(client, me.id)).filter(
-        (item) => options.owned !== true || item.mine,
-      );
-      outputFor(command, io).emit(
-        "playlist.list",
-        all,
-        table(
-          ["OWNED", "NAME", "OWNER", "URI"],
-          all.map((item) => [
-            item.mine ? "yes" : "no",
-            item.name,
-            item.ownerName,
-            item.uri,
-          ]),
-        ),
-      );
+      const result = await playlistList({ ownedOnly: options.owned });
+      outputFor(command, io).emit("playlist.list", result.data, result.message);
     });
   playlist
     .command("show <playlist>")
@@ -270,28 +252,8 @@ export function registerPlaylists(program: Command, io: CliIo): void {
         _options,
         command: Command,
       ) => {
-        const uris = items.map((item) => {
-          const ref = spotifyReference(item);
-          if (ref.kind !== "track" && ref.kind !== "episode")
-            throw usageError("Playlists accept tracks and episodes only.");
-          return ref.uri;
-        });
-        const snapshotId = await addPlaylistItems(
-          (await cliSession()).client,
-          playlistId(value),
-          uris,
-        );
-        mutation(
-          command,
-          io,
-          "playlist.add",
-          {
-            playlist: spotifyReference(value, "playlist").uri,
-            uris,
-            snapshotId,
-          },
-          `Added ${uris.length} item${uris.length === 1 ? "" : "s"}.`,
-        );
+        const result = await playlistAdd(value, items);
+        mutation(command, io, "playlist.add", result.data, result.message);
       },
     );
   playlist

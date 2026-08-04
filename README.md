@@ -120,6 +120,31 @@ spotuify status --json
 Run `spotuify --help` for all commands and options. See the [CLI guide](docs/cli.md) for scripting,
 output formats, exit codes, and the playback service.
 
+## MCP server
+
+AI agents can search Spotify and control playback through the built-in
+MCP server. Register `spotuify mcp` as a stdio server in any MCP client:
+
+```sh
+claude mcp add spotuify -- spotuify mcp   # Claude Code
+codex mcp add spotuify -- spotuify mcp    # Codex CLI
+```
+
+Clients that use the common `mcpServers` JSON convention (e.g., Cursor):
+
+```json
+{
+  "mcpServers": {
+    "spotuify": {
+      "command": "spotuify",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+See the [MCP guide](docs/mcp.md) for the tool list and other client configurations.
+
 ## Development
 
 Running from source requires [Bun](https://bun.sh) and [Rust](https://rustup.rs/).
