@@ -10406,7 +10406,7 @@ SOFTWARE.
 MIT JavaScript packages
 
 Used by:
-- bun-ffi-structs 0.2.4
+- bun-ffi-structs 0.3.1
 
 Copyright 2025 Anomaly
 
@@ -11046,9 +11046,9 @@ SOFTWARE.
 MIT JavaScript packages
 
 Used by:
-- @opentui/core platform binary packages 0.4.5
-- @opentui/core 0.4.5
-- @opentui/react 0.4.5
+- @opentui/core platform binary packages 0.5.1
+- @opentui/core 0.5.1
+- @opentui/react 0.5.1
 
 MIT License
 
