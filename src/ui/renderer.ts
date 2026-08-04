@@ -1,4 +1,5 @@
 import type { CliRendererConfig } from "@opentui/core";
+import { clearTerminalTitle } from "./terminal-title.ts";
 
 /**
  * Keep terminal shutdown at the renderer boundary.
@@ -9,4 +10,7 @@ import type { CliRendererConfig } from "@opentui/core";
  */
 export const TUI_RENDERER_CONFIG = {
   exitOnCtrlC: true,
+  // OpenTUI restores stdout before this callback, so the OSC sequence reaches the terminal rather
+  // than being captured as renderer output.
+  onDestroy: clearTerminalTitle,
 } satisfies CliRendererConfig;
