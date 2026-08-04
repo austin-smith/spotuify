@@ -62,3 +62,7 @@ export function cliSession(): Promise<CliSession> {
 export function resetCliSessionForTests(): void {
   pendingSession = undefined;
 }
+
+export function primeCliSessionForTests(session: CliSession): void {
+  pendingSession = Promise.resolve(session);
+}

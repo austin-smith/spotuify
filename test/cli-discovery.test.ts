@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runtimeLyricsTrack } from "../src/cli/commands/discovery.ts";
+import { runtimeLyricsTrack } from "../src/cli/operations/catalog.ts";
 
 const runtimeItem = {
   type: "track",

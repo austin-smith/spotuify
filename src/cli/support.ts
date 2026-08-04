@@ -185,6 +185,18 @@ export async function resolveDeviceTarget(
   return { route: "web", device };
 }
 
+/** Resolve a `--device` selector for a state command, refusing the idle embedded receiver up front. */
+export async function activeDeviceTarget(
+  selector: string | undefined,
+): Promise<DeviceTarget | undefined> {
+  if (selector === undefined) return undefined;
+  const resolved = await resolveDeviceTarget(selector);
+  if (resolved.route === "local" && !resolved.active) {
+    inactiveReceiver(resolved.name);
+  }
+  return resolved;
+}
+
 /** The refusal for state commands aimed at an idle receiver, where the Web API would 404 anyway. */
 export function inactiveReceiver(name: string): never {
   throw unavailable(

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { queueCurrentItem } from "../src/cli/commands/queue-devices.ts";
+import { queueCurrentItem } from "../src/cli/operations/queue.ts";
 
 const webCurrent = { name: "Web Song", artist: "Web Artist" };
 const runtimeItem = {

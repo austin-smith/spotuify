@@ -1,8 +1,12 @@
 import {
   artistLine,
   isTrack,
+  type Episode,
+  type FullArtist,
   type PlayableItem,
   type PlaybackState,
+  type SimpleAudiobook,
+  type SimpleShow,
 } from "../api/types.ts";
 import type { Writable } from "node:stream";
 import { stripVTControlCharacters } from "node:util";
@@ -199,6 +203,47 @@ export function normalizeItem(
     album: isTrack(item) ? item.album.name : null,
     show: isTrack(item) ? null : (item.show?.name ?? null),
     durationMs: item.duration_ms,
+  };
+}
+
+export function normalizeEpisode(episode: Episode): Record<string, unknown> {
+  return normalizeItem(episode) ?? {};
+}
+
+export function normalizeShow(show: SimpleShow): Record<string, unknown> {
+  return {
+    type: "show",
+    id: show.id,
+    uri: show.uri,
+    name: show.name,
+    publisher: show.publisher ?? null,
+    description: show.description ?? null,
+    totalEpisodes: show.total_episodes ?? null,
+  };
+}
+
+export function normalizeAudiobook(
+  audiobook: SimpleAudiobook,
+): Record<string, unknown> {
+  return {
+    type: "audiobook",
+    id: audiobook.id,
+    uri: audiobook.uri,
+    name: audiobook.name,
+    authors: (audiobook.authors ?? []).map((author) => author.name),
+    publisher: audiobook.publisher ?? null,
+    totalChapters: audiobook.total_chapters ?? null,
+  };
+}
+
+export function normalizeArtist(artist: FullArtist): Record<string, unknown> {
+  return {
+    type: "artist",
+    id: artist.id,
+    uri: artist.uri,
+    name: artist.name,
+    genres: artist.genres ?? [],
+    followers: artist.followers?.total ?? null,
   };
 }
 
