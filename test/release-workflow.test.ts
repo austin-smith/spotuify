@@ -29,6 +29,13 @@ describe("release workflow", () => {
 
   test("publishes standalone installers and verifies the crapshack endpoints", async () => {
     const source = await Bun.file(WORKFLOW_PATH).text();
+    const workflow = Bun.YAML.parse(source) as {
+      jobs?: {
+        "public-installer-smoke"?: {
+          steps?: Array<{ if?: string; run?: string }>;
+        };
+      };
+    };
 
     expect(source).toContain(
       "install -m 0755 packaging/standalone/install.sh dist/install.sh",
@@ -41,5 +48,17 @@ describe("release workflow", () => {
     );
     expect(source).toContain("https://crapshack.net/spotuify/install.sh");
     expect(source).toContain("https://crapshack.net/spotuify/install.ps1");
+
+    const windowsSmoke = workflow.jobs?.["public-installer-smoke"]?.steps?.find(
+      (step) => step.if === "matrix.kind == 'windows'",
+    );
+    expect(windowsSmoke?.run).toContain("& powershell.exe");
+    expect(windowsSmoke?.run).toContain("-Command $installCommand");
+    expect(windowsSmoke?.run).toContain(
+      "Invoke-RestMethod -Uri 'https://crapshack.net/spotuify/install.ps1' -UseBasicParsing -TimeoutSec 60 | Invoke-Expression",
+    );
+    expect(windowsSmoke?.run).not.toContain(
+      "$installerSource | Invoke-Expression",
+    );
   });
 });

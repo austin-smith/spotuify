@@ -479,20 +479,26 @@ jobs:
           SPOTUIFY_VERSION: ${{ needs.validate.outputs.version }}
         run: |
           $env:SPOTUIFY_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'spotuify'
-          $installerSource = $null
+          $installCommand = @'
+          Invoke-RestMethod -Uri 'https://crapshack.net/spotuify/install.ps1' -UseBasicParsing -TimeoutSec 60 | Invoke-Expression
+          '@
+          $installed = $false
           for ($attempt = 1; $attempt -le 5; $attempt++) {
-            try {
-              $installerSource = Invoke-RestMethod `
-                -Uri 'https://crapshack.net/spotuify/install.ps1' `
-                -UseBasicParsing `
-                -TimeoutSec 60
+            & powershell.exe `
+              -NoLogo `
+              -NoProfile `
+              -NonInteractive `
+              -ExecutionPolicy Bypass `
+              -Command $installCommand
+            if ($LASTEXITCODE -eq 0) {
+              $installed = $true
               break
-            } catch {
-              if ($attempt -eq 5) { throw }
-              Start-Sleep -Seconds (2 * $attempt)
             }
+            if ($attempt -lt 5) { Start-Sleep -Seconds (2 * $attempt) }
           }
-          $installerSource | Invoke-Expression
+          if (-not $installed) {
+            throw 'Spotuify public installer failed after 5 attempts.'
+          }
           $binDirectory = Join-Path $env:SPOTUIFY_INSTALL_DIR 'bin'
           $mainVersion = & (Join-Path $binDirectory 'spotuify.exe') --version
           $currentRelease = (Get-Content -LiteralPath (Join-Path $env:SPOTUIFY_INSTALL_DIR 'current') -Raw).Trim()

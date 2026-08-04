@@ -6,7 +6,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $installerPath = Join-Path $repositoryRoot 'packaging/standalone/install.ps1'
-. $installerPath
+. $installerPath -LoadOnly
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("spotuify-installer-tests-$([guid]::NewGuid().ToString('N'))")
 $script:FixtureManifest = $null
@@ -569,6 +569,21 @@ try {
 		} finally {
 			[Environment]::SetEnvironmentVariable('Path', $originalUserPath, 'User')
 			$env:Path = $originalProcessPath
+		}
+	}
+
+	Invoke-Test 'runs the entrypoint when evaluated from a dot-sourced scope' {
+		$installerSource = Get-Content -LiteralPath $installerPath -Raw
+		$previousVersion = $env:SPOTUIFY_VERSION
+		try {
+			$env:SPOTUIFY_VERSION = 'invalid'
+			Assert-Throws {
+				. {
+					$installerSource | Invoke-Expression
+				}
+			} 'SPOTUIFY_VERSION must be latest or a stable version'
+		} finally {
+			[Environment]::SetEnvironmentVariable('SPOTUIFY_VERSION', $previousVersion, 'Process')
 		}
 	}
 

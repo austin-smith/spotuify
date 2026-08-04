@@ -1,5 +1,9 @@
 #Requires -Version 5.1
 
+param(
+	[switch]$LoadOnly
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -831,7 +835,7 @@ function Install-Spotuify {
 	}
 }
 
-if ($MyInvocation.InvocationName -ne '.') {
+if (-not $LoadOnly) {
 	try {
 		Install-Spotuify
 	} catch {
