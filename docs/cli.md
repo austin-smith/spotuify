@@ -197,6 +197,18 @@ spotuify service stop
 `service run` deliberately does not daemonize itself. Use the operating system's service manager
 when restart policy, boot startup, and log retention are required.
 
+## MCP server
+
+AI agents can drive the same command surface over the Model Context Protocol:
+
+```sh
+spotuify mcp
+```
+
+The server speaks MCP on stdio, follows the same runtime-first routing as one-shot commands, and
+never prompts for authentication. Output flags do not apply — the protocol owns stdout. See
+[mcp.md](mcp.md) for the tool list and client registration.
+
 ## Authentication and diagnostics
 
 Only `spotuify auth` may prompt or open a browser. Every other command is non-interactive and exits
