@@ -14,7 +14,16 @@ matching version is committed to both manifests and its signed tag is pushed.
 
 GitHub Releases is the canonical stable distribution channel. Each stable release contains signed
 and notarized macOS builds, Linux builds, an unsigned Windows build, SHA-256 checksums, and a
-generated Homebrew formula.
+generated Homebrew formula. Its release notes are the version's `CHANGELOG.md` section.
+
+## Changelog
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Notable changes
+land under `[Unreleased]` as they merge, grouped into the standard `Added`, `Changed`,
+`Deprecated`, `Removed`, `Fixed`, and `Security` categories. The test suite validates the file's
+structure on every push, and the release tooling refuses to tag or publish a version without a
+matching dated changelog section, so the GitHub release body is always the curated notes for
+exactly that version.
 
 ## Stable release outputs
 
@@ -144,14 +153,17 @@ canary jobs; do not configure a second publisher.
 
 1. Update `package.json` and `native/Cargo.toml` to the same stable `X.Y.Z` version. Keep
    `native/Cargo.toml` set to `publish = false`.
-2. Refresh the native package version recorded in `native/Cargo.lock` without updating third-party
+2. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new `## [X.Y.Z] - YYYY-MM-DD`
+   heading and add the version's compare link reference. Leave the emptied `[Unreleased]` section
+   in place.
+3. Refresh the native package version recorded in `native/Cargo.lock` without updating third-party
    dependencies:
 
    ```sh
    cargo update --manifest-path native/Cargo.toml --workspace
    ```
 
-3. Refresh and validate generated metadata:
+4. Refresh and validate generated metadata:
 
    ```sh
    bun install
@@ -159,7 +171,7 @@ canary jobs; do not configure a second publisher.
    bun run licenses:check
    ```
 
-4. Run the complete pre-release validation:
+5. Run the complete pre-release validation:
 
    ```sh
    bun run typecheck
@@ -169,27 +181,27 @@ canary jobs; do not configure a second publisher.
    cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
    ```
 
-5. Commit the version and generated changes through the normal review process.
-6. Merge the version change, update the local `main` branch, and create the release:
+6. Commit the version, changelog, and generated changes through the normal review process.
+7. Merge the version change, update the local `main` branch, and create the release:
 
    ```sh
    bun run release
    ```
 
-   The command reads the version from `package.json`, requires a clean `main` exactly matching
-   `origin/main`, creates a signed `vX.Y.Z` tag, and pushes only that tag. Git must already be
-   configured with a signing key registered to the maintainer's GitHub account; the command or
-   workflow fails without publishing otherwise.
+   The command reads the version from `package.json`, requires a dated `CHANGELOG.md` section for
+   that version, requires a clean `main` exactly matching `origin/main`, creates a signed `vX.Y.Z`
+   tag, and pushes only that tag. Git must already be configured with a signing key registered to
+   the maintainer's GitHub account; the command or workflow fails without publishing otherwise.
 
-7. Confirm that all four archives, `SHA256SUMS`, and `spotuify.rb` are attached before the draft is
+8. Confirm that all four archives, `SHA256SUMS`, and `spotuify.rb` are attached before the draft is
    published.
-8. Confirm that `Formula/spotuify.rb` was updated in `austin-smith/homebrew-tap`.
-9. Confirm that all five npm packages have the released version.
+9. Confirm that `Formula/spotuify.rb` was updated in `austin-smith/homebrew-tap`.
+10. Confirm that all five npm packages have the released version.
 
 The workflow rejects a tag unless GitHub verifies its signature, it points to a commit on `main`,
-and it exactly matches the canonical `package.json` version and duplicate native Cargo version. It
-also extracts each finished archive and executes `spotuify --version` and
-`spotuify-engine --version` before publication.
+it exactly matches the canonical `package.json` version and duplicate native Cargo version, and
+`CHANGELOG.md` has a dated section for the version. It also extracts each finished archive and
+executes `spotuify --version` and `spotuify-engine --version` before publication.
 
 ## Failed and incorrect releases
 

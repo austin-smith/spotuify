@@ -27,6 +27,7 @@
     "release": "bun run scripts/create-release.ts",
     "release:build": "bun run scripts/build-release.ts",
     "release:canary-version": "bun run scripts/canary-version.ts",
+    "release:changelog": "bun run scripts/changelog.ts",
     "release:checksums": "bun run scripts/checksums.ts",
     "release:formula": "bun run scripts/render-homebrew-formula.ts",
     "release:npm:package": "bun run scripts/package-npm.ts",
