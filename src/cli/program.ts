@@ -1,4 +1,5 @@
 import { Command, CommanderError, Help, Option } from "commander";
+import { TAGLINE } from "../branding.ts";
 import { VERSION } from "../version.ts";
 import { registerDiscovery } from "./commands/discovery.ts";
 import { registerFollow } from "./commands/follow.ts";
@@ -203,7 +204,7 @@ export function createCliProgram(dependencies: CliDependencies = {}): {
   const usageHint = "Run 'spotuify --help' for usage.";
   program
     .name("spotuify")
-    .description("Spotify in your terminal")
+    .description(TAGLINE)
     .optionsGroup(HELP_GROUP.general)
     .version(`spotuify ${VERSION}`, "-v, --version", "Show the product version")
     .addHelpOption(

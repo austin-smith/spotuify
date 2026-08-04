@@ -3,6 +3,9 @@ import { createRoot } from "@opentui/react";
 import { afterEach, describe, expect, test } from "bun:test";
 import { setupScreenLayout, SetupScreen } from "../src/ui/SetupScreen.tsx";
 
+/** Leading cells of the `tiny` wordmark art, which spells nothing a substring search can find. */
+const WORDMARK_ART = "█▀▀ █▀█ █▀█";
+
 const SUPPORTED_SIZES = [
   [60, 20],
   [80, 24],
@@ -78,7 +81,7 @@ describe("setup screen layout", () => {
     const screen = lines.join("\n");
 
     expect(screen).toContain("SPOTUIFY");
-    expect(screen).not.toContain("███████╗");
+    expect(screen).not.toContain(WORDMARK_ART);
     expect(screen).toContain("ENDOFHANDOFF");
     expect(screen).toContain("Update available — run: spotuify update");
     expect(lines[16]).toContain("q to quit.");
@@ -90,7 +93,7 @@ describe("setup screen layout", () => {
       const lines = await render(width, height, true);
       const screen = lines.join("\n");
 
-      expect(screen).toContain(width >= 80 ? "███████╗" : "SPOTUIFY");
+      expect(screen).toContain(WORDMARK_ART);
       expect(screen).toContain("Setup required.");
       expect(screen).toContain("Run spotuify auth to get started.");
       expect(screen).not.toContain("developer.spotify.com");

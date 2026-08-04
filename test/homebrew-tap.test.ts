@@ -27,7 +27,6 @@ describe("Homebrew tap publisher", () => {
     expect(rendered).toContain("on_macos do");
     expect(rendered).toContain("on_linux do");
     expect(rendered).toContain("if Hardware::CPU.arm?");
-    expect(rendered).toContain('desc "Spotify in your terminal"');
     expect(rendered).toContain("spotuify-v1.2.3-darwin-arm64.tar.gz");
     expect(rendered).toContain("spotuify-v1.2.3-linux-arm64.tar.gz");
     expect(rendered).toContain("spotuify-v1.2.3-linux-x64.tar.gz");

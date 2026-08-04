@@ -12,6 +12,10 @@ import {
   brandLockupMode,
   brandSplashLayout,
 } from "../src/ui/Brand.tsx";
+import { TAGLINE } from "../src/branding.ts";
+
+/** Leading cells of the `tiny` wordmark art, which spells nothing a substring search can find. */
+const WORDMARK_ART = "█▀▀ █▀█ █▀█";
 
 let setup: Awaited<ReturnType<typeof createTestRenderer>> | undefined;
 
@@ -22,9 +26,9 @@ afterEach(() => {
 
 describe("responsive brand lockup", () => {
   test("selects a lockup from measured width and height", () => {
-    expect(brandLockupMode(70, 6)).toBe("block");
-    expect(brandLockupHeight(70, 6)).toBe(6);
-    expect(brandLockupMode(69, 6)).toBe("plain");
+    expect(brandLockupMode(29, 2)).toBe("art");
+    expect(brandLockupHeight(29, 2)).toBe(2);
+    expect(brandLockupMode(28, 2)).toBe("plain");
     expect(brandLockupMode(100, 1)).toBe("plain");
   });
 
@@ -34,6 +38,8 @@ describe("responsive brand lockup", () => {
       innerWidth: 20,
       messageLines: ["NOTHING PLAYING —", "press / to find", "something"],
       brandHeight: 1,
+      taglineHeight: 0,
+      taglineGapHeight: 0,
       gapHeight: 1,
       totalHeight: 5,
       top: 0,
@@ -66,7 +72,7 @@ describe("responsive brand lockup", () => {
       const lines = setup.captureCharFrame().split("\n");
       const screen = lines.join("\n");
       expect(screen).toContain("Connecting to Spotify…");
-      expect(screen).toContain(width >= 80 ? "███████╗" : "SPOTUIFY");
+      expect(screen).toContain(WORDMARK_ART);
       for (const line of lines.slice(0, height)) {
         expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
       }
@@ -115,6 +121,83 @@ describe("responsive brand lockup", () => {
     expect(blankRow).toBeGreaterThan(0);
     expect(await wordmarkRow(STARTUP_MESSAGE)).toBe(blankRow);
     expect(await wordmarkRow(playbackEmptyStateText(true, true, true))).toBe(blankRow);
+  });
+
+  test("yields the tagline row rather than moving the wordmark or clipping the message", () => {
+    const message = playbackEmptyStateText(true, true, true);
+    const rows = (height: number) => brandSplashLayout(message, 60, height);
+
+    // Heights where the tagline and its gap would shift the wordmark or overflow the region.
+    for (let height = 3; height <= 8; height++) {
+      const layout = rows(height);
+      expect(layout.brandHeight).toBeGreaterThan(0);
+      expect(layout.taglineHeight).toBe(0);
+      expect(layout.totalHeight).toBeLessThanOrEqual(height);
+    }
+
+    // The first height with both rows genuinely to spare takes them.
+    const taken = rows(9);
+    expect(taken.taglineHeight).toBe(1);
+    expect(taken.totalHeight).toBeLessThanOrEqual(9);
+    expect(taken.top).toBe(rows(8).top);
+  });
+
+  test("never lets the tagline drift the wordmark between messages", () => {
+    const width = 60;
+    const height = 19;
+    const layouts = [
+      "",
+      STARTUP_MESSAGE,
+      playbackEmptyStateText(true, true, true),
+      playbackEmptyStateText(true, false, true),
+    ].map((message) => brandSplashLayout(message, width, height));
+
+    expect(new Set(layouts.map((layout) => layout.top)).size).toBe(1);
+    expect(new Set(layouts.map((layout) => layout.brandHeight)).size).toBe(1);
+    expect(layouts.every((layout) => layout.taglineHeight === 1)).toBe(true);
+  });
+
+  test("renders the tagline between the wordmark and the message", async () => {
+    const width = 60;
+    const height = 20;
+    setup = await createTestRenderer({ width, height });
+    createRoot(setup.renderer).render(
+      <box width={width} height={height} position="relative">
+        <BrandSplash message="Connecting to Spotify…" width={width} height={height} />
+      </box>,
+    );
+    await Bun.sleep(20);
+    await setup.renderOnce();
+
+    const layout = brandSplashLayout("Connecting to Spotify…", width, height);
+    const lines = setup.captureCharFrame().split("\n");
+    const wordmarkRow = lines.findIndex((line) => line.includes(WORDMARK_ART));
+    const taglineRow = lines.findIndex((line) => line.includes(TAGLINE));
+    const messageRow = lines.findIndex((line) => line.includes("Connecting to Spotify…"));
+
+    // A blank row separates the tagline from the wordmark art, and another from the message.
+    expect(layout.taglineHeight).toBe(1);
+    expect(wordmarkRow).toBeGreaterThanOrEqual(0);
+    expect(taglineRow).toBe(wordmarkRow + layout.brandHeight + 1);
+    expect(messageRow).toBe(taglineRow + 2);
+    for (const line of lines.slice(0, height)) {
+      expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
+    }
+  });
+
+  test("paints the segmented wordmark unclipped at its exact breakpoint", async () => {
+    // The segments are sized against gaps the font inserts internally, so a re-split or a font
+    // swap could satisfy the mode check while the lockup box clips the right edge.
+    const width = 29;
+    setup = await createTestRenderer({ width, height: 3 });
+    createRoot(setup.renderer).render(<BrandLockup width={width} maxHeight={2} />);
+    await Bun.sleep(20);
+    await setup.renderOnce();
+
+    const rows = setup.captureCharFrame().split("\n").filter((row) => row.trim());
+    expect(brandLockupMode(width, 2)).toBe("art");
+    expect(rows[0]?.trimEnd()).toBe("█▀▀ █▀█ █▀█ ▀█▀ █ █ █ █▀▀ █▄█");
+    expect(rows[1]?.trimEnd()).toBe("▄▄█ █▀▀ █▄█  █  █▄█ █ █▀   █");
   });
 
   test("falls back to readable plain text in a tiny region", async () => {

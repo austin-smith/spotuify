@@ -1,9 +1,10 @@
 import { resolve } from "node:path";
+import { TAGLINE } from "../src/branding.ts";
 import { isSemanticVersion, isStableVersion } from "../src/semver.ts";
 
 export const REPOSITORY = "austin-smith/spotuify";
 export const REPOSITORY_URL = `https://github.com/${REPOSITORY}`;
-export const PRODUCT_DESCRIPTION = "spotify in ur terminal";
+export const PRODUCT_DESCRIPTION = TAGLINE;
 export const HOMEBREW_TAP_REPOSITORY = "austin-smith/homebrew-tap";
 export const HOMEBREW_FORMULA_PATH = "Formula/spotuify.rb";
 export const MACOS_DEPLOYMENT_TARGET = "13.0";

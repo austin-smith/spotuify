@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="./docs/assets/spotuify-logo.png" alt="spotuify logo" width="180" />
+  <img src="./docs/assets/spotuify-lockup.png" alt="spotuify" width="460" />
 </p>
-
-<h1 align="center">spotuify</h1>
 
 <p align="center">🕺 spotify in ur terminal</p>
 

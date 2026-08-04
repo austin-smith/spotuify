@@ -12,6 +12,7 @@ import terminalHyperlinks from "supports-hyperlinks";
 import type { Me } from "../api/types.ts";
 import type { AuthenticationEvent } from "../auth/flow.ts";
 import type { ClientIdSetupEvent } from "../auth/setup.ts";
+import { TAGLINE } from "../branding.ts";
 import type {
   EngineAuthenticationEvent,
   EngineAuthenticationResult,
@@ -292,7 +293,7 @@ export class CliPresenter {
     const output = new PresentationBuffer(columns);
     helper.helpWidth = columns - 6;
     const root = command.parent === null;
-    this.intro(root ? "spotify in ur terminal" : command.name(), output);
+    this.intro(root ? TAGLINE : command.name(), output);
 
     const usage = helper.commandUsage(command);
     const description = helper.commandDescription(command);
