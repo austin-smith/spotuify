@@ -396,24 +396,10 @@ jobs:
           install -m 0755 packaging/standalone/install.sh dist/install.sh
           install -m 0644 packaging/standalone/install.ps1 dist/install.ps1
 
-      - name: Package release source
-        run: bun run release:package-source
-
-      - name: Generate checksums and Homebrew candidate
+      - name: Generate checksums and Homebrew formula
         run: |
           bun run release:checksums
           bun run release:formula
-
-      - name: Upload Homebrew candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: homebrew-candidate
-          path: |
-            dist/spotuify.rb
-            dist/spotuify.json
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 30
 
       - name: Create or update draft release
         env:
@@ -426,12 +412,12 @@ jobs:
             fi
             gh release upload "$GITHUB_REF_NAME" \
               dist/*.tar.gz dist/*.zip dist/*-standalone-* dist/install.sh dist/install.ps1 \
-              dist/SHA256SUMS \
+              dist/SHA256SUMS dist/spotuify.rb \
               --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
               dist/*.tar.gz dist/*.zip dist/*-standalone-* dist/install.sh dist/install.ps1 \
-              dist/SHA256SUMS \
+              dist/SHA256SUMS dist/spotuify.rb \
               --draft \
               --generate-notes \
               --title "$GITHUB_REF_NAME" \
@@ -521,7 +507,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Standalone update check failed.' }
 
   homebrew:
-    name: Open Homebrew formula pull request
+    name: Update Homebrew tap
     needs: publish
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -542,19 +528,20 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Download Homebrew candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: homebrew-candidate
-          path: dist/homebrew
+      - name: Download published Homebrew formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/published
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern spotuify.rb \
+            --dir dist/published \
+            --clobber
 
-      - name: Open or update tap pull request
+      - name: Update tap
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: >-
-          bun run release:publish-formula
-          dist/homebrew/spotuify.rb
-          dist/homebrew/spotuify.json
+        run: bun run release:publish-formula dist/published/spotuify.rb
 
   npm-canary:
     name: Publish npm canary

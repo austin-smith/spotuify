@@ -35,7 +35,6 @@
     "release:npm:smoke": "bun run scripts/verify-npm.ts install",
     "release:npm:verify": "bun run scripts/verify-npm.ts",
     "release:package": "bun run scripts/package-release.ts",
-    "release:package-source": "bun run scripts/package-source.ts",
     "release:publish-formula": "bun run scripts/publish-homebrew-formula.ts",
     "release:validate-tag": "bun run scripts/validate-release-tag.ts",
     "release:verify": "bun run scripts/verify-release.ts",

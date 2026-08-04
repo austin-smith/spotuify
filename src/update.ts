@@ -69,8 +69,8 @@ interface CheckOptions {
 }
 
 const NPM_METADATA_URL = "https://registry.npmjs.org/spotuify";
-const HOMEBREW_METADATA_URL =
-  "https://raw.githubusercontent.com/austin-smith/homebrew-tap/main/metadata/spotuify.json";
+const HOMEBREW_FORMULA_URL =
+  "https://raw.githubusercontent.com/austin-smith/homebrew-tap/main/Formula/spotuify.rb";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const FAILURE_RETRY_MS = CHECK_INTERVAL_MS;
 const MAX_STALE_RESULT_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -231,19 +231,12 @@ function npmLatestVersion(body: string, channel: UpdateChannel): string {
 }
 
 function homebrewLatestVersion(body: string): string {
-  const parsed = JSON.parse(body) as unknown;
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("Homebrew returned invalid update metadata");
+  const match = /^\s*version\s+"([^"]+)"\s*$/m.exec(body);
+  const version = match?.[1];
+  if (!isStableVersion(version)) {
+    throw new Error("Homebrew formula is missing a stable version");
   }
-  const metadata = parsed as Record<string, unknown>;
-  if (
-    metadata["schema"] !== 1 ||
-    !isStableVersion(metadata["version"]) ||
-    Object.keys(metadata).sort().join(",") !== "schema,version"
-  ) {
-    throw new Error("Homebrew returned invalid update metadata");
-  }
-  return metadata["version"];
+  return version;
 }
 
 function requestSignal(signal: AbortSignal | undefined): AbortSignal {
@@ -336,7 +329,7 @@ export async function checkForUpdate(options: CheckOptions): Promise<UpdateCheck
       source === "npm"
         ? `${NPM_METADATA_URL}/${channel}`
         : source === "homebrew"
-          ? HOMEBREW_METADATA_URL
+          ? HOMEBREW_FORMULA_URL
           : STANDALONE_MANIFEST_URL,
       { headers, signal: requestSignal(options.signal) },
     );

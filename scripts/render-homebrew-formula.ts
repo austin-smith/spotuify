@@ -1,9 +1,6 @@
 import { resolve } from "node:path";
 import { buildVersion, DIST_DIR } from "./release-config.ts";
-import {
-  homebrewFormula,
-  homebrewMetadata,
-} from "./homebrew-formula.ts";
+import { homebrewFormula } from "./homebrew-formula.ts";
 
 const version = await buildVersion();
 const checksumLines = (
@@ -21,9 +18,5 @@ const checksums = new Map(
 const formula = homebrewFormula(version, checksums);
 
 const output = resolve(DIST_DIR, "spotuify.rb");
-const metadataOutput = resolve(DIST_DIR, "spotuify.json");
-await Promise.all([
-  Bun.write(output, formula),
-  Bun.write(metadataOutput, homebrewMetadata(version)),
-]);
-console.log(`created ${output} and ${metadataOutput}`);
+await Bun.write(output, formula);
+console.log(`created ${output}`);

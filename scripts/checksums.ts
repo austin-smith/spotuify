@@ -6,7 +6,6 @@ import {
   buildVersion,
   DIST_DIR,
   RELEASE_TARGETS,
-  sourceArchiveName,
   standaloneComponentNames,
 } from "./release-config.ts";
 
@@ -15,11 +14,10 @@ const archives = Object.values(RELEASE_TARGETS)
   .map((target) => archiveName(version, target))
   .sort();
 const installers = ["install.ps1", "install.sh"];
-const source = sourceArchiveName(version);
 const components = Object.values(RELEASE_TARGETS)
   .flatMap((target) => standaloneComponentNames(version, target))
   .sort();
-const expected = [...archives, ...components, ...installers, source].sort();
+const expected = [...archives, ...components, ...installers].sort();
 const actual = (await readdir(DIST_DIR))
   .filter(
     (file) =>

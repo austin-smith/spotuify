@@ -14,25 +14,11 @@ if (token === undefined || token.length === 0) {
 
 const version = await productVersion();
 const formulaPath = resolve(process.argv[2] ?? resolve(DIST_DIR, "spotuify.rb"));
-const metadataPath = resolve(
-  process.argv[3] ?? resolve(DIST_DIR, "spotuify.json"),
-);
-const [formula, metadata] = await Promise.all([
-  Bun.file(formulaPath).text(),
-  Bun.file(metadataPath).text(),
-]);
-const result = await publishHomebrewFormula({
-  formula,
-  metadata,
-  token,
-  version,
-});
+const formula = await Bun.file(formulaPath).text();
+const result = await publishHomebrewFormula({ formula, token, version });
 
-if (result.status === "unchanged") {
-  console.log(`${HOMEBREW_FORMULA_PATH} is already current`);
-} else {
-  console.log(
-    `${result.status} ${result.pullRequestUrl} at ${result.headSha}; ` +
-      `publish through brew pr-pull after test-bot passes`,
-  );
-}
+console.log(
+  result === "unchanged"
+    ? `${HOMEBREW_FORMULA_PATH} is already current`
+    : `${result} ${HOMEBREW_FORMULA_PATH} in ${HOMEBREW_TAP_REPOSITORY}`,
+);
