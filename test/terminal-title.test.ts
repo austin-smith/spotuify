@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Writable } from "node:stream";
+import { createSpotuifyRenderer } from "../src/ui/renderer.ts";
 import {
   clearTerminalTitle,
   setSpotuifyTerminalTitle,
@@ -62,5 +63,45 @@ describe("terminal title", () => {
       ),
     ).toBe(true);
     expect(output.text()).toBe("\u001B]0;song]2;injected\u001B\\");
+  });
+
+  test("clears the title without masking a renderer initialization failure", async () => {
+    const output = new CaptureStream(true);
+    const initializationError = new Error("renderer initialization failed");
+
+    await expect(
+      createSpotuifyRenderer({
+        createRenderer: async () => {
+          throw initializationError;
+        },
+        output,
+        environment: { TERM: "xterm-256color" },
+      }),
+    ).rejects.toBe(initializationError);
+    expect(output.text()).toBe(
+      "\u001B]0;🕺 spotuify\u001B\\\u001B]0;\u001B\\",
+    );
+  });
+
+  test("shares idempotent title cleanup with renderer teardown", async () => {
+    const output = new CaptureStream(true);
+    let onDestroy: (() => void) | undefined;
+    const renderer = {} as Awaited<ReturnType<typeof createSpotuifyRenderer>>;
+
+    const result = await createSpotuifyRenderer({
+      createRenderer: async (config) => {
+        onDestroy = config.onDestroy;
+        return renderer;
+      },
+      output,
+      environment: { TERM: "xterm-256color" },
+    });
+    onDestroy?.();
+    onDestroy?.();
+
+    expect(result).toBe(renderer);
+    expect(output.text()).toBe(
+      "\u001B]0;🕺 spotuify\u001B\\\u001B]0;\u001B\\",
+    );
   });
 });

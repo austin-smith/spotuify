@@ -1,5 +1,21 @@
-import type { CliRendererConfig } from "@opentui/core";
-import { clearTerminalTitle } from "./terminal-title.ts";
+import {
+  createCliRenderer,
+  type CliRenderer,
+  type CliRendererConfig,
+} from "@opentui/core";
+import type { Writable } from "node:stream";
+import {
+  clearTerminalTitle,
+  setSpotuifyTerminalTitle,
+} from "./terminal-title.ts";
+
+type RendererFactory = (config: CliRendererConfig) => Promise<CliRenderer>;
+
+interface CreateSpotuifyRendererOptions {
+  createRenderer?: RendererFactory;
+  output?: Writable;
+  environment?: NodeJS.ProcessEnv;
+}
 
 /**
  * Keep terminal shutdown at the renderer boundary.
@@ -14,3 +30,29 @@ export const TUI_RENDERER_CONFIG = {
   // than being captured as renderer output.
   onDestroy: clearTerminalTitle,
 } satisfies CliRendererConfig;
+
+export async function createSpotuifyRenderer({
+  createRenderer = createCliRenderer,
+  output = process.stdout,
+  environment = process.env,
+}: CreateSpotuifyRendererOptions = {}): Promise<CliRenderer> {
+  let titleIsSet = setSpotuifyTerminalTitle(output, environment);
+  const clearTitle = (): void => {
+    if (!titleIsSet) return;
+    titleIsSet = false;
+    clearTerminalTitle(output, environment);
+  };
+
+  try {
+    return await createRenderer({
+      ...TUI_RENDERER_CONFIG,
+      onDestroy: clearTitle,
+    });
+  } catch (error) {
+    try {
+      clearTitle();
+    } finally {
+      throw error;
+    }
+  }
+}
