@@ -49,7 +49,7 @@ describe("empty playback guidance", () => {
   test("shows the wordmark alone while startup is inside the grace window", async () => {
     const screen = await renderEmptyState(false, false, 90, false);
 
-    expect(screen).toContain("███████╗");
+    expect(screen).toContain("█▀▀ █▀█ █▀█");
     expect(screen).not.toContain(STARTUP_MESSAGE);
     expect(screen).not.toContain("NOTHING PLAYING");
   });

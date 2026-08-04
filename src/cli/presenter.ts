@@ -12,14 +12,12 @@ import terminalHyperlinks from "supports-hyperlinks";
 import type { Me } from "../api/types.ts";
 import type { AuthenticationEvent } from "../auth/flow.ts";
 import type { ClientIdSetupEvent } from "../auth/setup.ts";
+import { TAGLINE } from "../branding.ts";
 import type {
   EngineAuthenticationEvent,
   EngineAuthenticationResult,
 } from "../engine/librespot.ts";
 import type { UpdateCommandResult } from "../update-command.ts";
-
-/** Product tagline. Also the npm description and the Homebrew formula `desc`. */
-export const TAGLINE = "spotify in ur terminal";
 
 type TtyWritable = Writable & { isTTY?: boolean; columns?: number };
 

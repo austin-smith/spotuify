@@ -1,4 +1,5 @@
 import { Command, CommanderError, Help, Option } from "commander";
+import { TAGLINE } from "../branding.ts";
 import { VERSION } from "../version.ts";
 import { registerDiscovery } from "./commands/discovery.ts";
 import { registerFollow } from "./commands/follow.ts";
@@ -15,7 +16,7 @@ import {
   type GlobalOutputOptions,
   type OutputMode,
 } from "./output.ts";
-import { CliCancelledError, CliPresenter, TAGLINE } from "./presenter.ts";
+import { CliCancelledError, CliPresenter } from "./presenter.ts";
 import type { RunState } from "./support.ts";
 import { signedDurationMs } from "./values.ts";
 

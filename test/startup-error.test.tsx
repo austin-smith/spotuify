@@ -10,6 +10,9 @@ import {
   StartupErrorScreen,
 } from "../src/ui/StartupErrorScreen.tsx";
 
+/** Leading cells of the `tiny` wordmark art, which spells nothing a substring search can find. */
+const WORDMARK_ART = "█▀▀ █▀█ █▀█";
+
 const SUPPORTED_SIZES = [
   [60, 20],
   [80, 24],
@@ -89,7 +92,8 @@ describe("startup error screen layout", () => {
 
     expect(layout.messageLines).toHaveLength(7);
     expect(layout.messageLines.at(-1)).toBe("END-OF-DIAGNOSTIC");
-    expect(layout.brandHeight).toBe(1);
+    // Seven rows of diagnostic still leave room for the two-row wordmark art.
+    expect(layout.brandHeight).toBe(2);
   });
 
   test("keeps a seven-row diagnostic intact at 80x18", async () => {
@@ -103,8 +107,7 @@ describe("startup error screen layout", () => {
 
     const lines = setup.captureCharFrame().split("\n");
     const screen = lines.join("\n");
-    expect(screen).toContain("SPOTUIFY");
-    expect(screen).not.toContain("███████╗");
+    expect(screen).toContain(WORDMARK_ART);
     expect(screen).toContain("END-OF-DIAGNOSTIC");
     expect(lines[15]).toContain("r to retry.");
     expect(lines[16]).toContain("q to quit.");

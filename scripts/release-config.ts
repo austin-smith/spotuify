@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { TAGLINE } from "../src/cli/presenter.ts";
+import { TAGLINE } from "../src/branding.ts";
 import { isSemanticVersion, isStableVersion } from "../src/semver.ts";
 
 export const REPOSITORY = "austin-smith/spotuify";
