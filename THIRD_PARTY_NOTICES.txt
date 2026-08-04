@@ -9314,7 +9314,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 MIT JavaScript packages
 
 Used by:
-- @types/react 19.2.17
+- @types/react 19.2.18
 
 MIT License
 
