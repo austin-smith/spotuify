@@ -3,6 +3,7 @@ import { VERSION } from "../version.ts";
 import { registerDiscovery } from "./commands/discovery.ts";
 import { registerFollow } from "./commands/follow.ts";
 import { registerLibrary } from "./commands/library.ts";
+import { registerMcp } from "./commands/mcp.ts";
 import { registerPlayback } from "./commands/playback.ts";
 import { registerPlaylists } from "./commands/playlists.ts";
 import { registerQueueAndDevices } from "./commands/queue-devices.ts";
@@ -56,6 +57,7 @@ const ROOT_COMMAND_GROUPS: Readonly<Record<string, string>> = {
   account: HELP_GROUP.system,
   config: HELP_GROUP.system,
   doctor: HELP_GROUP.system,
+  mcp: HELP_GROUP.system,
   service: HELP_GROUP.system,
   completion: HELP_GROUP.system,
   update: HELP_GROUP.system,
@@ -252,6 +254,7 @@ export function createCliProgram(dependencies: CliDependencies = {}): {
   registerLibrary(program, io);
   registerFollow(program, io);
   registerPlaylists(program, io);
+  registerMcp(program, io, state);
   registerSystemCommands(program, io, presenter, state);
   groupRootCommands(program);
   addHelpTopics(program, presenter, io, standardHelp);

@@ -32,7 +32,13 @@ interface Component {
 
 const components = new Map<string, Component>();
 const visited = new Set<string>();
-const allowedLicenses = new Set(["Apache-2.0", "BSD-3-Clause", "MIT"]);
+const allowedLicenses = new Set([
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "MIT",
+]);
 const platformPackageFamilies = new Map([
   ["@opentui/core-", "@opentui/core platform binary packages"],
   ["@typescript/typescript-", "@typescript/typescript platform binary packages"],
@@ -66,22 +72,34 @@ async function licenseText(packageName: string, directory: string): Promise<stri
   return (await Bun.file(resolve(directory, file)).text()).trim();
 }
 
-function packageDirectory(packageName: string, fromDirectory: string): string | null {
+async function packageDirectory(
+  packageName: string,
+  fromDirectory: string,
+): Promise<string | null> {
   const require = createRequire(resolve(fromDirectory, "package.json"));
+  let entry: string;
   try {
-    return dirname(require.resolve(`${packageName}/package.json`));
+    entry = require.resolve(`${packageName}/package.json`);
   } catch {
     try {
-      let directory = dirname(require.resolve(packageName));
-      while (directory !== dirname(directory)) {
-        const metadata = Bun.file(resolve(directory, "package.json"));
-        if (metadata.size > 0) return directory;
-        directory = dirname(directory);
-      }
-      return null;
+      entry = require.resolve(packageName);
     } catch {
       return null;
     }
+  }
+  // An exports map can send `<name>/package.json` to a nested `{"type": "module"}` stub, and a
+  // bare resolve lands on the entry module; either way the manifest that actually names the
+  // package sits in a parent directory.
+  let directory = dirname(entry);
+  while (true) {
+    const manifest = Bun.file(resolve(directory, "package.json"));
+    if (manifest.size > 0) {
+      const metadata = (await manifest.json()) as { name?: unknown };
+      if (metadata.name === packageName) return directory;
+    }
+    const parent = dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
   }
 }
 
@@ -90,7 +108,7 @@ async function visit(
   fromDirectory: string,
   optional = false,
 ): Promise<void> {
-  const directory = packageDirectory(packageName, fromDirectory);
+  const directory = await packageDirectory(packageName, fromDirectory);
   if (directory === null) {
     if (optional || platformPackageFamily(packageName) !== null) return;
     throw new Error(`production dependency ${packageName} is not installed`);
