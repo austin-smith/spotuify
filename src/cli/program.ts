@@ -15,7 +15,7 @@ import {
   type GlobalOutputOptions,
   type OutputMode,
 } from "./output.ts";
-import { CliCancelledError, CliPresenter } from "./presenter.ts";
+import { CliCancelledError, CliPresenter, TAGLINE } from "./presenter.ts";
 import type { RunState } from "./support.ts";
 import { signedDurationMs } from "./values.ts";
 
@@ -203,7 +203,7 @@ export function createCliProgram(dependencies: CliDependencies = {}): {
   const usageHint = "Run 'spotuify --help' for usage.";
   program
     .name("spotuify")
-    .description("Spotify in your terminal")
+    .description(TAGLINE)
     .optionsGroup(HELP_GROUP.general)
     .version(`spotuify ${VERSION}`, "-v, --version", "Show the product version")
     .addHelpOption(

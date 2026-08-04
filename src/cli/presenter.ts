@@ -18,6 +18,9 @@ import type {
 } from "../engine/librespot.ts";
 import type { UpdateCommandResult } from "../update-command.ts";
 
+/** Product tagline. Also the npm description and the Homebrew formula `desc`. */
+export const TAGLINE = "spotify in ur terminal";
+
 type TtyWritable = Writable & { isTTY?: boolean; columns?: number };
 
 class PresentationBuffer extends Writable {
@@ -292,7 +295,7 @@ export class CliPresenter {
     const output = new PresentationBuffer(columns);
     helper.helpWidth = columns - 6;
     const root = command.parent === null;
-    this.intro(root ? "spotify in ur terminal" : command.name(), output);
+    this.intro(root ? TAGLINE : command.name(), output);
 
     const usage = helper.commandUsage(command);
     const description = helper.commandDescription(command);

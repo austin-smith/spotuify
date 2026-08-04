@@ -1,5 +1,6 @@
 import {
   artifactName,
+  PRODUCT_DESCRIPTION,
   RELEASE_TARGETS,
   REPOSITORY_URL,
 } from "./release-config.ts";
@@ -24,7 +25,7 @@ export function homebrewFormula(
   }
 
   return `class Spotuify < Formula
-  desc "Spotify in your terminal"
+  desc "${PRODUCT_DESCRIPTION}"
   homepage "${REPOSITORY_URL}"
   version "${version}"
   license "MIT"
