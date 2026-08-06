@@ -216,11 +216,12 @@ describe("palette", () => {
     expect(screen).toContain("type to search");
   });
 
-  test("labels the pre-typing view as your library", async () => {
+  test("labels the pre-typing view as search highlights rather than the complete library", async () => {
     seedFrames("", toHomeRows({ recent: [RESULTS.tracks[0]!], top: [], playlists: [] }), { showingHome: true });
     const screen = (await render(100, 32)).join("\n");
     expect(screen).toContain("RECENTLY PLAYED");
-    expect(screen).toContain("your library");
+    expect(screen).toContain("browse highlights");
+    expect(screen).not.toContain("your library");
   });
 
   test("reports an empty result set", async () => {

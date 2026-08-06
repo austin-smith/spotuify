@@ -4,6 +4,7 @@ import {
   fetchHome,
   libraryContains,
   removeLibraryItems,
+  savedAlbums,
   saveLibraryItems,
 } from "../src/api/library.ts";
 import type { TokenStore } from "../src/auth/tokens.ts";
@@ -174,6 +175,44 @@ describe("fetchHome", () => {
     expect(home.playlists.map((playlist) => playlist.name)).toEqual(["One", "Two"]);
     expect(calls.filter((path) => path === "/me/playlists")).toHaveLength(1);
     expect(calls.some((path) => path.startsWith("/playlists/"))).toBe(false);
+  });
+});
+
+describe("savedAlbums", () => {
+  const album = (id: string) => ({
+    id,
+    name: `Album ${id}`,
+    uri: `spotify:album:${id}`,
+    images: [],
+  });
+
+  test("loads every page in Spotify's library order", async () => {
+    const offsets: number[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const offset = Number(url.searchParams.get("offset"));
+      offsets.push(offset);
+      return Response.json(
+        offset === 0
+          ? { items: [{ album: album("one") }], next: "next" }
+          : { items: [{ album: album("two") }], next: null },
+      );
+    }) as unknown as typeof fetch;
+
+    const albums = await savedAlbums(new SpotifyClient(tokens), { market: "US" });
+    expect(albums.map((item) => item.id)).toEqual(["one", "two"]);
+    expect(offsets).toEqual([0, 50]);
+  });
+
+  test("drops null wrappers and missing albums at the API boundary", async () => {
+    globalThis.fetch = (async () =>
+      Response.json({
+        items: [null, { album: null }, {}, { album: album("real") }],
+        next: null,
+      })) as unknown as typeof fetch;
+
+    const albums = await savedAlbums(new SpotifyClient(tokens));
+    expect(albums.map((item) => item.id)).toEqual(["real"]);
   });
 });
 

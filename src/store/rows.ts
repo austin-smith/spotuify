@@ -109,14 +109,17 @@ function artistRow(artist: SimpleArtist): ResultRow {
   };
 }
 
-function albumRow(album: SimpleAlbum): ResultRow {
+function albumRow(album: SimpleAlbum, options: { showArtist?: boolean } = {}): ResultRow {
   const year = album.release_date?.slice(0, 4) ?? "";
   const tracks = album.total_tracks === undefined ? "" : `${album.total_tracks} tracks`;
+  const artists = album.artists?.map((artist) => artist.name).join(", ") ?? "";
   return {
     kind: "result",
     label: album.name,
-    detail: [year, tracks].filter((part) => part.length > 0).join(" · "),
-    trailing: "",
+    detail: options.showArtist === true && artists.length > 0
+      ? artists
+      : [year, tracks].filter((part) => part.length > 0).join(" · "),
+    trailing: options.showArtist === true ? year : "",
     referenceUri: album.uri,
     play: { contextUri: album.uri },
     drill: { kind: "album", id: album.id, name: album.name, uri: album.uri },
@@ -136,11 +139,11 @@ function playlistRow(playlist: {
   uri: string;
   ownerName: string;
   mine: boolean;
-}): ResultRow {
+}, options: { showOwner?: boolean } = {}): ResultRow {
   return {
     kind: "result",
     label: playlist.name,
-    detail: playlist.mine ? "" : playlist.ownerName,
+    detail: options.showOwner === true || !playlist.mine ? playlist.ownerName : "",
     trailing: "",
     referenceUri: playlist.uri,
     play: { contextUri: playlist.uri },
@@ -155,6 +158,21 @@ function playlistRow(playlist: {
         }
       : {}),
   };
+}
+
+/** Complete playlist-library rows, including the owner column for every entry. */
+export function toLibraryPlaylistRows(playlists: Playlist[]): Row[] {
+  return playlists.map((playlist) => playlistRow(playlist, { showOwner: true }));
+}
+
+/** Complete saved-album rows. */
+export function toLibraryAlbumRows(albums: SimpleAlbum[]): Row[] {
+  return albums.map((album) => albumRow(album, { showArtist: true }));
+}
+
+/** Complete followed-artist rows. */
+export function toLibraryArtistRows(artists: SimpleArtist[]): Row[] {
+  return artists.map(artistRow);
 }
 
 /** A search hit, which reports its owner but not whether that owner is us. */
@@ -228,7 +246,7 @@ export function toAlbumRows(
 
 /** Rows for an artist's releases. */
 export function toArtistRows(albums: SimpleAlbum[]): Row[] {
-  return albums.map(albumRow);
+  return albums.map((album) => albumRow(album));
 }
 
 /** A resolved pasted URI/URL is shown as one deliberate, confirmable navigation result. */

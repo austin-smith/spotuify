@@ -18,6 +18,7 @@ import { useActions } from "../store/actions.ts";
 import { useDevices } from "../store/devices.ts";
 import { failureMessage } from "../store/error.ts";
 import { useLyrics } from "../store/lyrics.ts";
+import { useLibraryBrowser } from "../store/library-browser.ts";
 import { usePlayback } from "../store/playback.ts";
 import { playbackContextDrill } from "../store/playback-context.ts";
 import { useQueue } from "../store/queue.ts";
@@ -45,6 +46,12 @@ import { HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
 import { KeyHints, KEY_HINT_ROWS } from "./KeyHints.tsx";
 import { isPlainShortcut } from "./keys.ts";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
+import {
+  LibraryView,
+  LIBRARY_PROMPT_ROW,
+  libraryListHeight,
+} from "./LibraryView.tsx";
+import { applyLibraryNavigation } from "./library-navigation.ts";
 import { applyPaletteNavigation } from "./palette-navigation.ts";
 import { OVERLAY_PADDING_X, overlayListHeight } from "./Overlay.tsx";
 import { Palette, PROMPT_ROW } from "./Palette.tsx";
@@ -139,6 +146,7 @@ export function App({ version }: { version: string }) {
   // Must sit with the other hooks: below the `boot.phase` early returns the hook count would
   // differ between the loading and ready renders, which React rejects outright.
   const paletteOpen = useSearch((s) => s.open);
+  const libraryOpen = useLibraryBrowser((s) => s.open);
   const devicesOpen = useDevices((s) => s.open);
   const queueOpen = useQueue((s) => s.open);
   const actionsOpen = useActions((s) => s.open);
@@ -147,7 +155,7 @@ export function App({ version }: { version: string }) {
   const lyricsOpen = useLyrics((s) => s.open);
   const [keysOpen, setKeysOpen] = useState(false);
   const overlayOpen =
-    paletteOpen || devicesOpen || queueOpen || actionsOpen || lyricsOpen || keysOpen;
+    paletteOpen || libraryOpen || devicesOpen || queueOpen || actionsOpen || lyricsOpen || keysOpen;
   const bootPlayer = boot.phase === "ready" ? boot.player : null;
   const bootClient = boot.phase === "ready" ? boot.client : null;
   const bootAuthorizationId = boot.phase === "ready" ? boot.authorizationId : null;
@@ -219,6 +227,7 @@ export function App({ version }: { version: string }) {
         const player = new PlayerApi(client);
         if (me !== null) {
           useSearch.getState().configure(client, me.country, me.id);
+          useLibraryBrowser.getState().configure(client, me.country, me.id);
           useActions.getState().configure(client, me.id);
         }
         useDevices.getState().configure(player, undefined, me?.id ?? null);
@@ -383,6 +392,7 @@ export function App({ version }: { version: string }) {
         setProfileRecoveryFailed(false);
         setProfileRecoveryRequest(0);
         useSearch.getState().configure(bootClient, profile.country, profile.id);
+        useLibraryBrowser.getState().configure(bootClient, profile.country, profile.id);
         useActions.getState().configure(bootClient, profile.id);
         usePlayback.setState({ error: null });
         setBoot((current) =>
@@ -487,6 +497,7 @@ export function App({ version }: { version: string }) {
     const queue = useQueue.getState();
     const actions = useActions.getState();
     const lyrics = useLyrics.getState();
+    const library = useLibraryBrowser.getState();
 
     const copySpotify = (uri: string, label: string, asLink: boolean) => {
       const value = asLink ? spotifyOpenUrl(uri) : uri;
@@ -568,9 +579,10 @@ export function App({ version }: { version: string }) {
       } else if (key.name === "return" || key.name === "enter") {
         void actions.activate().then((result) => {
           if (result?.kind !== "drill") return;
-          // Selected-item actions return to the existing palette stack; playing-item actions open
-          // a fresh stack. Both routes then inherit the palette's normal Back behavior.
+          // Selected-item actions return to the surface that launched them. Playing-item actions
+          // open a fresh search stack because they have no existing browse context.
           if (result.origin === "palette") palette.drillInto(result.drill);
+          else if (result.origin === "library") library.drillInto(result.drill);
           else palette.openAt(result.drill);
         });
       }
@@ -583,6 +595,54 @@ export function App({ version }: { version: string }) {
       else if (key.name === "down" || (key.ctrl && key.name === "n")) picker.move(1);
       else if (key.name === "return") {
         void picker.activate();
+      }
+      return;
+    }
+
+    // Library is one coherent filter-and-list mode. The input keeps printable characters while
+    // Tab changes the root section and non-printing keys navigate the visible rows.
+    if (library.open) {
+      const isEnter = key.name === "return" || key.name === "enter";
+      const viewport = libraryListHeight(height);
+      const navigated = applyLibraryNavigation(key, library, {
+        canChangeSection: library.depth() === 1,
+        pageSize: viewport,
+      });
+      if (navigated) return;
+
+      if (key.ctrl && key.name === "space") {
+        const row = library.current();
+        if (row?.actionItem !== undefined) actions.openActions(row.actionItem, "library");
+      } else if (key.name === "escape") {
+        if (!library.back()) library.closeLibrary();
+      } else if (isEnter) {
+        const row = library.current();
+        if (row === null) {
+          if (library.error() !== null) library.retry();
+          return;
+        }
+        if (boot.phase !== "ready") return;
+
+        if (key.ctrl) {
+          const uris = "uris" in row.play ? row.play.uris : [];
+          const uri = uris[0];
+          if (uri !== undefined) {
+            void useQueue.getState().enqueue(uri, row.label);
+            library.closeLibrary();
+          }
+          return;
+        }
+
+        if (row.drill !== undefined) {
+          library.drillInto(row.drill);
+          return;
+        }
+
+        const preview = row.actionItem === undefined
+          ? { label: row.label }
+          : { label: row.label, item: row.actionItem };
+        void usePlayback.getState().playSelection(row.play, preview);
+        library.closeLibrary();
       }
       return;
     }
@@ -668,6 +728,12 @@ export function App({ version }: { version: string }) {
       // to the same Spotify account.
       if (boot.me === null) return;
       palette.openPalette();
+      return;
+    }
+
+    if (isPlainShortcut(key, "b")) {
+      if (key.repeated || boot.me === null) return;
+      library.openLibrary();
       return;
     }
 
@@ -930,6 +996,8 @@ export function App({ version }: { version: string }) {
           solidRow={
             paletteOpen && !actionsOpen
               ? PROMPT_ROW
+              : libraryOpen && !actionsOpen
+                ? LIBRARY_PROMPT_ROW
               : actionsOpen && actionMode === "playlists"
                 ? PLAYLIST_PROMPT_ROW
                 : null
@@ -988,6 +1056,7 @@ export function App({ version }: { version: string }) {
       )}
 
       {paletteOpen && !actionsOpen ? <Palette width={width} height={height} /> : null}
+      {libraryOpen && !actionsOpen ? <LibraryView width={width} height={height} /> : null}
       {devicesOpen ? <DevicePicker width={width} height={height} /> : null}
       {queueOpen ? <QueueView width={width} height={height} /> : null}
       {actionsOpen && actionMode === "actions" ? (

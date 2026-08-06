@@ -25,7 +25,10 @@ const FOLLOW_PAGE_SIZE = 50;
  */
 export async function followedArtists(
   client: SpotifyClient,
-  options: { signal?: AbortSignal } = {},
+  options: {
+    signal?: AbortSignal;
+    priority?: "foreground" | "background";
+  } = {},
 ): Promise<FullArtist[]> {
   const artists: FullArtist[] = [];
   let after: string | undefined;
@@ -39,6 +42,7 @@ export async function followedArtists(
     }>("/me/following", {
       query: { type: "artist", limit: FOLLOW_PAGE_SIZE, after },
       ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.priority ? { priority: options.priority } : {}),
     });
 
     const page = response?.artists;
@@ -46,7 +50,7 @@ export async function followedArtists(
       if (item !== null && item !== undefined) artists.push(item);
     }
     const cursor = page?.cursors?.after;
-    if (typeof cursor !== "string" || cursor.length === 0) break;
+    if (typeof cursor !== "string" || cursor.length === 0 || cursor === after) break;
     after = cursor;
   }
 

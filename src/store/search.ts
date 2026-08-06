@@ -1,8 +1,6 @@
 import { create } from "zustand";
-import { albumTracks, artistAlbums } from "../api/catalog.ts";
 import type { SpotifyClient } from "../api/client.ts";
 import { EMPTY_HOME, fetchHome, type HomeData } from "../api/library.ts";
-import { playlistItems } from "../api/playlists.ts";
 import {
   resolveSpotifyReference,
   supportsSpotifyReference,
@@ -19,6 +17,7 @@ import {
   looksLikeSpotifyReference,
   parseSpotifyReference,
 } from "../spotify/reference.ts";
+import { rowsForDrill } from "./drill.ts";
 import { failureMessage } from "./error.ts";
 import { usePlaylistCatalog } from "./playlists.ts";
 import {
@@ -28,10 +27,7 @@ import {
   matchPlaylists,
   moveSelection,
   moveSelectionPage,
-  toAlbumRows,
-  toArtistRows,
   toHomeRows,
-  toPlaylistRows,
   toReferenceRows,
   toRows,
   type Drill,
@@ -200,28 +196,6 @@ function replaceRootRows(
     (row) => row.kind === "result" && resultKey(row) === key,
   );
   return selectedIndex === -1 ? next : { ...next, selected: selectedIndex };
-}
-
-/** The rows behind one drill target. */
-async function rowsFor(
-  client: SpotifyClient,
-  target: Drill,
-  options: { market?: string; signal: AbortSignal },
-): Promise<Row[]> {
-  switch (target.kind) {
-    case "artist":
-      return toArtistRows(await artistAlbums(client, target.id, options));
-    case "album":
-      return toAlbumRows(
-        { id: target.id, name: target.name, uri: target.uri },
-        await albumTracks(client, target.id, options),
-      );
-    case "playlist":
-      return toPlaylistRows(
-        { name: target.name, uri: target.uri },
-        await playlistItems(client, target.id, options),
-      );
-  }
 }
 
 function cancelPending(): void {
@@ -742,7 +716,10 @@ export const useSearch = create<SearchSlice>((set, get) => ({
 
     void (async () => {
       try {
-        const rows = await rowsFor(client, target, { market, signal: controller.signal });
+        const rows = await rowsForDrill(client, target, {
+          market,
+          signal: controller.signal,
+        });
         if (controller.signal.aborted) return;
         set({
           frames: withTop(get().frames, { rows, selected: firstSelectable(rows), loading: false }),

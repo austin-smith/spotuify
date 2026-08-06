@@ -17,6 +17,7 @@ export interface SimpleAlbum {
   name: string;
   uri: string;
   images: Image[];
+  artists?: SimpleArtist[];
   release_date?: string;
   total_tracks?: number;
 }
