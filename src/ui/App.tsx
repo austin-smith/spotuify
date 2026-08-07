@@ -43,7 +43,7 @@ import { SetupScreen } from "./SetupScreen.tsx";
 import { StartupErrorScreen } from "./StartupErrorScreen.tsx";
 import { HUD_LEFT, hudTopForHeight } from "./Hud.tsx";
 import { KeyHints, KEY_HINT_ROWS } from "./KeyHints.tsx";
-import { isPlainShortcut } from "./keys.ts";
+import { handlePlaybackTransportKey, isPlainShortcut } from "./keys.ts";
 import { KeymapOverlay } from "./KeymapOverlay.tsx";
 import { applyPaletteNavigation } from "./palette-navigation.ts";
 import { OVERLAY_PADDING_X, overlayListHeight } from "./Overlay.tsx";
@@ -805,15 +805,11 @@ export function App({ version }: { version: string }) {
     }
 
     const store = usePlayback.getState();
+    if (handlePlaybackTransportKey(key, store)) return;
+
     switch (key.name) {
       case "space":
         void store.togglePlay();
-        break;
-      case "n":
-        void store.next();
-        break;
-      case "p":
-        void store.previous();
         break;
       case "r":
         if (shouldRetryBootProfile(boot.me, profileRecoveryFailed, boot.client.getCooldown())) {
@@ -832,12 +828,6 @@ export function App({ version }: { version: string }) {
         break;
       case "z":
         void store.cycleRepeat();
-        break;
-      case "right":
-        void store.seekBy(5_000);
-        break;
-      case "left":
-        void store.seekBy(-5_000);
         break;
       case "up":
         void store.adjustVolume(5);
