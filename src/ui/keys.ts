@@ -18,7 +18,17 @@ interface ShortcutKey {
   hyper?: boolean;
 }
 
-/** Match a literal letter shortcut without stealing modified terminal/application commands. */
+interface RepeatableShortcutKey extends ShortcutKey {
+  repeated?: boolean;
+}
+
+export interface PlaybackTransportTarget {
+  next: () => unknown;
+  previous: () => unknown;
+  seekBy: (deltaMs: number) => unknown;
+}
+
+/** Match a literal shortcut without stealing modified terminal/application commands. */
 export function isPlainShortcut(
   key: ShortcutKey,
   name: string,
@@ -35,6 +45,61 @@ export function isPlainShortcut(
   );
 }
 
+/** Ctrl is explicit; every other modifier must remain available to the terminal and focused UI. */
+function isCtrlShortcut(key: ShortcutKey, name: string): boolean {
+  return (
+    key.name === name &&
+    key.ctrl &&
+    !key.shift &&
+    !key.meta &&
+    !key.option &&
+    !key.super &&
+    !key.hyper
+  );
+}
+
+type PlaybackTransportCommand =
+  | { kind: "next" }
+  | { kind: "previous" }
+  | { kind: "seek"; deltaMs: -5_000 | 5_000 };
+
+/**
+ * Resolve main-screen transport controls without claiming modified input accidentally.
+ *
+ * Track changes are discrete, so a held key must not walk through the queue. Seeking is continuous
+ * and deliberately accepts terminal repeat events.
+ */
+function playbackTransportCommand(
+  key: RepeatableShortcutKey,
+): PlaybackTransportCommand | null {
+  if (key.repeated !== true) {
+    if (isPlainShortcut(key, "p") || isCtrlShortcut(key, "left")) {
+      return { kind: "previous" };
+    }
+    if (isPlainShortcut(key, "n") || isCtrlShortcut(key, "right")) {
+      return { kind: "next" };
+    }
+  }
+
+  if (isPlainShortcut(key, "left")) return { kind: "seek", deltaMs: -5_000 };
+  if (isPlainShortcut(key, "right")) return { kind: "seek", deltaMs: 5_000 };
+  return null;
+}
+
+/** Dispatch a recognized transport key and report whether the main-screen handler consumed it. */
+export function handlePlaybackTransportKey(
+  key: RepeatableShortcutKey,
+  target: PlaybackTransportTarget,
+): boolean {
+  const command = playbackTransportCommand(key);
+  if (command === null) return false;
+
+  if (command.kind === "next") void target.next();
+  else if (command.kind === "previous") void target.previous();
+  else void target.seekBy(command.deltaMs);
+  return true;
+}
+
 /** What this keyboard labels the modifier next to the spacebar; the key itself is the same. */
 const OPTION_KEY = process.platform === "darwin" ? "opt" : "alt";
 
@@ -49,8 +114,7 @@ export const KEYMAP: KeyGroup[] = [
     label: "PLAYBACK",
     bindings: [
       { key: "space", action: "play / pause" },
-      { key: "n", action: "next" },
-      { key: "p", action: "previous" },
+      { key: "p/n", action: "previous / next" },
       { key: "←/→", action: "seek ±5s" },
       { key: "↑/↓", action: "volume ±5%" },
       { key: "s", action: "shuffle" },
