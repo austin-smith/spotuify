@@ -1,9 +1,17 @@
 import { SpotifyLimitError, type SpotifyClient } from "./client.ts";
 import { myPlaylists, type Playlist } from "./playlists.ts";
-import type { Page, Track } from "./types.ts";
+import type { Page, SimpleAlbum, Track } from "./types.ts";
 
 /** Spotify accepts at most 40 URIs on each current library endpoint. */
 const LIBRARY_BATCH_SIZE = 40;
+
+/** Spotify returns at most 50 saved albums per page. */
+const SAVED_ALBUM_PAGE_SIZE = 50;
+
+interface SavedAlbumPage {
+  items?: ({ album?: SimpleAlbum | null } | null)[] | null;
+  next?: string | null;
+}
 
 export interface HomeData {
   recent: Track[];
@@ -19,6 +27,41 @@ const PER_GROUP = 5;
 
 function compact<T>(items: (T | null | undefined)[] | undefined): T[] {
   return (items ?? []).filter((item): item is T => item !== null && item !== undefined);
+}
+
+/** Every album saved in the signed-in user's library, in Spotify's library order. */
+export async function savedAlbums(
+  client: SpotifyClient,
+  options: {
+    market?: string;
+    signal?: AbortSignal;
+    priority?: "foreground" | "background";
+    probeIndefiniteCooldown?: boolean;
+  } = {},
+): Promise<SimpleAlbum[]> {
+  const albums: SimpleAlbum[] = [];
+
+  for (let offset = 0; ; offset += SAVED_ALBUM_PAGE_SIZE) {
+    const requestOptions = {
+      query: {
+        limit: SAVED_ALBUM_PAGE_SIZE,
+        offset,
+        market: options.market,
+      },
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.priority ? { priority: options.priority } : {}),
+    };
+    const page = options.probeIndefiniteCooldown === true && offset === 0
+      ? await client.retryAfterIndefiniteCooldown<SavedAlbumPage>("/me/albums", requestOptions)
+      : await client.request<SavedAlbumPage>("/me/albums", requestOptions);
+
+    for (const saved of page?.items ?? []) {
+      if (saved?.album !== null && saved?.album !== undefined) albums.push(saved.album);
+    }
+    if (page?.next === null || page?.next === undefined) break;
+  }
+
+  return albums;
 }
 
 /** Keep the first occurrence of each track; recently-played repeats the same track often. */

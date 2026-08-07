@@ -52,4 +52,18 @@ describe("followedArtists", () => {
     const artists = await followedArtists(new SpotifyClient(tokens));
     expect(artists.map((a) => a.id)).toEqual(["a1"]);
   });
+
+  test("stops on a repeated cursor instead of requesting the same page forever", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return Response.json({
+        artists: { items: [artist(`a${calls}`)], cursors: { after: "same" } },
+      });
+    }) as unknown as typeof fetch;
+
+    const artists = await followedArtists(new SpotifyClient(tokens));
+    expect(artists.map((item) => item.id)).toEqual(["a1", "a2"]);
+    expect(calls).toBe(2);
+  });
 });

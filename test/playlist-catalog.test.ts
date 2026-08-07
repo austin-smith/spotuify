@@ -39,8 +39,8 @@ describe("shared playlist catalog", () => {
 
     const catalog = usePlaylistCatalog.getState();
     catalog.configure(new SpotifyClient(tokens), "me");
-    const first = await catalog.load("background");
-    const second = await catalog.load("foreground");
+    const first = await catalog.load({ priority: "background" });
+    const second = await catalog.load({ priority: "foreground" });
 
     expect(first.map((playlist) => playlist.id)).toEqual(["one"]);
     expect(second).toBe(first);
@@ -62,7 +62,7 @@ describe("shared playlist catalog", () => {
     const catalog = usePlaylistCatalog.getState();
     catalog.configure(new SpotifyClient(tokens), "me");
     const first = catalog.load();
-    const second = catalog.load("foreground");
+    const second = catalog.load({ priority: "foreground" });
     release?.();
 
     expect(await first).toEqual(await second);
@@ -88,12 +88,14 @@ describe("shared playlist catalog", () => {
 
     const catalog = usePlaylistCatalog.getState();
     catalog.configure(new SpotifyClient(tokens), "me");
-    expect((await catalog.load("background")).map((playlist) => playlist.id)).toEqual([
-      "playlist-1",
-    ]);
-    expect((await catalog.load("foreground", true)).map((playlist) => playlist.id)).toEqual([
-      "playlist-2",
-    ]);
+    expect(
+      (await catalog.load({ priority: "background" })).map((playlist) => playlist.id),
+    ).toEqual(["playlist-1"]);
+    expect(
+      (await catalog.load({ priority: "foreground", force: true })).map(
+        (playlist) => playlist.id,
+      ),
+    ).toEqual(["playlist-2"]);
     expect(request).toBe(2);
   });
 

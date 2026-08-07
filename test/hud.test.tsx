@@ -101,6 +101,7 @@ const SIZES: ReadonlyArray<readonly [number, number]> = [
 test("profile-less quota mode does not advertise account-bound actions", () => {
   const hints = barFor({ playing: true, hasTrack: true, canBrowse: false });
   expect(hints).not.toContainEqual({ key: "/", action: "search" });
+  expect(hints).not.toContainEqual({ key: "b", action: "library" });
   expect(hints).not.toContainEqual({ key: "a", action: "go to" });
   expect(hints).not.toContainEqual({ key: "d", action: "device" });
   expect(hints).toContainEqual({ key: "r", action: "retry account" });
@@ -124,6 +125,7 @@ describe("hud", () => {
   test.each(SIZES)("keybinds occupy the last row at %ix%i", async (w, h) => {
     const lines = await render(w, h);
     expect(lines[h - KEY_HINT_ROWS] ?? "").toContain("space");
+    expect(lines[h - KEY_HINT_ROWS] ?? "").toContain("? keys");
   });
 
   test.each(SIZES)("transport and times render at %ix%i", async (w, h) => {

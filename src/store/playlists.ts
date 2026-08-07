@@ -17,9 +17,13 @@ export interface PlaylistCatalogSlice {
    * AbortSignal: closing search must not cancel a catalog load the playlist picker is also awaiting.
    */
   load: (
-    priority?: "foreground" | "background",
-    /** Refresh even when this account already has a completed snapshot. */
-    force?: boolean,
+    options?: {
+      priority?: "foreground" | "background";
+      /** Refresh even when this account already has a completed snapshot. */
+      force?: boolean;
+      /** Admit the first request only when an explicit retry meets an indefinite cooldown. */
+      probeIndefiniteCooldown?: boolean;
+    },
   ) => Promise<Playlist[]>;
 }
 
@@ -44,7 +48,12 @@ export const usePlaylistCatalog = create<PlaylistCatalogSlice>((set, get) => ({
     meId = nextMeId;
   },
 
-  async load(priority = "background", force = false) {
+  async load(options = {}) {
+    const {
+      priority = "background",
+      force = false,
+      probeIndefiniteCooldown = false,
+    } = options;
     if (pending !== null) return await pending;
     if (get().loaded && !force) return get().playlists;
     if (client === null || meId === "") return [];
@@ -55,7 +64,10 @@ export const usePlaylistCatalog = create<PlaylistCatalogSlice>((set, get) => ({
     set({ loading: true, error: null });
 
     let request: Promise<Playlist[]>;
-    request = myPlaylists(requestClient, requestMeId, { priority })
+    request = myPlaylists(requestClient, requestMeId, {
+      priority,
+      probeIndefiniteCooldown,
+    })
       .then((playlists) => {
         if (generation === requestGeneration) {
           set({ playlists, loaded: true, loading: false, error: null });

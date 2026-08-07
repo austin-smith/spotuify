@@ -8,6 +8,9 @@ import {
   toAlbumRows,
   toArtistRows,
   toHomeRows,
+  toLibraryAlbumRows,
+  toLibraryArtistRows,
+  toLibraryPlaylistRows,
   toPlaylistRows,
   toRows,
   type Row,
@@ -266,6 +269,56 @@ describe("playlist rows", () => {
       { meId: "me", libraryMatches: [owned] },
     );
     expect(results(rows).filter((row) => row.label === owned.name)).toHaveLength(1);
+  });
+});
+
+describe("library root rows", () => {
+  test("shows every playlist owner while preserving ownership-aware drilling", () => {
+    const owned = {
+      id: "mine",
+      name: "Mine",
+      uri: "spotify:playlist:mine",
+      ownerId: "me",
+      ownerName: "Austin",
+      mine: true,
+    };
+    const followed = {
+      ...owned,
+      id: "followed",
+      name: "Followed",
+      uri: "spotify:playlist:followed",
+      ownerId: "other",
+      ownerName: "Someone Else",
+      mine: false,
+    };
+    const rows = results(toLibraryPlaylistRows([owned, followed]));
+
+    expect(rows.map((row) => row.detail)).toEqual(["Austin", "Someone Else"]);
+    expect(rows[0]?.drill).toMatchObject({ kind: "playlist", id: "mine" });
+    expect(rows[1]?.drill).toBeUndefined();
+  });
+
+  test("saved albums and followed artists open through normal catalog drills", () => {
+    const savedAlbum = {
+      ...album(),
+      artists: [{ id: "artist", name: "The National", uri: "spotify:artist:artist" }],
+    };
+    const albumResult = results(toLibraryAlbumRows([savedAlbum]))[0];
+    expect(albumResult).toMatchObject({
+      detail: "The National",
+      trailing: "2007",
+    });
+    expect(albumResult?.drill).toMatchObject({
+      kind: "album",
+      id: "b",
+    });
+    expect(
+      results(
+        toLibraryArtistRows([
+          { id: "a", name: "The National", uri: "spotify:artist:a" },
+        ]),
+      )[0]?.drill,
+    ).toEqual({ kind: "artist", id: "a", name: "The National" });
   });
 });
 

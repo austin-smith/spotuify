@@ -44,16 +44,24 @@ function compact<T>(page: Page<T | null> | null): T[] {
 export async function artistAlbums(
   client: SpotifyClient,
   artistId: string,
-  options: { market?: string; signal?: AbortSignal } = {},
+  options: {
+    market?: string;
+    signal?: AbortSignal;
+    probeIndefiniteCooldown?: boolean;
+  } = {},
 ): Promise<SimpleAlbum[]> {
-  const page = await client.request<Page<SimpleAlbum | null>>(`/artists/${artistId}/albums`, {
+  const path = `/artists/${artistId}/albums`;
+  const requestOptions = {
     query: {
       limit: ARTIST_ALBUMS_LIMIT,
       include_groups: "album,single",
       market: options.market,
     },
     ...(options.signal ? { signal: options.signal } : {}),
-  });
+  };
+  const page = options.probeIndefiniteCooldown === true
+    ? await client.retryAfterIndefiniteCooldown<Page<SimpleAlbum | null>>(path, requestOptions)
+    : await client.request<Page<SimpleAlbum | null>>(path, requestOptions);
 
   return compact(page).sort((a, b) => (b.release_date ?? "").localeCompare(a.release_date ?? ""));
 }
@@ -65,12 +73,20 @@ export async function artistAlbums(
 export async function albumTracks(
   client: SpotifyClient,
   albumId: string,
-  options: { market?: string; signal?: AbortSignal } = {},
+  options: {
+    market?: string;
+    signal?: AbortSignal;
+    probeIndefiniteCooldown?: boolean;
+  } = {},
 ): Promise<AlbumTrack[]> {
-  const page = await client.request<Page<AlbumTrack | null>>(`/albums/${albumId}/tracks`, {
+  const path = `/albums/${albumId}/tracks`;
+  const requestOptions = {
     query: { limit: ALBUM_TRACKS_LIMIT, market: options.market },
     ...(options.signal ? { signal: options.signal } : {}),
-  });
+  };
+  const page = options.probeIndefiniteCooldown === true
+    ? await client.retryAfterIndefiniteCooldown<Page<AlbumTrack | null>>(path, requestOptions)
+    : await client.request<Page<AlbumTrack | null>>(path, requestOptions);
 
   return compact(page);
 }

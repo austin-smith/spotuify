@@ -125,6 +125,7 @@ export const KEYMAP: KeyGroup[] = [
     label: "BROWSE",
     bindings: [
       { key: "/", action: "search" },
+      { key: "b", action: "library" },
       { key: "a", action: "actions" },
       { key: "f", action: "save / unsave" },
       { key: "l", action: "lyrics" },
@@ -150,10 +151,10 @@ export const KEYMAP: KeyGroup[] = [
     ],
   },
   {
-    label: "SEARCH",
+    label: "SEARCH / LIBRARY",
     bindings: [
       // Spelled out: the ⇧ glyph has ambiguous terminal width and can misalign the column.
-      { key: "tab / shift+tab", action: "next / previous scope" },
+      { key: "tab / shift+tab", action: "next / previous category" },
       { key: "↵", action: "play / open" },
       { key: "ctrl+↵", action: "queue it" },
       { key: "ctrl+space", action: "actions" },
@@ -182,6 +183,7 @@ export function barFor(state: {
   if (!state.hasTrack) {
     return [
       ...(state.canBrowse ? [{ key: "/", action: "search" }] : []),
+      ...(state.canBrowse ? [{ key: "b", action: "library" }] : []),
       ...(state.canBrowse ? [{ key: "d", action: "device" }] : []),
       ...(!state.canBrowse ? [{ key: "r", action: "retry account" }] : []),
       { key: "?", action: "keys" },
@@ -194,13 +196,14 @@ export function barFor(state: {
     ...(state.canBrowse
       ? [
           { key: "/", action: "search" },
+          { key: "b", action: "library" },
           { key: "a", action: "actions" },
         ]
       : []),
+    { key: "?", action: "keys" },
     { key: "l", action: "lyrics" },
     { key: "u", action: "queue" },
     ...(state.canBrowse ? [{ key: "d", action: "device" }] : []),
     ...(!state.canBrowse ? [{ key: "r", action: "retry account" }] : []),
-    { key: "?", action: "keys" },
   ];
 }

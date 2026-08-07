@@ -14,7 +14,7 @@ import { isTrack, type PlayableItem } from "../api/types.ts";
 import type { Drill } from "./rows.ts";
 import { usePlaylistCatalog } from "./playlists.ts";
 
-export type ActionOrigin = "playback" | "palette";
+export type ActionOrigin = "playback" | "palette" | "library";
 export type ActionMode = "actions" | "playlists";
 
 export type ActionEntry =
@@ -93,7 +93,7 @@ export interface ActionsSlice {
   current: () => ActionEntry | null;
   currentPlaylist: () => Playlist | null;
   setPlaylistQuery: (query: string) => void;
-  /** Perform the highlighted action. Navigation is returned for App to hand to search. */
+  /** Perform the highlighted action. Navigation is returned to the originating browse surface. */
   activate: () => Promise<ActionResult | null>;
   /** One-key save/unsave for the currently playing item. */
   toggleSaved: (item: PlayableItem) => Promise<void>;
@@ -442,7 +442,10 @@ export const useActions = create<ActionsSlice>((set, get) => {
       error: null,
     });
     try {
-      const playlists = filterOwnedPlaylists(await catalog.load("foreground", true), "");
+      const playlists = filterOwnedPlaylists(
+        await catalog.load({ priority: "foreground", force: true }),
+        "",
+      );
       const state = get();
       if (
         revision !== openRevision ||
