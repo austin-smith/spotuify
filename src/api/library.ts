@@ -8,6 +8,11 @@ const LIBRARY_BATCH_SIZE = 40;
 /** Spotify returns at most 50 saved albums per page. */
 const SAVED_ALBUM_PAGE_SIZE = 50;
 
+interface SavedAlbumPage {
+  items?: ({ album?: SimpleAlbum | null } | null)[] | null;
+  next?: string | null;
+}
+
 export interface HomeData {
   recent: Track[];
   top: Track[];
@@ -31,15 +36,13 @@ export async function savedAlbums(
     market?: string;
     signal?: AbortSignal;
     priority?: "foreground" | "background";
+    probeIndefiniteCooldown?: boolean;
   } = {},
 ): Promise<SimpleAlbum[]> {
   const albums: SimpleAlbum[] = [];
 
   for (let offset = 0; ; offset += SAVED_ALBUM_PAGE_SIZE) {
-    const page = await client.request<{
-      items?: ({ album?: SimpleAlbum | null } | null)[] | null;
-      next?: string | null;
-    }>("/me/albums", {
+    const requestOptions = {
       query: {
         limit: SAVED_ALBUM_PAGE_SIZE,
         offset,
@@ -47,7 +50,10 @@ export async function savedAlbums(
       },
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.priority ? { priority: options.priority } : {}),
-    });
+    };
+    const page = options.probeIndefiniteCooldown === true && offset === 0
+      ? await client.retryAfterIndefiniteCooldown<SavedAlbumPage>("/me/albums", requestOptions)
+      : await client.request<SavedAlbumPage>("/me/albums", requestOptions);
 
     for (const saved of page?.items ?? []) {
       if (saved?.album !== null && saved?.album !== undefined) albums.push(saved.album);

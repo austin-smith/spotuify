@@ -39,6 +39,11 @@ interface LibraryFrame {
   target?: Drill;
 }
 
+interface LibraryLoadOptions {
+  force?: boolean;
+  probeIndefiniteCooldown?: boolean;
+}
+
 type LibraryRoots = Record<LibrarySection, LibraryFrame>;
 
 export interface LibraryBrowserSlice {
@@ -148,7 +153,11 @@ export const useLibraryBrowser = create<LibraryBrowserSlice>((set, get) => {
     }));
   };
 
-  const loadRoot = (section: LibrarySection, force = false): Promise<void> => {
+  const loadRoot = (
+    section: LibrarySection,
+    options: LibraryLoadOptions = {},
+  ): Promise<void> => {
+    const force = options.force === true;
     const existing = rootLoads.get(section);
     if (existing !== undefined) return existing;
     if (get().roots[section].loaded && !force) return Promise.resolve();
@@ -167,7 +176,11 @@ export const useLibraryBrowser = create<LibraryBrowserSlice>((set, get) => {
         const rows = await (async (): Promise<Row[]> => {
           switch (section) {
             case "playlists": {
-              const playlists = await usePlaylistCatalog.getState().load("foreground", force);
+              const playlists = await usePlaylistCatalog.getState().load({
+                priority: "foreground",
+                force,
+                probeIndefiniteCooldown: options.probeIndefiniteCooldown,
+              });
               return toLibraryPlaylistRows(playlists);
             }
             case "albums": {
@@ -175,6 +188,7 @@ export const useLibraryBrowser = create<LibraryBrowserSlice>((set, get) => {
                 market: requestMarket,
                 signal: controller.signal,
                 priority: "foreground",
+                probeIndefiniteCooldown: options.probeIndefiniteCooldown,
               });
               return toLibraryAlbumRows(albums);
             }
@@ -182,6 +196,7 @@ export const useLibraryBrowser = create<LibraryBrowserSlice>((set, get) => {
               const artists = await followedArtists(requestClient, {
                 signal: controller.signal,
                 priority: "foreground",
+                probeIndefiniteCooldown: options.probeIndefiniteCooldown,
               });
               return toLibraryArtistRows(artists);
             }
@@ -211,7 +226,11 @@ export const useLibraryBrowser = create<LibraryBrowserSlice>((set, get) => {
     return request;
   };
 
-  const loadDrill = (target: Drill, frameId: number) => {
+  const loadDrill = (
+    target: Drill,
+    frameId: number,
+    probeIndefiniteCooldown = false,
+  ) => {
     if (client === null) return;
     drillLoad?.abort();
     const controller = new AbortController();
@@ -223,6 +242,7 @@ export const useLibraryBrowser = create<LibraryBrowserSlice>((set, get) => {
     void rowsForDrill(requestClient, target, {
       market: requestMarket,
       signal: controller.signal,
+      probeIndefiniteCooldown,
     })
       .then((rows) => {
         if (controller.signal.aborted || generation !== requestGeneration) return;
@@ -392,10 +412,13 @@ export const useLibraryBrowser = create<LibraryBrowserSlice>((set, get) => {
             { ...top, rows: [], selected: -1, loading: true, error: null },
           ],
         });
-        loadDrill(top.target, top.id);
+        loadDrill(top.target, top.id, true);
         return;
       }
-      void loadRoot(state.section, true);
+      void loadRoot(state.section, {
+        force: true,
+        probeIndefiniteCooldown: true,
+      });
     },
 
     back() {

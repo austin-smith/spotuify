@@ -442,7 +442,10 @@ export const useActions = create<ActionsSlice>((set, get) => {
       error: null,
     });
     try {
-      const playlists = filterOwnedPlaylists(await catalog.load("foreground", true), "");
+      const playlists = filterOwnedPlaylists(
+        await catalog.load({ priority: "foreground", force: true }),
+        "",
+      );
       const state = get();
       if (
         revision !== openRevision ||

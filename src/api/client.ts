@@ -74,6 +74,9 @@ export interface RequestOptions {
   priority?: "foreground" | "background";
 }
 
+/** Options an explicit cooldown probe may preserve while remaining a read-only GET. */
+export type SpotifyGetOptions = Pick<RequestOptions, "query" | "signal" | "priority">;
+
 export interface SpotifyCooldown {
   kind: "rate-limit" | "quota";
   /** `null` means Spotify did not supply a valid Retry-After value. */
@@ -180,8 +183,11 @@ export class SpotifyClient {
    * Ordinary and finite cooldowns are still enforced. Other queued requests remain blocked while
    * this probe runs, and any new 429 immediately closes the circuit again.
    */
-  async retryAfterIndefiniteCooldown<T>(path: string): Promise<T> {
-    const result = await this.requestWithPolicy<T>(path, {}, true);
+  async retryAfterIndefiniteCooldown<T>(
+    path: string,
+    options: SpotifyGetOptions = {},
+  ): Promise<T> {
+    const result = await this.requestWithPolicy<T>(path, options, true);
     if (result === null) throw new SpotifyApiError(204, path, "Expected a response body.");
     return result;
   }

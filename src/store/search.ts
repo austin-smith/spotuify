@@ -341,7 +341,7 @@ export const useSearch = create<SearchSlice>((set, get) => ({
           market,
           meId,
           signal: controller.signal,
-          loadPlaylists: () => usePlaylistCatalog.getState().load("background"),
+          loadPlaylists: () => usePlaylistCatalog.getState().load({ priority: "background" }),
         });
         if (controller.signal.aborted) return;
         home = data;

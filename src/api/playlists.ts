@@ -123,7 +123,11 @@ function toPlaylist(raw: RawPlaylist, meId: string): Playlist {
 export async function myPlaylists(
   client: SpotifyClient,
   meId: string,
-  options: { signal?: AbortSignal; priority?: "foreground" | "background" } = {},
+  options: {
+    signal?: AbortSignal;
+    priority?: "foreground" | "background";
+    probeIndefiniteCooldown?: boolean;
+  } = {},
 ): Promise<Playlist[]> {
   const opts = {
     ...(options.signal ? { signal: options.signal } : {}),
@@ -132,10 +136,16 @@ export async function myPlaylists(
   const playlists: Playlist[] = [];
 
   for (let offset = 0; ; offset += PLAYLIST_PAGE) {
-    const page = await client.request<RawPage<RawPlaylist>>("/me/playlists", {
+    const requestOptions = {
       query: { limit: PLAYLIST_PAGE, offset, fields: PLAYLIST_FIELDS },
       ...opts,
-    });
+    };
+    const page = options.probeIndefiniteCooldown === true && offset === 0
+      ? await client.retryAfterIndefiniteCooldown<RawPage<RawPlaylist>>(
+          "/me/playlists",
+          requestOptions,
+        )
+      : await client.request<RawPage<RawPlaylist>>("/me/playlists", requestOptions);
 
     for (const raw of page?.items ?? []) {
       if (raw !== null && raw !== undefined) playlists.push(toPlaylist(raw, meId));
@@ -156,17 +166,25 @@ export async function myPlaylists(
 export async function playlistItems(
   client: SpotifyClient,
   playlistId: string,
-  options: { market?: string; signal?: AbortSignal } = {},
+  options: {
+    market?: string;
+    signal?: AbortSignal;
+    probeIndefiniteCooldown?: boolean;
+  } = {},
 ): Promise<PlaylistEntry[]> {
   const opts = options.signal ? { signal: options.signal } : {};
   const entries: PlaylistEntry[] = [];
 
   try {
     for (let offset = 0; ; offset += ITEM_PAGE) {
-      const page = await client.request<RawPage<RawEntry>>(`/playlists/${playlistId}/items`, {
+      const path = `/playlists/${playlistId}/items`;
+      const requestOptions = {
         query: { limit: ITEM_PAGE, offset, market: options.market, fields: ITEM_FIELDS },
         ...opts,
-      });
+      };
+      const page = options.probeIndefiniteCooldown === true && offset === 0
+        ? await client.retryAfterIndefiniteCooldown<RawPage<RawEntry>>(path, requestOptions)
+        : await client.request<RawPage<RawEntry>>(path, requestOptions);
 
       const items = page?.items ?? [];
       items.forEach((raw, index) => {

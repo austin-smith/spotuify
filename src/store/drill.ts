@@ -13,7 +13,11 @@ import {
 export async function rowsForDrill(
   client: SpotifyClient,
   target: Drill,
-  options: { market?: string; signal: AbortSignal },
+  options: {
+    market?: string;
+    signal: AbortSignal;
+    probeIndefiniteCooldown?: boolean;
+  },
 ): Promise<Row[]> {
   switch (target.kind) {
     case "artist":

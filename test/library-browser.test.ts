@@ -43,6 +43,19 @@ const track = (id: string) => ({
   album: album("parent"),
 });
 
+function rateLimited(retryAfter: string): Response {
+  return new Response(
+    JSON.stringify({ error: { status: 429, message: "Too many requests" } }),
+    {
+      status: 429,
+      headers: {
+        "content-type": "application/json",
+        "retry-after": retryAfter,
+      },
+    },
+  );
+}
+
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (!predicate()) {
@@ -181,5 +194,81 @@ describe("library browser", () => {
     await waitFor(() => useLibraryBrowser.getState().loaded());
     expect(useLibraryBrowser.getState().current()?.label).toBe("Album recovered");
     expect(albumRequests).toBe(2);
+  });
+
+  test("uses the retried root request to probe an indefinite cooldown", async () => {
+    let requests = 0;
+    const paths: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requests++;
+      const url = new URL(String(input));
+      paths.push(url.pathname.replace("/v1", ""));
+      return requests === 1
+        ? rateLimited("not-a-time")
+        : Response.json({ items: [playlist("recovered")], next: null });
+    }) as unknown as typeof fetch;
+
+    useLibraryBrowser.getState().configure(new SpotifyClient(tokens), "US", "me");
+    useLibraryBrowser.getState().openLibrary();
+    await waitFor(() => useLibraryBrowser.getState().error() !== null);
+
+    useLibraryBrowser.getState().retry();
+    await waitFor(() => useLibraryBrowser.getState().loaded());
+
+    expect(useLibraryBrowser.getState().current()?.label).toBe("Playlist recovered");
+    expect(paths).toEqual(["/me/playlists", "/me/playlists"]);
+    expect(requests).toBe(2);
+  });
+
+  test("uses the retried drill request to probe an indefinite cooldown", async () => {
+    let itemRequests = 0;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname.replace("/v1", "");
+      if (path === "/me/playlists") {
+        return Response.json({ items: [playlist("one")], next: null });
+      }
+      if (path === "/playlists/one/items") {
+        itemRequests++;
+        return itemRequests === 1
+          ? rateLimited("not-a-time")
+          : Response.json({ items: [{ item: track("recovered") }], next: null });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    useLibraryBrowser.getState().configure(new SpotifyClient(tokens), "US", "me");
+    useLibraryBrowser.getState().openLibrary();
+    await waitFor(() => useLibraryBrowser.getState().loaded());
+    const target = useLibraryBrowser.getState().current()?.drill;
+    if (target === undefined) throw new Error("expected owned playlist to expose a drill target");
+
+    useLibraryBrowser.getState().drillInto(target);
+    await waitFor(() => useLibraryBrowser.getState().error() !== null);
+    useLibraryBrowser.getState().retry();
+    await waitFor(() => useLibraryBrowser.getState().loaded());
+
+    expect(useLibraryBrowser.getState().current()?.label).toBe("Track recovered");
+    expect(itemRequests).toBe(2);
+  });
+
+  test("never lets a manual retry bypass a finite cooldown", async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return rateLimited("60");
+    }) as unknown as typeof fetch;
+
+    const spotify = new SpotifyClient(tokens, { now: () => 10_000 });
+    useLibraryBrowser.getState().configure(spotify, "US", "me");
+    useLibraryBrowser.getState().openLibrary();
+    await waitFor(() => useLibraryBrowser.getState().error() !== null);
+
+    useLibraryBrowser.getState().retry();
+    await waitFor(
+      () => !useLibraryBrowser.getState().loading() && useLibraryBrowser.getState().error() !== null,
+    );
+
+    expect(requests).toBe(1);
+    expect(spotify.getCooldown()?.retryAt).toBe(70_000);
   });
 });

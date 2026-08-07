@@ -17,6 +17,13 @@ import type { FullArtist } from "./types.ts";
 /** `/me/following` returns at most 50 artists per page. */
 const FOLLOW_PAGE_SIZE = 50;
 
+interface FollowedArtistPage {
+  artists?: {
+    items?: (FullArtist | null)[] | null;
+    cursors?: { after?: string | null } | null;
+  } | null;
+}
+
 /**
  * Every artist the signed-in user follows.
  *
@@ -28,22 +35,26 @@ export async function followedArtists(
   options: {
     signal?: AbortSignal;
     priority?: "foreground" | "background";
+    probeIndefiniteCooldown?: boolean;
   } = {},
 ): Promise<FullArtist[]> {
   const artists: FullArtist[] = [];
   let after: string | undefined;
+  let firstPage = true;
 
   for (;;) {
-    const response = await client.request<{
-      artists?: {
-        items?: (FullArtist | null)[] | null;
-        cursors?: { after?: string | null } | null;
-      } | null;
-    }>("/me/following", {
+    const requestOptions = {
       query: { type: "artist", limit: FOLLOW_PAGE_SIZE, after },
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.priority ? { priority: options.priority } : {}),
-    });
+    };
+    const response = options.probeIndefiniteCooldown === true && firstPage
+      ? await client.retryAfterIndefiniteCooldown<FollowedArtistPage>(
+          "/me/following",
+          requestOptions,
+        )
+      : await client.request<FollowedArtistPage>("/me/following", requestOptions);
+    firstPage = false;
 
     const page = response?.artists;
     for (const item of page?.items ?? []) {

@@ -422,6 +422,42 @@ describe("429 handling", () => {
     expect(spotify.getCooldown()).toBeNull();
   });
 
+  test("an explicit probe preserves the real GET request options", async () => {
+    let requests = 0;
+    let probeUrl: URL | undefined;
+    let probeSignal: AbortSignal | null | undefined;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      requests++;
+      if (requests === 1) {
+        return new Response(quotaBody, {
+          status: 429,
+          headers: {
+            "content-type": "application/json",
+            "retry-after": "not-a-time",
+          },
+        });
+      }
+      probeUrl = new URL(String(input));
+      probeSignal = init?.signal;
+      return Response.json({ artists: { items: [], cursors: { after: null } } });
+    }) as unknown as typeof fetch;
+
+    const spotify = client();
+    await expect(spotify.request("/seed")).rejects.toBeInstanceOf(SpotifyLimitError);
+    const controller = new AbortController();
+    await spotify.retryAfterIndefiniteCooldown("/me/following", {
+      query: { type: "artist", limit: 50 },
+      signal: controller.signal,
+      priority: "foreground",
+    });
+
+    expect(probeUrl?.pathname).toEndWith("/me/following");
+    expect(probeUrl?.searchParams.get("type")).toBe("artist");
+    expect(probeUrl?.searchParams.get("limit")).toBe("50");
+    expect(probeSignal).toBe(controller.signal);
+    expect(requests).toBe(2);
+  });
+
   test("an explicit probe never bypasses a finite Spotify deadline", async () => {
     let requests = 0;
     globalThis.fetch = (async () => {
