@@ -79,7 +79,7 @@ sends SIGINT/SIGTERM. Diagnostics go to stderr; stdout carries only protocol mes
 | `list_devices` | read | Available Spotify Connect devices |
 | `transfer_playback` | write | Move playback to another device |
 | `search` | read | Search the catalog by type, up to 50 results per type |
-| `get_resource` | read | Details and playable contents for any Spotify URI or URL |
+| `get_resource` | read | Details and playable contents for any Spotify URI or URL, with optional track or album artwork |
 | `get_lyrics` | read | Lyrics for a track or the currently playing track |
 | `save_to_library` | write | Save tracks, episodes, albums, shows, or audiobooks |
 | `remove_from_library` | write, destructive | Remove items from the library |
@@ -93,6 +93,10 @@ Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempote
 
 - `target`, `uris`, and `playlist` parameters accept Spotify URIs (`spotify:track:...`) or
   `open.spotify.com` URLs.
+- To show a track or album cover, call `get_resource` with `include_artwork: true`. The result
+  contains the usual text and structured metadata plus an MCP image content block. Artwork is
+  returned at a moderate source size to keep stdio responses bounded; its original bytes are not
+  cropped, resized, or otherwise altered.
 - `device` parameters accept a Spotify Connect device ID or name from `list_devices`; omitted,
   commands use the active device.
 - Structured tool results (`structuredContent`) use the same snake_case shapes as the CLI's
@@ -107,4 +111,6 @@ Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempote
 - Playback control requires Spotify Premium and a reachable device, exactly like the CLI.
 - Playlist contents are listed only for playlists the user owns; Spotify permanently refuses the
   items read for foreign playlists.
+- Artwork results include Spotify attribution and a link to the applicable track or album. Clients
+  decide how to render MCP image blocks; the structured result retains the source URL as a fallback.
 - The lyrics tool uses LRCLIB and Genius, not Spotify.

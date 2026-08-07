@@ -13,6 +13,7 @@ import {
   artistLine,
   isTrack,
   type FullArtist,
+  type Image,
   type PlayableItem,
   type SimpleAlbum,
   type SimpleArtist,
@@ -46,6 +47,15 @@ export const DEFAULT_SEARCH_TYPES: readonly SearchType[] = [
   "playlist",
 ];
 export const SEARCH_LIMIT_MAX = 50;
+
+export interface ResourceArtwork {
+  images: Image[];
+  spotifyUrl: string;
+}
+
+export type ResourceDetailsResult = OperationResult<unknown> & {
+  artwork?: ResourceArtwork;
+};
 
 export async function searchCatalog(
   query: string,
@@ -144,7 +154,7 @@ export async function searchCatalog(
 
 export async function resourceDetails(
   target: string,
-): Promise<OperationResult<unknown>> {
+): Promise<ResourceDetailsResult> {
   const ref = spotifyReference(target);
   const { client } = await cliSession();
   switch (ref.kind) {
@@ -154,6 +164,14 @@ export async function resourceDetails(
       return {
         data: normalizeItem(item),
         message: `${item.name} — ${artistLine(item)}\n${formatDuration(item.duration_ms)} · ${item.uri}`,
+        ...(isTrack(item)
+          ? {
+              artwork: {
+                images: item.album.images,
+                spotifyUrl: `https://open.spotify.com/track/${ref.id}`,
+              },
+            }
+          : {}),
       };
     }
     case "album": {
@@ -175,6 +193,10 @@ export async function resourceDetails(
             item.uri,
           ]),
         )}`,
+        artwork: {
+          images: album.images,
+          spotifyUrl: `https://open.spotify.com/album/${ref.id}`,
+        },
       };
     }
     case "artist": {
