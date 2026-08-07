@@ -20,13 +20,20 @@ export function toolResult(
   };
 }
 
+/** Run an MCP-native result builder while preserving the shared domain-error mapping. */
+export async function runMcpTool(
+  operation: () => Promise<CallToolResult>,
+): Promise<CallToolResult> {
+  try {
+    return await operation();
+  } catch (error) {
+    return toolErrorResult(error);
+  }
+}
+
 /** Run an operation, mapping any thrown domain error to an error tool result. */
 export async function runTool(
   operation: () => Promise<OperationResult<Record<string, unknown>>>,
 ): Promise<CallToolResult> {
-  try {
-    return toolResult(await operation());
-  } catch (error) {
-    return toolErrorResult(error);
-  }
+  return runMcpTool(async () => toolResult(await operation()));
 }

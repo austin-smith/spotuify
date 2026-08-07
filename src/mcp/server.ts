@@ -8,7 +8,7 @@ import { registerPlaybackTools } from "./tools/playback.ts";
 
 const INSTRUCTIONS = `Control the user's Spotify account: playback, queue, devices, search, lyrics, library, and playlists.
 
-- Wherever a target, uri, or playlist parameter appears, pass a Spotify URI (spotify:track:...) or an open.spotify.com URL. Find URIs with search, get_resource, or list_playlists.
+- Wherever a target, uri, or playlist parameter appears, pass a Spotify URI (spotify:track:...) or an open.spotify.com URL. Find URIs with search, get_resource, or list_playlists. To show track or album cover art, call get_resource with include_artwork set to true.
 - device parameters accept a Spotify Connect device ID or name from list_devices; omit them to use the active device.
 - Relative changes use offset_ms (seek) and delta (set_volume); absolute values use position_ms and percent.
 - Authentication happens outside this server. When a tool reports an authentication error, ask the user to run \`spotuify auth\` in a terminal.
