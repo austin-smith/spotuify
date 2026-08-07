@@ -1,6 +1,6 @@
 {
   "name": "spotuify",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "packageManager": "bun@1.3.14",
   "module": "src/index.tsx",
   "type": "module",
