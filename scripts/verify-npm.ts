@@ -62,7 +62,7 @@ async function verifyManifest(packageRoot: string, expected: object): Promise<vo
 async function verifyRootPackage(version: string): Promise<void> {
   const { packageRoot, temporary } = await extractPackage(NPM_ROOT_PACKAGE, version);
   try {
-    const expectedFiles = ["bin/spotuify.cjs", "package.json"];
+    const expectedFiles = ["LICENSE", "README.md", "bin/spotuify.cjs", "package.json"];
     const actualFiles = await packageFiles(packageRoot);
     if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
       throw new Error(`unexpected ${NPM_ROOT_PACKAGE} files: ${actualFiles.join(", ")}`);
@@ -85,6 +85,8 @@ async function verifyPlatformPackage(
     const expectedFiles = [
       `bin/${mainExecutable}`,
       `bin/${engineExecutable}`,
+      "LICENSE",
+      "README.md",
       "package.json",
     ].sort();
     const actualFiles = await packageFiles(packageRoot);
