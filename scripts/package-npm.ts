@@ -5,6 +5,7 @@ import {
   artifactName,
   buildVersion,
   releaseTarget,
+  REPO_ROOT,
   STAGE_DIR,
   type ReleaseTarget,
 } from "./release-config.ts";
@@ -35,6 +36,9 @@ async function createPackage(
   await rm(tarball, { force: true });
   await mkdir(resolve(stage, "bin"), { recursive: true });
   await Bun.write(resolve(stage, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+
+  await copyFile(resolve(REPO_ROOT, "README.md"), resolve(stage, "README.md"));
+  await copyFile(resolve(REPO_ROOT, "LICENSE"), resolve(stage, "LICENSE"));
 
   for (const file of files) {
     const destination = resolve(stage, file.destination);
