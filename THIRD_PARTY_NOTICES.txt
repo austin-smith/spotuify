@@ -10701,7 +10701,7 @@ SOFTWARE.
 MIT JavaScript packages
 
 Used by:
-- zustand 5.0.14
+- zustand 5.0.15
 
 MIT License
 
@@ -11046,9 +11046,9 @@ SOFTWARE.
 MIT JavaScript packages
 
 Used by:
-- @opentui/core platform binary packages 0.5.1
-- @opentui/core 0.5.1
-- @opentui/react 0.5.1
+- @opentui/core platform binary packages 0.5.3
+- @opentui/core 0.5.3
+- @opentui/react 0.5.3
 
 MIT License
 
