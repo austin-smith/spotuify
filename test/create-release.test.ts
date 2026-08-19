@@ -32,6 +32,20 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return command(cwd, "git", args);
 }
 
+const FIXTURE_CHANGELOG = `# Changelog
+
+## [Unreleased]
+
+## [1.2.3] - 2026-01-01
+
+### Added
+
+- A releasable change.
+
+[unreleased]: https://example.com/compare/v1.2.3...HEAD
+[1.2.3]: https://example.com/releases/tag/v1.2.3
+`;
+
 async function repositoryFixture(): Promise<RepositoryFixture> {
   const root = await mkdtemp(resolve(tmpdir(), "spotuify-create-release-"));
   const repository = resolve(root, "repository");
@@ -42,7 +56,8 @@ async function repositoryFixture(): Promise<RepositoryFixture> {
   await git(repository, ["config", "user.name", "Release Test"]);
   await git(repository, ["config", "user.email", "release-test@example.com"]);
   await Bun.write(resolve(repository, "tracked.txt"), "initial\n");
-  await git(repository, ["add", "tracked.txt"]);
+  await Bun.write(resolve(repository, "CHANGELOG.md"), FIXTURE_CHANGELOG);
+  await git(repository, ["add", "tracked.txt", "CHANGELOG.md"]);
   await git(repository, ["commit", "--message", "initial"]);
   await git(repository, ["remote", "add", "origin", remote]);
   await git(repository, ["push", "--set-upstream", "origin", "main"]);
@@ -79,6 +94,17 @@ test("creates and pushes only the canonical annotated release tag", async () => 
     expect(unrelatedRemoteTag).toBe("");
     await expect(createRelease("1.2.3", fixture.repository)).rejects.toThrow(
       "already exists",
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("refuses to release a version without changelog notes", async () => {
+  const fixture = await repositoryFixture();
+  try {
+    await expect(createRelease("1.3.0", fixture.repository)).rejects.toThrow(
+      "no release section for 1.3.0",
     );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

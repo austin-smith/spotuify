@@ -56,6 +56,7 @@ There are two independent logins. Do not attempt to unify them.
 ## Documentation
 
 - Keep `README.md` for humans: what it is, how to set it up, how to run it. No conversation history, planning notes, or architecture essays.
+- Record notable user-facing changes in `CHANGELOG.md` under `[Unreleased]`, following the Keep a Changelog format described in `docs/releasing.md`. Skip internal-only changes.
 
 ## Licensing
 

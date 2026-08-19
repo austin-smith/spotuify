@@ -20,6 +20,17 @@ describe("release workflow", () => {
     expect(source).toContain("--verify-tag");
   });
 
+  test("publishes curated release notes from the changelog", async () => {
+    const source = await Bun.file(WORKFLOW_PATH).text();
+
+    expect(source).toContain('bun run release:changelog check "${GITHUB_REF_NAME#v}"');
+    expect(source).toContain(
+      'bun run release:changelog extract "$SPOTUIFY_BUILD_VERSION" > dist/release-notes.md',
+    );
+    expect(source).toContain("--notes-file dist/release-notes.md");
+    expect(source).not.toContain("--generate-notes");
+  });
+
   test("does not require workstation-specific tag signing", async () => {
     const source = await Bun.file(WORKFLOW_PATH).text();
 

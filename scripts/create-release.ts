@@ -1,3 +1,4 @@
+import { loadChangelog, releaseNotes } from "./changelog.ts";
 import { REPO_ROOT, productVersion } from "./release-config.ts";
 
 interface CommandResult {
@@ -41,6 +42,7 @@ export async function createRelease(
   if (!STABLE_VERSION.test(version)) {
     throw new Error(`release version must use X.Y.Z format, received ${version}`);
   }
+  releaseNotes(await loadChangelog(repoRoot), version);
   const tag = `v${version}`;
   const branch = await requireGit(repoRoot, ["branch", "--show-current"]);
   if (branch !== "main") {
