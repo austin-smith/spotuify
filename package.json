@@ -44,20 +44,20 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/react": "^19.2.18",
+    "@types/react": "^19.3.0",
     "typescript": "^7"
   },
   "dependencies": {
-    "@clack/prompts": "1.7.0",
+    "@clack/prompts": "1.8.0",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@opentui/core": "0.5.3",
-    "@opentui/react": "0.5.3",
+    "@opentui/core": "0.5.11",
+    "@opentui/react": "0.5.11",
     "ansi-escapes": "7.3.0",
     "commander": "^15.0.0",
     "jpeg-js": "0.4.4",
-    "react": "19.2.8",
+    "react": "19.3.0",
     "supports-hyperlinks": "4.5.0",
-    "zod": "4.4.3",
+    "zod": "4.6.2",
     "zustand": "5.0.15"
   }
 }
